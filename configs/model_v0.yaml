@@ -3,22 +3,39 @@ runtime:
   precision: bf16
   requires: [torch, mne, numpy, pandas, scipy, torchaudio]
 
+model:
+  version: v0.1
+  primary_output: discrete_eeg_tokens
+
 tokenizer:
   sample_rate: 250
   window_sec: 2.0
   dim: 256
-  latent_queries: 16
-  codebook_size: 512
-  num_quantizers: 4
-  encoder_channels: 64
+  latent_queries: 32
+  codebook_dim: 128
+  codebook_size: 1024
+  num_quantizers: 8
+  encoder_channels: 96
   downsample_rates: [2, 2, 2, 2]
-  n_heads: 4
+  n_heads: 8
   dropout: 0.1
+  sensor_pos_dim: 6
+  n_sensor_types: 3
+  mask_ratio: 0.25
+  noise_std: 0.05
+  encoder_residual_layers: 2
+  temporal_layers: 2
 
 heads:
   audio_embedding_dim: 11
   projection_dim: 256
   contrastive_temperature: 0.07
+  phoneme_classes: 48
+  pitch_dim: 1
+  timbre_dim: 8
+  speaker_dim: 128
+  style_classes: 5
+  dropout: 0.1
 
 data:
   ds006104_root: data/raw/openneuro/ds006104_datalad
