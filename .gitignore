@@ -37,6 +37,7 @@ data/raw/zenodo/
 data/derived/
 data/cache/
 data/meeting_examples/
+data/voice_eeg_dataset_samples/
 data/token_probe/
 data/retrieval/
 artifacts/

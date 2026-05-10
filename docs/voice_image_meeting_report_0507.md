@@ -353,7 +353,7 @@ Part B: EEG 主采集，55-70 min
 EEG 主采集：
 
 | Block | Trials | 任务 | 标签 |
-| --- | ---: | --- | --- |
+| --- | --- | --- | --- |
 | B1 Content listening | 120-160 | 听短语音，偶发内容判断 | phoneme、word、content embedding |
 | B2 Voice attribute listening | 120-160 | 同内容不同 voice，判断音调/音色/风格 | F0、formant、timbre、style |
 | B3 Voice retrieval | 80-120 | 目标 voice 后做候选匹配 | voice_id、speaker_id、Top-K labels |
