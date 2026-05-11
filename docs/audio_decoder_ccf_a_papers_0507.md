@@ -2,24 +2,18 @@
 
 ## 口径
 
-- 时间范围：2021-2025
-- 会议范围：按 `ccf_2022.json` 的 A 类会议口径筛选
 - 主题范围：聚焦 speech/audio generation、neural codec decoder、acoustic decoder、speech-to-speech decoder、voice conversion decoder
 - 使用目标：服务于 `EEG -> token -> voice representation -> audio decoder`
 
-## 写法说明
-
-这份清单不再按“论文 1、论文 2”平铺，而是按**方法类型**分类，写法参考 `speech_quantization.pdf` 的组织方式：先给出方法类型，再放代表论文，再总结这一类方法解决什么问题、对当前 EEG 项目有什么帮助。
-
 ## 方法类型总览
 
-| 方法类型 | 代表论文 | 解决的核心问题 | 对 EEG 项目的直接意义 |
-| --- | --- | --- | --- |
-| 统一式 encoder-decoder | SpeechT5 | speech/text 共用一个离散或共享中间空间 | 适合作为 `EEG token -> 语音解码` 的总框架 |
-| neural codec / token decoder | RVQGAN, VoiceCraft, UniAudio | 把离散 audio token 还原成高保真语音 | 适合作为 `EEG token -> audio token -> waveform` 主路径 |
-| style / prosody / speaker decoder | StyleTTS 2, P-Flow, CoMoSpeech | 建模音色、音调、speaker、韵律 | 适合作为 voice image 分支 |
-| content / acoustic 解耦 decoder | DASpeech, SpeechT5 | 把“说什么”和“怎么说”拆开建模 | 适合把 EEG 内容信息和声音形象信息分开建模 |
-| 通用多任务 audio decoder | UniAudio | speech / sound / singing 统一生成 | 适合后期扩展到更广的声音表征 |
+| 方法类型                          | 代表论文                       | 解决的核心问题                         | 对 EEG 项目的直接意义                                    |
+| --------------------------------- | ------------------------------ | -------------------------------------- | -------------------------------------------------------- |
+| 统一式 encoder-decoder            | SpeechT5                       | speech/text 共用一个离散或共享中间空间 | 适合作为 `EEG token -> 语音解码` 的总框架              |
+| neural codec / token decoder      | RVQGAN, VoiceCraft, UniAudio   | 把离散 audio token 还原成高保真语音    | 适合作为 `EEG token -> audio token -> waveform` 主路径 |
+| style / prosody / speaker decoder | StyleTTS 2, P-Flow, CoMoSpeech | 建模音色、音调、speaker、韵律          | 适合作为 voice image 分支                                |
+| content / acoustic 解耦 decoder   | DASpeech, SpeechT5             | 把“说什么”和“怎么说”拆开建模       | 适合把 EEG 内容信息和声音形象信息分开建模                |
+| 通用多任务 audio decoder          | UniAudio                       | speech / sound / singing 统一生成      | 适合后期扩展到更广的声音表征                             |
 
 ## I. 统一式 Encoder-Decoder
 
