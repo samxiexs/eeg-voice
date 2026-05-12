@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900">
+  <defs>
+    <style>
+      .title { font: 700 28px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #17202a; }
+      .node { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #17202a; }
+      .paper { font: 600 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #263238; }
+      .desc { font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #4a5560; }
+      .small { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #52616b; }
+      .box { fill: #ffffff; stroke: #c8d2dc; stroke-width: 1.4; rx: 10; }
+      .center { fill: #1f6feb; stroke: #174ea6; stroke-width: 2; rx: 16; }
+      .centerText { font: 700 20px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #ffffff; }
+      .line { stroke: #8aa0b5; stroke-width: 2; fill: none; }
+      .tagA { fill: #e8f1ff; stroke: #8bb7ff; }
+      .tagB { fill: #eef8f0; stroke: #9cd3a6; }
+      .tagC { fill: #fff3e6; stroke: #f2b46d; }
+      .tagD { fill: #f4efff; stroke: #b7a0ee; }
+      .tagE { fill: #fff0f3; stroke: #e3a0ac; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="900" fill="#f7f9fb"/>
+  <text x="40" y="52" class="title">Audio Decoder 文献到 EEG Voice Model 的思维导图</text>
+  <text x="42" y="82" class="small">主线：EEG token -&gt; 表征桥接 -&gt; 序列生成 -&gt; 声音形象控制 -&gt; 波形渲染，并保留内容-声学解耦约束</text>
+
+  <rect x="480" y="390" width="320" height="96" class="center"/>
+  <text x="640" y="428" text-anchor="middle" class="centerText">EEG discrete token</text>
+  <text x="640" y="458" text-anchor="middle" class="centerText">voice audio decoder</text>
+
+  <path d="M580 390 C470 300, 340 230, 245 185" class="line"/>
+  <path d="M700 390 C820 300, 950 230, 1035 185" class="line"/>
+  <path d="M480 450 C340 450, 230 450, 150 450" class="line"/>
+  <path d="M800 450 C940 450, 1050 450, 1130 450" class="line"/>
+  <path d="M640 486 C640 610, 640 690, 640 750" class="line"/>
+
+  <rect x="55" y="112" width="390" height="176" class="box tagA"/>
+  <text x="75" y="142" class="node">A. 表征桥接层</text>
+  <text x="75" y="168" class="desc">EEG token 接到 speech/text/audio 表征空间</text>
+  <text x="92" y="203" class="paper">SpeechT5</text>
+  <text x="210" y="203" class="desc">shared encoder-decoder, cross-modal VQ</text>
+  <text x="92" y="232" class="paper">X-Codec</text>
+  <text x="210" y="232" class="desc">semantic enhanced codec, HuBERT/WavLM</text>
+  <text x="92" y="261" class="paper">NaturalSpeech 3</text>
+  <text x="210" y="261" class="desc">content / prosody / timbre / acoustic factors</text>
+
+  <rect x="835" y="112" width="390" height="205" class="box tagB"/>
+  <text x="855" y="142" class="node">B. 序列生成层</text>
+  <text x="855" y="168" class="desc">生成或补全 codec / unit / acoustic token</text>
+  <text x="872" y="203" class="paper">VoiceCraft</text>
+  <text x="1010" y="203" class="desc">codec token infilling</text>
+  <text x="872" y="232" class="paper">VoiceCraft-X</text>
+  <text x="1010" y="232" class="desc">multilingual voice cloning prompt</text>
+  <text x="872" y="261" class="paper">StreamSpeech</text>
+  <text x="1010" y="261" class="desc">text-to-unit decoder, streaming</text>
+  <text x="872" y="290" class="paper">UniAudio / 1.5</text>
+  <text x="1010" y="290" class="desc">LLM-driven universal audio generation</text>
+
+  <rect x="40" y="348" width="420" height="205" class="box tagC"/>
+  <text x="60" y="378" class="node">C. 声音形象控制层</text>
+  <text x="60" y="404" class="desc">控制 speaker / timbre / pitch / prosody / style</text>
+  <text x="77" y="439" class="paper">StyleTTS 2</text>
+  <text x="220" y="439" class="desc">style latent + style diffusion</text>
+  <text x="77" y="468" class="paper">P-Flow</text>
+  <text x="220" y="468" class="desc">speech prompt conditioning + flow matching</text>
+  <text x="77" y="497" class="paper">CoMoSpeech</text>
+  <text x="220" y="497" class="desc">consistency model, one-step synthesis</text>
+  <text x="77" y="526" class="paper">NaturalSpeech 3</text>
+  <text x="220" y="526" class="desc">factorized timbre and prosody branch</text>
+
+  <rect x="820" y="360" width="420" height="176" class="box tagD"/>
+  <text x="840" y="390" class="node">D. 波形渲染层</text>
+  <text x="840" y="416" class="desc">token / acoustic feature 转成 high-fidelity waveform</text>
+  <text x="857" y="451" class="paper">RVQGAN</text>
+  <text x="1000" y="451" class="desc">RVQ + GAN codec decoder</text>
+  <text x="857" y="480" class="paper">ESC</text>
+  <text x="1000" y="480" class="desc">cross-scale RVQ Transformer</text>
+  <text x="857" y="509" class="paper">CoMoSpeech</text>
+  <text x="1000" y="509" class="desc">fast waveform synthesis endpoint</text>
+
+  <rect x="365" y="690" width="550" height="160" class="box tagE"/>
+  <text x="385" y="720" class="node">E. 内容-声学解耦层</text>
+  <text x="385" y="746" class="desc">把“说什么”和“怎么说”拆成不同路径训练</text>
+  <text x="402" y="781" class="paper">DASpeech</text>
+  <text x="555" y="781" class="desc">linguistic decoder + acoustic decoder</text>
+  <text x="402" y="810" class="paper">StreamSpeech</text>
+  <text x="555" y="810" class="desc">content path + unit path</text>
+  <text x="402" y="839" class="paper">NaturalSpeech 3</text>
+  <text x="555" y="839" class="desc">content / prosody / timbre / acoustic details</text>
+</svg>
