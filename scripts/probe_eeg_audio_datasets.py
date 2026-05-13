@@ -17,13 +17,57 @@ import re
 import struct
 import sys
 import time
+import urllib.parse
+import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
-import requests
+try:
+    import requests
+except Exception:  # pragma: no cover
+    class _CompatResponse:
+        def __init__(self, url: str, content: bytes, headers: dict[str, str], status_code: int) -> None:
+            self.url = url
+            self.content = content
+            self.headers = headers
+            self.status_code = status_code
+            self.text = content.decode("utf-8", errors="replace")
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code} for {self.url}")
+
+        def json(self) -> Any:
+            return json.loads(self.text)
+
+    class _CompatRequests:
+        RequestException = Exception
+        Timeout = TimeoutError
+
+        @staticmethod
+        def get(
+            url: str,
+            headers: dict[str, str] | None = None,
+            params: dict[str, str] | None = None,
+            timeout: int = 30,
+        ) -> _CompatResponse:
+            if params:
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}{urllib.parse.urlencode(params)}"
+            request = urllib.request.Request(url, headers=headers or {})
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                content = response.read()
+                return _CompatResponse(
+                    url,
+                    content,
+                    dict(response.headers.items()),
+                    response.status,
+                )
+
+    requests = _CompatRequests()
 
 try:
     import openpyxl
@@ -396,6 +440,18 @@ def probe_github(probe: Probe, artifact_dir: Path | None = None) -> dict[str, An
     return summary
 
 
+def probe_generic(probe: Probe, artifact_dir: Path | None = None) -> dict[str, Any]:
+    return {
+        "dataset_id": probe.dataset_id,
+        "title": probe.title,
+        "source": probe.source,
+        "url": probe.url,
+        "priority": probe.priority,
+        "fit": probe.fit,
+        "targets": summarize_targets(probe, artifact_dir),
+    }
+
+
 def build_probes() -> list[Probe]:
     return [
         Probe(
@@ -484,6 +540,79 @@ def build_probes() -> list[Probe]:
             ],
         ),
         Probe(
+            "ds007630",
+            "EEG-Speech Brain Decoding Dataset",
+            "OpenNeuro",
+            "https://openneuro.org/datasets/ds007630",
+            "core-large",
+            "Large speech EEG corpus with speechopen/listening-style tasks; download in subject/run shards",
+            [
+                Target("dataset_description", s3_url("ds007630/dataset_description.json"), "json"),
+                Target("participants", s3_url("ds007630/participants.tsv"), "tsv"),
+                Target(
+                    "speechopen run01 events",
+                    s3_url("ds007630/sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_events.tsv"),
+                    "tsv",
+                ),
+                Target(
+                    "speechopen run01 channels",
+                    s3_url("ds007630/sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_channels.tsv"),
+                    "tsv",
+                ),
+                Target(
+                    "speechopen run01 EEG sidecar",
+                    s3_url("ds007630/sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.json"),
+                    "json",
+                ),
+                Target(
+                    "speechopen run01 vocal wav header",
+                    s3_url("ds007630/sub-01/ses-20230829/beh/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_recording-vocal_beh.wav"),
+                    "wav",
+                    4096,
+                ),
+                Target(
+                    "speechopen run01 EDF bytes",
+                    s3_url("ds007630/sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.edf"),
+                    "binary",
+                    512,
+                ),
+            ],
+        ),
+        Probe(
+            "ds007602",
+            "EEG-Speech Brain Decoding Dataset",
+            "OpenNeuro",
+            "https://openneuro.org/datasets/ds007602",
+            "p2-production",
+            "Overt speech production probe; audio availability/path must be verified per release",
+            [
+                Target("dataset_description", s3_url("ds007602/dataset_description.json"), "json"),
+                Target("README", s3_url("ds007602/README"), "text"),
+                Target("participants", s3_url("ds007602/participants.tsv"), "tsv"),
+                Target(
+                    "speechopen run01 events",
+                    s3_url("ds007602/sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_events.tsv"),
+                    "tsv",
+                ),
+                Target(
+                    "speechopen run01 channels",
+                    s3_url("ds007602/sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_channels.tsv"),
+                    "tsv",
+                ),
+                Target(
+                    "speechopen run01 EEG sidecar",
+                    s3_url("ds007602/sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.json"),
+                    "json",
+                ),
+                Target(
+                    "speechopen run01 EDF bytes",
+                    s3_url("ds007602/sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.edf"),
+                    "binary",
+                    512,
+                ),
+            ],
+        ),
+        Probe(
             "ds003774",
             "MUSIN-G music listening EEG",
             "OpenNeuro",
@@ -513,6 +642,120 @@ def build_probes() -> list[Probe]:
                 Target("channels", s3_url("ds007591/sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_channels.tsv"), "tsv"),
                 Target("EEG sidecar", s3_url("ds007591/sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_eeg.json"), "json"),
                 Target("raw EDF bytes", s3_url("ds007591/sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_eeg.edf"), "binary", 512),
+            ],
+        ),
+        Probe(
+            "ds005170",
+            "Chisco Chinese imagined speech",
+            "OpenNeuro",
+            "https://openneuro.org/datasets/ds005170",
+            "p2-imagined",
+            "Chinese imagined speech probe; raw EDF plus FIF/PKL derivatives and text stimuli",
+            [
+                Target("dataset_description", s3_url("ds005170/dataset_description.json"), "json"),
+                Target("README", s3_url("ds005170/README"), "text"),
+                Target("text split xlsx", s3_url("ds005170/textdataset/split_data_1.xlsx"), "xlsx"),
+                Target(
+                    "sub01 ses01 raw EDF bytes",
+                    s3_url("ds005170/sub-01/ses-01/eeg/sub-01_ses-01_task-imagine_run-01_eeg.edf"),
+                    "binary",
+                    512,
+                ),
+                Target(
+                    "sub01 preprocessed FIF bytes",
+                    s3_url("ds005170/derivatives/preprocessed_fif/sub-01/eeg/sub-01_task-imagine_run-01_eeg.fif"),
+                    "binary",
+                    512,
+                ),
+            ],
+        ),
+        Probe(
+            "ds003626",
+            "Inner Speech",
+            "OpenNeuro",
+            "https://openneuro.org/datasets/ds003626",
+            "p2-inner-speech",
+            "Spanish inner/pronounced/visualized speech commands; 10 subjects and 5640 trials",
+            [
+                Target("dataset_description", s3_url("ds003626/dataset_description.json"), "json"),
+                Target("README", s3_url("ds003626/README"), "text"),
+                Target(
+                    "sub01 ses01 events dat",
+                    s3_url("ds003626/derivatives/sub-01/ses-01/sub-01_ses-01_events.dat"),
+                    "binary",
+                    2048,
+                ),
+                Target(
+                    "sub01 ses01 EEG epochs bytes",
+                    s3_url("ds003626/derivatives/sub-01/ses-01/sub-01_ses-01_eeg-epo.fif"),
+                    "binary",
+                    512,
+                ),
+            ],
+        ),
+        Probe(
+            "ds004306",
+            "EEG Semantic Imagination and Perception Dataset",
+            "OpenNeuro",
+            "https://openneuro.org/datasets/ds004306",
+            "p2-semantic-proxy",
+            "Auditory/visual/orthographic perception and semantic imagination proxy",
+            [
+                Target("dataset_description", s3_url("ds004306/dataset_description.json"), "json"),
+                Target("participants", s3_url("ds004306/participants.tsv"), "tsv"),
+                Target("README", s3_url("ds004306/README"), "text"),
+                Target("flower audio bytes", s3_url("ds004306/stimuli/audio/flower/1.ogg"), "binary", 512),
+                Target(
+                    "sub10 preprocessed FIF bytes",
+                    s3_url("ds004306/derivatives/preprocessed/sub-010/ses-01/eeg/sub10_sess1_50_ica_eeg-1.fif"),
+                    "binary",
+                    512,
+                ),
+            ],
+        ),
+        Probe(
+            "kara_one",
+            "Kara One imagined and articulated speech",
+            "Web",
+            "https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html",
+            "p2-imagined-overt",
+            "Imagined and vocalized phonemic/single-word prompts with EEG, face tracking, and audio",
+            [
+                Target("dataset page", "https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html", "text"),
+            ],
+        ),
+        Probe(
+            "feis_3554128",
+            "Fourteen-channel EEG with Imagined Speech",
+            "Zenodo",
+            "https://zenodo.org/records/3554128",
+            "p2-low-density",
+            "Heard/imagined/spoken English phonemes plus Chinese syllables with recorded audio",
+            [],
+            zenodo_id=3554128,
+        ),
+        Probe(
+            "ugr_mindvoice",
+            "UGR-MINDVOICE",
+            "Web",
+            "https://osf.io/6sh5d",
+            "p2-overt-covert",
+            "Iberian Spanish overt/covert EEG-audio dataset; use OSF listing and GitHub code first",
+            [
+                Target("OSF root listing", "https://api.osf.io/v2/nodes/6sh5d/files/osfstorage/", "json"),
+                Target("GitHub README", "https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/Readme.md", "text"),
+                Target("GitHub config", "https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/config.yaml", "text"),
+            ],
+        ),
+        Probe(
+            "cire_2025",
+            "CIRE Chinese intention recognition EEG",
+            "Web",
+            "https://www.nature.com/articles/s41597-025-05957-y",
+            "p2-prosody-intention",
+            "Mandarin prosodic emotion/intention listening with 128ch EEG, raw audio, and Wav2Vec2 features",
+            [
+                Target("Scientific Data page", "https://www.nature.com/articles/s41597-025-05957-y", "text", 262144),
             ],
         ),
         Probe(
@@ -607,8 +850,10 @@ def run(probes: list[Probe], artifact_dir: Path | None = None) -> list[dict[str,
                 results.append(probe_openneuro(probe, artifact_dir))
             elif probe.source == "Zenodo":
                 results.append(probe_zenodo(probe, artifact_dir))
-            else:
+            elif probe.github_api is not None:
                 results.append(probe_github(probe, artifact_dir))
+            else:
+                results.append(probe_generic(probe, artifact_dir))
         except Exception as exc:
             results.append(
                 {
@@ -638,9 +883,14 @@ def compact_markdown(results: list[dict[str, Any]]) -> str:
             status = "ERROR"
             evidence = res["error"]
         else:
-            status = "OK"
+            target_errors = [target for target in res.get("targets", []) if "error" in target]
+            status = "PARTIAL" if target_errors else "OK"
             bits = []
+            for target in target_errors[:3]:
+                bits.append(f"{target.get('label')}: {target.get('error')}")
             for target in res.get("targets", [])[:4]:
+                if "error" in target:
+                    continue
                 parsed = target.get("parsed", {})
                 if isinstance(parsed, dict):
                     if target["kind"] == "wav":
@@ -668,6 +918,8 @@ def compact_markdown(results: list[dict[str, Any]]) -> str:
                         bits.append(f"{target['label']}: {markdown_cell(str(value))}")
                     else:
                         bits.append(f"{target['label']}: {target.get('bytes_read')} bytes")
+            if not bits and res.get("file_count") is not None:
+                bits.append(f"Zenodo files: {res.get('file_count')}; DOI: {res.get('doi')}")
             evidence = "; ".join(bits)
         lines.append(
             f"| {res.get('dataset_id')} | {res.get('source')} | {res.get('priority')} | {status} | {evidence} |"
