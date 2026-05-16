@@ -354,93 +354,67 @@ OpenMIIR · MUSIN-G · MAD-EEG
 
 ---
 
-## 8. Metadata Probe 与下载执行计划
+## 8. 样例抓取状态与剩余缺口
 
-### 新增数据集的优先 probe
+### 口径
 
-| 数据集 | 先验 probe |
-| --- | --- |
-| `ds007630` | EEGDash dataset page 已保存；OpenNeuro S3 object GET 对 BIDS/EDF/WAV 返回 403，后续需 EEGDash/OpenNeuro client 拉取 |
-| `ds007602` | `dataset_description.json`、`participants.tsv`、single run `events.tsv/channels.tsv/eeg.json`、EDF byte range；未在 probed `beh/` prefix 暴露 vocal wav |
-| `ds005170` | `dataset_description.json`、`README`、sub-01 raw EDF byte range、preprocessed FIF byte range |
-| `ds003626` | `dataset_description.json`、`README`、derivative events.dat、epoched FIF byte range |
-| Kara One | dataset webpage、participant archive list、helper scripts |
-| FEIS | Zenodo record metadata、file list、archive checksum/size |
-| UGR-MINDVOICE | OSF folder listing、GitHub `Readme.md`、config / scripts |
-| `ds004306` | `dataset_description.json`、`participants.tsv`、README、short auditory stimulus、preprocessed FIF byte range |
-| CIRE | Scientific Data page、ScienceDB repository metadata、README / participants / sentences / events when downloaded |
+- `selected_public / selected_large / selected_contact` 仍按 MD 入池判断；本节只记录本地样例抓取进度。
+- 这里的 `direct audio/eeg` 不把 `*.zip.head.bin`、`*.tar.gz.head.bin`、archive header 或纯网页 metadata 算进去。
+- EEG byte-range header、BIDS sidecar、events/channels 可以用于下载路径和格式验证，但不等同于完整 train-ready trial。
 
-### 样例根目录
+### 目录检查
 
-```
-data/voice_eeg_dataset_samples/   （已加入 .gitignore）
-├── manifest.json
-├── README.md
-├── _unified_index/
-│   ├── manifest_compact.json
-│   ├── sample_files.tsv
-│   └── sample_status.md
-├── _unified_samples/ # 指向各数据集样例文件的统一 symlink 目录
-└── <category>/<dataset_slug>/
-    ├── local/           # 本地完整样例
-    ├── remote/          # 公开 metadata / 小文件
-    ├── probe_artifacts/ # EEG 预览图 + 探测文件
-    ├── status.json
-    └── README.md
-```
+- 样例根目录：`data/voice_eeg_dataset_samples/`
+- 数据集目录：37 / 37 均存在，且每个目录都有 `status.json` 和 `README.md`
+- 统一索引：`data/voice_eeg_dataset_samples/_unified_index/sample_files.tsv`
+- 统一样例目录：`data/voice_eeg_dataset_samples/_unified_samples/`
+- 当前样例记录：296 个文件，统一 symlink：296 个
 
-### 自动样例下载结果（2026-05-13）
+### 本轮实际新增抓取
 
-本轮按 MD 已选 37 个数据集逐个生成样例目录。结果：
+| 数据集 | 新增拿到的具体样例 | 剩余缺口 |
+| --- | --- | --- |
+| `cire_2025` | ScienceDB `sentences.csv`、`156.wav`、`sub-02_task-CIRE_eeg.set` 头部 | 完整 `.set` 仍需分批拉 |
+| `ugr_mindvoice` | sub-01 `events.tsv/channels.tsv/eeg.json`、EDF 头、audio events、匿名化 wav 头 | EDF/wav 全文件较大 |
+| `ms_aasd_17149387` | `female_001.wav`、`male_001.wav`、`mixed_001.wav` | CNT EEG 单文件数百 MB |
+| `feis_3554128` | Hearing/Speaking 两个 decoded wav | EEG 仍需完整 archive 展开确认 |
+| `weissbart_natural_speech` | `onsets.mat`、词频 timed CSV | 没有小的 EEG/audio 成员；需完整大包选 subject |
+| `fuglsang2020_3618205` | sub-026 EEG JSON、channels、BDF 头 | speech audio 未选到小成员 |
+| `aasd_17413336` | `mixed_001.wav` | CNT EEG 单文件数百 MB |
+| `kul_aad_4004271` | `rep_part2_track2_dry.wav`、`S2.mat` 头 | 完整 EEG MAT 仍大 |
+| `dtu_aad_1199011` | `aske_story4_trial_8.wav` | EEG MAT 单文件约 755 MB 起 |
+| `eeg_aad_255ch_4518754` | `part1_track1_dry.wav` | EEG 在 `S3.tar.gz`，暂不能安全随机展开 |
+| `mad_eeg_4537751` | 短 wav stimulus、HDF5 EEG 头 | 完整 HDF5 仍需后续拉取 |
+| `etard_continuous_speech_7086209` | BrainVision `vhdr/vmrk` 小成员 | 真正 EEG payload / audio 仍在大 Zip64 内 |
+| `four_talker_aad_10803261` | `Record.xses` | Poly5 EEG 单文件约 140 MB+ |
+| `four_direction_aad_10803229` | `recordInformation.json`、`evt.bdf` | 完整 scalp EEG 大文件、音频未展开 |
+| `non_block_aad_14887886` | ear/scalp session info、`evt.bdf` | Poly5 / scalp EEG payload 仍大 |
+| `asa_lin2024_11541114` | 一个完整 raw FIF trial：`S001_E1_Trial1_raw.fif` | 对应音频未在该包中 |
+| `geirnaert2025_16536441` | BIDS participants、events、channels、eeg.json | 原始/预处理 EEG payload 仍大 |
+| `kara_one` | dataset page、`split_data.m`、`src.zip` | participant `tar.bz2` 不适合 range 抽单 trial，需整包 |
 
-- `data/voice_eeg_dataset_samples/manifest.json`: 37 / 37 datasets present, 37 / 37 `ready_or_partial_sample`
-- `data/voice_eeg_dataset_samples/_unified_index/sample_files.tsv`: 253 个样例文件记录
-- `data/voice_eeg_dataset_samples/_unified_samples/`: 253 个统一 symlink
-- 23 个数据集已拿到 EEG 小样例或 EEG 文件头；9 个数据集已拿到 audio 小样例或 audio/archive 文件头；24 个数据集至少有 audio 或 EEG
-- 13 个数据集当前仅 metadata 或大 archive header，尚未展开到单 trial audio/eeg
-- 真正自动失败项：`ds007630` 的 OpenNeuro S3 object GET 返回 403；已保存 EEGDash metadata，EEG/audio 需用 EEGDash/OpenNeuro client 或 DataLad/OpenNeuro CLI 继续拉
+### 严格覆盖统计
 
-| 数据集 | Audio | EEG | Metadata/other | 自动样例状态 |
-| --- | ---: | ---: | ---: | --- |
-| `ds004408` | 6 | 8 | 9 | 已拿到 audio/eeg 小样例或文件头 |
-| `weissbart_natural_speech` | 0 | 0 | 2 | metadata 或大 archive header；未展开到单 trial audio/eeg |
-| `ds006434` | 2 | 7 | 6 | 已拿到 audio/eeg 小样例或文件头 |
-| `ds007630_eeg_speech_brain_decoding` | 0 | 0 | 1 | 仅 EEGDash metadata；OpenNeuro S3 object GET 403，EEG/audio 需 EEGDash/OpenNeuro client |
-| `ds007602_eeg_speech_overt` | 0 | 4 | 4 | 已拿到 audio/eeg 小样例或文件头 |
-| `etard_continuous_speech_7086209` | 0 | 0 | 2 | metadata 或大 archive header；未展开到单 trial audio/eeg |
-| `ds007591` | 0 | 4 | 8 | 已拿到 audio/eeg 小样例或文件头 |
-| `kara_one` | 0 | 0 | 1 | 仅网页 metadata；participant archive 需人工选包 |
-| `sparrkulee_eegdash` | 0 | 0 | 1 | metadata 或大 archive header；未展开到单 trial audio/eeg |
-| `ds005345` | 6 | 8 | 16 | 已拿到 audio/eeg 小样例或文件头 |
-| `esaa_7078451` | 0 | 0 | 7 | metadata 或大 archive header；未展开到单 trial audio/eeg |
-| `nju_aad_7253438` | 0 | 0 | 3 | metadata 或大 archive header；未展开到单 trial audio/eeg |
-| `ds006465_3m_cpseed` | 0 | 6 | 2 | 已拿到 audio/eeg 小样例或文件头 |
-| `ds005170_chisco` | 0 | 2 | 3 | 已拿到 audio/eeg 小样例或文件头 |
-| `cire_2025` | 0 | 0 | 1 | 仅论文页 metadata；ScienceDB 数据需人工进入仓库 |
-| `aasd_17413336` | 1 | 0 | 2 | 已拿到 audio/eeg 小样例或文件头 |
-| `ms_aasd_17149387` | 0 | 0 | 5 | metadata 或大 archive header；未展开到单 trial audio/eeg |
-| `ds004718` | 3 | 3 | 9 | 已拿到 audio/eeg 小样例或文件头 |
-| `cantonese_tone_syllable_7750292` | 0 | 1 | 1 | 已拿到 audio/eeg 小样例或文件头 |
-| `ds006104` | 8 | 5 | 19 | 已拿到 audio/eeg 小样例或文件头 |
-| `ds003626_inner_speech` | 0 | 3 | 2 | 已拿到 audio/eeg 小样例或文件头 |
-| `feis_3554128` | 0 | 0 | 2 | metadata 或大 archive header；未展开到单 trial audio/eeg |
-| `ugr_mindvoice` | 0 | 0 | 3 | OSF/GitHub metadata；subject EEG/audio 需按 OSF 文件树继续选包 |
-| `ds004306_semantic_imagination` | 1 | 1 | 3 | 已拿到 audio/eeg 小样例或文件头 |
-| `kul_aad_4004271` | 0 | 1 | 5 | 已拿到 audio/eeg 小样例或文件头 |
-| `dtu_aad_1199011` | 1 | 1 | 3 | 已拿到 audio/eeg 小样例或文件头 |
-| `eeg_aad_255ch_4518754` | 0 | 1 | 5 | 已拿到 audio/eeg 小样例或文件头 |
-| `openmiir` | 0 | 0 | 6 | metadata 或大 archive header；未展开到单 trial audio/eeg |
-| `musin_g_ds003774` | 2 | 4 | 7 | 已拿到 audio/eeg 小样例或文件头 |
-| `mad_eeg_4537751` | 0 | 1 | 7 | 已拿到 audio/eeg 小样例或文件头 |
-| `four_talker_aad_10803261` | 0 | 1 | 1 | 已拿到 audio/eeg 小样例或文件头 |
-| `four_direction_aad_10803229` | 0 | 1 | 1 | 已拿到 audio/eeg 小样例或文件头 |
-| `non_block_aad_14887886` | 0 | 2 | 1 | 已拿到 audio/eeg 小样例或文件头 |
-| `asa_lin2024_11541114` | 0 | 1 | 2 | 已拿到 audio/eeg 小样例或文件头 |
-| `fuglsang2020_3618205` | 0 | 0 | 1 | metadata 或大 archive header；未展开到单 trial audio/eeg |
-| `rotaru2024_11058711` | 0 | 1 | 2 | 已拿到 audio/eeg 小样例或文件头 |
-| `geirnaert2025_16536441` | 0 | 2 | 2 | 已拿到 audio/eeg 小样例或文件头 |
+| 覆盖状态 | 数量 | 数据集 |
+| --- | ---: | --- |
+| direct audio + direct EEG/probe | 11 | `ds004408`, `ds006434`, `ds005345`, `cire_2025`, `ds004718`, `ds006104`, `ugr_mindvoice`, `ds004306_semantic_imagination`, `kul_aad_4004271`, `musin_g_ds003774`, `mad_eeg_4537751` |
+| 只有 direct audio | 5 | `aasd_17413336`, `ms_aasd_17149387`, `feis_3554128`, `dtu_aad_1199011`, `eeg_aad_255ch_4518754` |
+| 只有 direct EEG/probe | 14 | `ds007602_eeg_speech_overt`, `etard_continuous_speech_7086209`, `ds007591`, `ds006465_3m_cpseed`, `ds005170_chisco`, `cantonese_tone_syllable_7750292`, `ds003626_inner_speech`, `four_talker_aad_10803261`, `four_direction_aad_10803229`, `non_block_aad_14887886`, `asa_lin2024_11541114`, `fuglsang2020_3618205`, `rotaru2024_11058711`, `geirnaert2025_16536441` |
+| 仍无 direct audio/eeg | 7 | `weissbart_natural_speech`, `ds007630_eeg_speech_brain_decoding`, `kara_one`, `sparrkulee_eegdash`, `esaa_7078451`, `nju_aad_7253438`, `openmiir` |
 
-### 本地完整样例（可直接跑代码）
+### 仍无 direct audio/eeg 的条目
+
+| 数据集 | 当前拿到 | 为什么没展开 | 下一步 |
+| --- | --- | --- | --- |
+| `weissbart_natural_speech` | Zenodo metadata、archive header、stim timing/word CSV | 小成员主要是 stimulus metadata；EEG/audio 在 13.97 GB Zip64 大包内 | 选定 subject 后允许大文件或分块下载 |
+| `ds007630_eeg_speech_brain_decoding` | EEGDash 页面 | 直接 OpenNeuro S3 object GET 返回 403 | 用 EEGDash / OpenNeuro / DataLad client 拉 BIDS 文件 |
+| `kara_one` | webpage、helper code | participant `tar.bz2` 每个约 2.1-2.35 GB，不能安全 range 抽单 trial | 选择一个 participant 整包下载 |
+| `sparrkulee_eegdash` | EEGDash metadata | raw 下载路由未从页面暴露 | 继续查 EEGDash API/raw resolver |
+| `esaa_7078451` | README、preprocess、`S1.zip` header | `S1.zip` 里主要是 528 MB `S1.mat`，无小 trial 成员 | 允许拉完整 `S1.mat` 或换更小 subject |
+| `nju_aad_7253438` | metadata、script、archive header | subject MAT 最小也约 103 MB | 允许拉 `S18.mat` 或先只做 metadata 级接入 |
+| `openmiir` | GitHub README、stim meta、beat annotations | EEG/audio 数据不在当前 repo 小文件内 | 按 OpenMIIR 数据说明找原始数据镜像 |
+
+### 当前可直接跑的本地完整样例
 
 | 数据集 | 样例内容 | EEG 预览图 |
 | --- | --- | --- |
@@ -452,18 +426,8 @@ data/voice_eeg_dataset_samples/   （已加入 .gitignore）
 ### 样例管理命令
 
 ```bash
-# 重新生成所有样例
 python3 scripts/download_voice_eeg_dataset_samples.py
-
-# 只更新某个数据集
-python3 scripts/download_voice_eeg_dataset_samples.py --dataset ds005170_chisco
-
-# 允许下载较大远程文件
+python3 scripts/download_voice_eeg_dataset_samples.py --dataset cire_2025
 python3 scripts/download_voice_eeg_dataset_samples.py --allow-large
-
-# 生成所有本地 EEG 文件的预览图
-python3 scripts/visualize_eeg_samples.py
-
-# 轻量 metadata probe
 python3 scripts/probe_eeg_audio_datasets.py --only ds007602 ds005170 ds003626
 ```

@@ -14,9 +14,11 @@ import glob
 import json
 import os
 import shutil
+import struct
 import time
 import urllib.error
 import urllib.request
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -25,6 +27,13 @@ from urllib.parse import quote
 
 DEFAULT_ROOT = Path("data/voice_eeg_dataset_samples")
 DEFAULT_TIMEOUT = 45
+SAMPLE_STATUSES = {
+    "downloaded",
+    "downloaded_range",
+    "downloaded_zip_member",
+    "downloaded_tar_member",
+    "downloaded_tar_member_range",
+}
 
 
 @dataclass
@@ -34,6 +43,27 @@ class RemoteFile:
     max_mb: float = 25.0
     required: bool = False
     range_bytes: int | None = None
+
+
+@dataclass
+class ZipMemberFile:
+    record_id: str
+    archive_key: str
+    member_name: str
+    relpath: str
+    max_compressed_mb: float = 5.0
+    required: bool = False
+
+
+@dataclass
+class TarMemberFile:
+    record_id: str
+    archive_key: str
+    member_name: str
+    relpath: str
+    max_mb: float = 5.0
+    range_bytes: int | None = None
+    required: bool = False
 
 
 @dataclass
@@ -55,6 +85,8 @@ class DatasetSpec:
     access_note: str
     local_patterns: list[LocalPattern] = field(default_factory=list)
     remote_files: list[RemoteFile] = field(default_factory=list)
+    zip_members: list[ZipMemberFile] = field(default_factory=list)
+    tar_members: list[TarMemberFile] = field(default_factory=list)
 
 
 def openneuro_file(
@@ -97,6 +129,11 @@ def zenodo_file(
     )
 
 
+def zenodo_content_url(record_id: str, key: str) -> str:
+    encoded_key = quote(key, safe="")
+    return f"https://zenodo.org/api/records/{record_id}/files/{encoded_key}/content"
+
+
 DATASETS: list[DatasetSpec] = [
     DatasetSpec(
         slug="ds004408",
@@ -131,10 +168,14 @@ DATASETS: list[DatasetSpec] = [
         priority="P1",
         source_url="https://zenodo.org/records/7086168",
         sample_goal="One subject continuous speech EEG and stimulus metadata.",
-        access_note="Zenodo record is public; use record metadata first, then select a subject file manually if files are large.",
+        access_note="Zenodo record is public. Zip64 central directory can be probed by range; automatic sample extracts small stimulus timing/frequency files, while EEG/audio members remain too large for automatic trial expansion.",
         remote_files=[
             zenodo_metadata("7086168"),
             zenodo_file("7086168", "WeissbartSurprisal.zip", "remote/archive_headers/WeissbartSurprisal.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("7086168", "WeissbartSurprisal.zip", "WeissbartSurprisal/stim/onsets.mat", "remote/stim/onsets.mat", max_compressed_mb=1.0),
+            ZipMemberFile("7086168", "WeissbartSurprisal.zip", "WeissbartSurprisal/stim/word_frequencies/FLOP01_word_freq_timed.csv", "remote/stim/FLOP01_word_freq_timed.csv", max_compressed_mb=1.0),
         ],
     ),
     DatasetSpec(
@@ -206,10 +247,14 @@ DATASETS: list[DatasetSpec] = [
         priority="P0/P1",
         source_url="https://zenodo.org/records/7086209",
         sample_goal="One English continuous speech / competing-speaker EEG subject with aligned audiobook metadata.",
-        access_note="Zenodo public. Full HDF5/audio bundles can be large; automatic sample stores record metadata only.",
+        access_note="Zenodo public. Automatic sample extracts tiny BrainVision sidecars from the huge Zip64 archive; the real EEG/audio payload remains too large for automatic single-trial extraction.",
         remote_files=[
             zenodo_metadata("7086209"),
             zenodo_file("7086209", "EtardBrainstemAndComprehension.zip", "remote/archive_headers/EtardBrainstemAndComprehension.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("7086209", "EtardBrainstemAndComprehension.zip", "EtardBrainstemAndComprehension/eeg/YH20/YH20_hb_1.vhdr", "remote/eeg/YH20_hb_1.vhdr"),
+            ZipMemberFile("7086209", "EtardBrainstemAndComprehension.zip", "EtardBrainstemAndComprehension/eeg/YH20/YH20_hb_2.vmrk", "remote/eeg/YH20_hb_2.vmrk"),
         ],
     ),
     DatasetSpec(
@@ -239,9 +284,11 @@ DATASETS: list[DatasetSpec] = [
         priority="P2",
         source_url="https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html",
         sample_goal="Dataset page and one participant archive after manual size/terms check.",
-        access_note="Public academic-use dataset, 14 participant archives totaling about 24 GB. Automatic sample stores page metadata only.",
+        access_note="Public academic-use dataset, 14 participant tar.bz2 archives totaling about 24 GB. The bzip2 archives are not practical for byte-range single-trial extraction; automatic sample stores page/helper code only.",
         remote_files=[
             RemoteFile("https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html", "remote/kara_one.html", max_mb=5.0),
+            RemoteFile("https://www.cs.toronto.edu/~complingweb/data/karaOne/src/split_data.m", "remote/src/split_data.m", max_mb=1.0),
+            RemoteFile("https://www.cs.toronto.edu/~complingweb/data/karaOne/src.zip", "remote/src.zip", max_mb=5.0),
         ],
     ),
     DatasetSpec(
@@ -352,9 +399,13 @@ DATASETS: list[DatasetSpec] = [
         priority="P2",
         source_url="https://www.nature.com/articles/s41597-025-05957-y",
         sample_goal="Scientific Data page and ScienceDB metadata; then participants/sentences/events/audio files after repository probe.",
-        access_note="Open Scientific Data descriptor. Full dataset is hosted via ScienceDB; automatic sample stores publication metadata first.",
+        access_note="Open Scientific Data descriptor with ScienceDB files. Automatic sample now pulls the repository page, sentences table, one speech wav, and a byte-range header from one EEGLAB set file.",
         remote_files=[
             RemoteFile("https://www.nature.com/articles/s41597-025-05957-y", "remote/scientific_data_page.html", max_mb=5.0),
+            RemoteFile("https://www.scidb.cn/detail?dataSetId=4fefa14727964e72a4ae47470b8eb144", "remote/sciencedb_detail.html", max_mb=5.0),
+            RemoteFile("https://china.scidb.cn/download?fileId=103b970f465a2c50bbe62e2cc9026500", "remote/sentences.csv", max_mb=1.0),
+            RemoteFile("https://china.scidb.cn/download?fileId=f440a98d3035d8e80fa0bab03605d615", "remote/audio/156.wav", max_mb=2.0),
+            RemoteFile("https://china.scidb.cn/download?fileId=cf84f5ef2c08558ceb97765bd0762958", "remote/eeg/sub-02_task-CIRE_eeg.set.head.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -364,11 +415,15 @@ DATASETS: list[DatasetSpec] = [
         priority="P0/P1",
         source_url="https://zenodo.org/records/17413336",
         sample_goal="One Mandarin spontaneous attention-switch EEG subject with multi-speaker stimuli metadata.",
-        access_note="Zenodo public. Full EEG and audio zips are large; automatic sample stores record metadata only.",
+        access_note="Zenodo public. Automatic sample extracts one mixed speech wav from the stimuli zip; original CNT EEG members are hundreds of MB each.",
         remote_files=[
             zenodo_metadata("17413336"),
             zenodo_file("17413336", "Original EEG.zip", "remote/archive_headers/Original_EEG.zip.head.bin", range_bytes=65536),
             zenodo_file("17413336", "Stimuli Audio.zip", "remote/archive_headers/Stimuli_Audio.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("17413336", "Stimuli Audio.zip", "Stimuli Audio/mixed_001.wav", "remote/audio/mixed_001.wav", max_compressed_mb=4.0),
+            ZipMemberFile("17413336", "Original EEG.zip", "Original EEG/S1/S1.cnt", "remote/eeg/S1.cnt", max_compressed_mb=5.0),
         ],
     ),
     DatasetSpec(
@@ -378,13 +433,20 @@ DATASETS: list[DatasetSpec] = [
         priority="P0/P1",
         source_url="https://zenodo.org/records/17149387",
         sample_goal="One Mandarin mixed-speech self-initiated attention-switch subject with metadata.",
-        access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
+        access_note="Zenodo public. Automatic sample extracts small speech wav members from the audio zips; CNT EEG files are hundreds of MB each and stay as archive/header probes unless a full subject pull is requested.",
         remote_files=[
             zenodo_metadata("17149387"),
             zenodo_file("17149387", "StimList.xlsx", "remote/StimList.xlsx", max_mb=1.0),
             zenodo_file("17149387", ".cnt.zip", "remote/archive_headers/cnt.zip.head.bin", range_bytes=65536),
             zenodo_file("17149387", "Female_wav.zip", "remote/archive_headers/Female_wav.zip.head.bin", range_bytes=65536),
+            zenodo_file("17149387", "Male_wav.zip", "remote/archive_headers/Male_wav.zip.head.bin", range_bytes=65536),
             zenodo_file("17149387", "Mix_wav_Nospace.zip", "remote/archive_headers/Mix_wav_Nospace.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("17149387", "Female_wav.zip", "Female_wav/female_001.wav", "remote/audio/female_001.wav"),
+            ZipMemberFile("17149387", "Male_wav.zip", "Male_wav/male_001.wav", "remote/audio/male_001.wav"),
+            ZipMemberFile("17149387", "Mix_wav_Nospace.zip", "Mix_wav_Nospace/mixed_001.wav", "remote/audio/mixed_001.wav"),
+            ZipMemberFile("17149387", ".cnt.zip", ".cnt/S1.cnt", "remote/eeg/S1.cnt", max_compressed_mb=5.0),
         ],
     ),
     DatasetSpec(
@@ -467,10 +529,14 @@ DATASETS: list[DatasetSpec] = [
         priority="P2",
         source_url="https://zenodo.org/records/3554128",
         sample_goal="Zenodo metadata and file list for heard/imagined/spoken English phonemes and Chinese syllables.",
-        access_note="Zenodo public, 1.6 GB archive. Automatic sample stores record metadata; archive download is safe after terms/space check.",
+        access_note="Zenodo public, 1.6 GB archive. Automatic sample extracts two small decoded wav members from the archive; EEG files still need archive layout confirmation/full subject extraction.",
         remote_files=[
             zenodo_metadata("3554128"),
             zenodo_file("3554128", "scottwellington/FEIS-v1.1.zip", "remote/archive_headers/FEIS-v1.1.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("3554128", "scottwellington/FEIS-v1.1.zip", "scottwellington-FEIS-7e726fd/B059691/decoded wavs/Raw/Hearing/f_raw.wav", "remote/audio/feis_hearing_f_raw.wav"),
+            ZipMemberFile("3554128", "scottwellington/FEIS-v1.1.zip", "scottwellington-FEIS-7e726fd/B059691/decoded wavs/Raw/Speaking/f_raw.wav", "remote/audio/feis_speaking_f_raw.wav"),
         ],
     ),
     DatasetSpec(
@@ -480,9 +546,17 @@ DATASETS: list[DatasetSpec] = [
         priority="P2",
         source_url="https://osf.io/6sh5d",
         sample_goal="OSF root listing plus GitHub README/config for overt/covert Spanish EEG-audio metadata.",
-        access_note="OSF public dataset and GitHub code. Download data folders after probing per-subject file sizes and audio anonymization details.",
+        access_note="OSF public dataset and GitHub code. Automatic sample now pulls sub-01 events/channels plus byte-range headers from a large EDF and anonymized wav; full files remain large.",
         remote_files=[
             RemoteFile("https://api.osf.io/v2/nodes/6sh5d/files/osfstorage/", "remote/osf_root_listing.json", max_mb=5.0),
+            RemoteFile("https://osf.io/download/yfb97/", "remote/dataset_description.json", max_mb=1.0),
+            RemoteFile("https://osf.io/download/95e2w/", "remote/participants.tsv", max_mb=1.0),
+            RemoteFile("https://osf.io/download/ba35t/", "remote/eeg/sub-01_run01_eeg.json", max_mb=1.0),
+            RemoteFile("https://osf.io/download/zhwj3/", "remote/eeg/sub-01_run01_events.tsv", max_mb=2.0),
+            RemoteFile("https://osf.io/download/62bj3/", "remote/eeg/sub-01_run01_channels.tsv", max_mb=1.0),
+            RemoteFile("https://osf.io/download/nfpm2/", "remote/eeg/sub-01_run01_eeg.edf.head.bin", range_bytes=65536),
+            RemoteFile("https://osf.io/download/jvgeu/", "remote/audio/sub-01_run01_audio_events.tsv", max_mb=2.0),
+            RemoteFile("https://osf.io/download/n6w4m/", "remote/audio/anonymized.wav.header.bin", range_bytes=65536),
             RemoteFile("https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/Readme.md", "remote/Readme.md", max_mb=5.0),
             RemoteFile("https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/config.yaml", "remote/config.yaml", max_mb=1.0),
         ],
@@ -510,13 +584,16 @@ DATASETS: list[DatasetSpec] = [
         priority="P1",
         source_url="https://zenodo.org/records/4004271",
         sample_goal="One AAD subject/trial and competing speech audio.",
-        access_note="Zenodo public. Full EEG/audio files are large; local cache currently has README/scripts.",
+        access_note="Zenodo public. Automatic sample extracts one small repeated dry speech wav and an EEG MAT byte-range header.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/zenodo-4004271/*", "probe_artifacts", required=True)],
         remote_files=[
             zenodo_metadata("4004271"),
             zenodo_file("4004271", "README.txt.txt", "remote/README.txt", max_mb=1.0),
             zenodo_file("4004271", "S2.mat", "remote/eeg/S2.mat.head.bin", range_bytes=65536),
             zenodo_file("4004271", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("4004271", "stimuli.zip", "stimuli/rep_part2_track2_dry.wav", "remote/audio/rep_part2_track2_dry.wav", max_compressed_mb=6.0),
         ],
     ),
     DatasetSpec(
@@ -526,13 +603,17 @@ DATASETS: list[DatasetSpec] = [
         priority="P1",
         source_url="https://zenodo.org/records/1199011",
         sample_goal="One reverberant AAD subject/trial with speech audio.",
-        access_note="Zenodo public. Local cache currently has preprocess script; full sample requires selecting files from record metadata.",
+        access_note="Zenodo public. Automatic sample extracts one trial wav from AUDIO.zip; EEG subject MAT files are hundreds of MB.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/zenodo-1199011/*", "probe_artifacts", required=True)],
         remote_files=[
             zenodo_metadata("1199011"),
             zenodo_file("1199011", "preproc_data.m", "remote/preproc_data.m", max_mb=1.0),
             zenodo_file("1199011", "AUDIO.zip", "remote/archive_headers/AUDIO.zip.head.bin", range_bytes=65536),
             zenodo_file("1199011", "EEG.zip", "remote/eeg/EEG.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("1199011", "AUDIO.zip", "aske_story4_trial_8.wav", "remote/audio/aske_story4_trial_8.wav", max_compressed_mb=3.0),
+            ZipMemberFile("1199011", "EEG.zip", "S2.mat", "remote/eeg/S2.mat", max_compressed_mb=5.0),
         ],
     ),
     DatasetSpec(
@@ -542,13 +623,16 @@ DATASETS: list[DatasetSpec] = [
         priority="P1",
         source_url="https://zenodo.org/records/4518754",
         sample_goal="One high-density AAD subject/trial and audio.",
-        access_note="Zenodo public. Data can be large; current local cache has misc/scripts zip samples.",
+        access_note="Zenodo public. Automatic sample extracts one dry speech wav from stimuli.zip; S3 tar.gz EEG remains large and non-random-access for automatic extraction.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/zenodo-4518754/*", "probe_artifacts", required=True)],
         remote_files=[
             zenodo_metadata("4518754"),
             zenodo_file("4518754", "misc.zip", "remote/misc.zip", max_mb=5.0),
             zenodo_file("4518754", "S3.tar.gz", "remote/eeg/S3.tar.gz.head.bin", range_bytes=65536),
             zenodo_file("4518754", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("4518754", "stimuli.zip", "stimuli/part1_track1_dry.wav", "remote/audio/part1_track1_dry.wav", max_compressed_mb=25.0),
         ],
     ),
     DatasetSpec(
@@ -592,7 +676,7 @@ DATASETS: list[DatasetSpec] = [
         priority="P3",
         source_url="https://zenodo.org/records/4537751",
         sample_goal="One target-instrument EEG/audio sample.",
-        access_note="Zenodo public. Current local cache has behavioral/raw YAML/sequences snippets.",
+        access_note="Zenodo public. Automatic sample extracts one short wav stimulus; EEG HDF5 is available as a byte-range header.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/zenodo-4537751/*", "probe_artifacts", required=True)],
         remote_files=[
             zenodo_metadata("4537751"),
@@ -600,6 +684,9 @@ DATASETS: list[DatasetSpec] = [
             zenodo_file("4537751", "madeeg_raw.yaml", "remote/madeeg_raw.yaml", max_mb=1.0),
             zenodo_file("4537751", "madeeg_raw.hdf5", "remote/eeg/madeeg_raw.hdf5.head.bin", range_bytes=65536),
             zenodo_file("4537751", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("4537751", "stimuli.zip", "stimuli/pop_falldead_solo_Dr_theme1_mono_4.wav", "remote/audio/pop_falldead_solo_Dr_theme1_mono_4.wav", max_compressed_mb=1.0),
         ],
     ),
     DatasetSpec(
@@ -609,10 +696,14 @@ DATASETS: list[DatasetSpec] = [
         priority="P0",
         source_url="https://zenodo.org/records/10803261",
         sample_goal="Zenodo record metadata for 4-speaker spatialized Mandarin AAD (64ch NeuSen + cEEGrid).",
-        access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
+        access_note="Zenodo public. Automatic sample extracts the small acquisition session file from ear_raw.zip; Poly5 EEG members are about 140 MB+ compressed.",
         remote_files=[
             zenodo_metadata("10803261"),
             zenodo_file("10803261", "ear_raw.zip", "remote/eeg/ear_raw.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("10803261", "ear_raw.zip", "sub1/Record.xses", "remote/eeg/sub1_Record.xses", max_compressed_mb=1.0),
+            ZipMemberFile("10803261", "ear_raw.zip", "sub1/sub1.Poly5", "remote/eeg/sub1.Poly5", max_compressed_mb=5.0),
         ],
     ),
     DatasetSpec(
@@ -622,10 +713,14 @@ DATASETS: list[DatasetSpec] = [
         priority="P0",
         source_url="https://zenodo.org/records/10803229",
         sample_goal="Zenodo record metadata for 4-direction spatialized Mandarin AAD (64ch, anechoic).",
-        access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
+        access_note="Zenodo public. Automatic sample extracts small event/record-info BDF side files; full scalp EEG members remain large.",
         remote_files=[
             zenodo_metadata("10803229"),
             zenodo_file("10803229", "EEG_raw.zip", "remote/eeg/EEG_raw.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("10803229", "EEG_raw.zip", "EEG_raw/sub1/recordInformation.json", "remote/eeg/sub1_recordInformation.json", max_compressed_mb=1.0),
+            ZipMemberFile("10803229", "EEG_raw.zip", "EEG_raw/sub1/evt.bdf", "remote/eeg/sub1_evt.bdf", max_compressed_mb=1.0),
         ],
     ),
     DatasetSpec(
@@ -635,11 +730,16 @@ DATASETS: list[DatasetSpec] = [
         priority="P0/P1",
         source_url="https://zenodo.org/records/14887886",
         sample_goal="Zenodo record metadata for non-block 4-speaker Mandarin AAD with attention switching.",
-        access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
+        access_note="Zenodo public. Automatic sample extracts small ear/scalp session and event files; Poly5/scalp EEG payloads remain large.",
         remote_files=[
             zenodo_metadata("14887886"),
             zenodo_file("14887886", "eareeg.zip", "remote/eeg/eareeg.zip.head.bin", range_bytes=65536),
             zenodo_file("14887886", "scalpeeg.zip", "remote/eeg/scalpeeg.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("14887886", "eareeg.zip", "eareeg/sub001/Record.xses", "remote/eeg/eareeg_sub001_Record.xses", max_compressed_mb=1.0),
+            ZipMemberFile("14887886", "scalpeeg.zip", "scalpeeg/sub001/recordInformation.json", "remote/eeg/scalpeeg_sub001_recordInformation.json", max_compressed_mb=1.0),
+            ZipMemberFile("14887886", "scalpeeg.zip", "scalpeeg/sub001/evt.bdf", "remote/eeg/scalpeeg_sub001_evt.bdf", max_compressed_mb=1.0),
         ],
     ),
     DatasetSpec(
@@ -649,11 +749,14 @@ DATASETS: list[DatasetSpec] = [
         priority="P1",
         source_url="https://zenodo.org/records/11541114",
         sample_goal="Zenodo record metadata for multi-angle (±5°–±90°) Mandarin 2-speaker AAD.",
-        access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
+        access_note="Zenodo public. Automatic sample extracts one full single-trial raw FIF from S001.zip.",
         remote_files=[
             zenodo_metadata("11541114"),
             zenodo_file("11541114", "preproc.zip", "remote/preproc.zip", max_mb=1.0),
             zenodo_file("11541114", "S001.zip", "remote/eeg/S001.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("11541114", "S001.zip", "S001/E1/S001_E1_Trial1_raw.fif", "remote/eeg/S001_E1_Trial1_raw.fif", max_compressed_mb=8.0),
         ],
     ),
     DatasetSpec(
@@ -663,8 +766,13 @@ DATASETS: list[DatasetSpec] = [
         priority="P1",
         source_url="https://zenodo.org/record/3618205",
         sample_goal="Zenodo record metadata for 44-subject Danish competing-speech AAD including hearing-impaired.",
-        access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
+        access_note="Zenodo public. The large tar archive exposes early BIDS EEG metadata by byte range; automatic sample extracts sub-026 JSON/channels and a BDF header, but no speech audio member has been selected yet.",
         remote_files=[zenodo_metadata("3618205")],
+        tar_members=[
+            TarMemberFile("3618205", "ds-eeg-snhl.tar", "ds-eeg-snhl/sub-026/eeg/sub-026_task-selectiveattention_eeg.json", "remote/eeg/sub-026_task-selectiveattention_eeg.json"),
+            TarMemberFile("3618205", "ds-eeg-snhl.tar", "ds-eeg-snhl/sub-026/eeg/sub-026_task-selectiveattention_channels.tsv", "remote/eeg/sub-026_task-selectiveattention_channels.tsv"),
+            TarMemberFile("3618205", "ds-eeg-snhl.tar", "ds-eeg-snhl/sub-026/eeg/sub-026_task-rest_eeg.bdf", "remote/eeg/sub-026_task-rest_eeg.bdf.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="rotaru2024_11058711",
@@ -687,12 +795,19 @@ DATASETS: list[DatasetSpec] = [
         priority="P1",
         source_url="https://zenodo.org/records/16536441",
         sample_goal="Zenodo record metadata for simultaneous scalp/around-ear/in-ear EEG AAD (Danish, 15 subjects).",
-        access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
+        access_note="Zenodo public. Automatic sample extracts BIDS participants/events/channels/eeg JSON from bids_dataset.zip; raw/preprocessed EEG payloads remain large.",
         remote_files=[
             zenodo_metadata("16536441"),
             zenodo_file("16536441", "experiment-manual.pdf", "remote/experiment-manual.pdf", max_mb=5.0),
             zenodo_file("16536441", "preprocessedData.zip", "remote/eeg/preprocessedData.zip.head.bin", range_bytes=65536),
             zenodo_file("16536441", "bids_dataset.zip", "remote/eeg/bids_dataset.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("16536441", "bids_dataset.zip", "bids_dataset/dataset_description.json", "remote/bids_dataset_description.json", max_compressed_mb=1.0),
+            ZipMemberFile("16536441", "bids_dataset.zip", "bids_dataset/participants.tsv", "remote/participants.tsv", max_compressed_mb=1.0),
+            ZipMemberFile("16536441", "bids_dataset.zip", "bids_dataset/sub-01/ses-01/eeg/sub-01_ses-01_task-selectiveAttention_events.tsv", "remote/eeg/sub-01_events.tsv", max_compressed_mb=1.0),
+            ZipMemberFile("16536441", "bids_dataset.zip", "bids_dataset/sub-01/ses-01/eeg/sub-01_ses-01_task-selectiveAttention_channels.tsv", "remote/eeg/sub-01_channels.tsv", max_compressed_mb=1.0),
+            ZipMemberFile("16536441", "bids_dataset.zip", "bids_dataset/sub-01/ses-01/eeg/sub-01_ses-01_task-selectiveAttention_eeg.json", "remote/eeg/sub-01_eeg.json", max_compressed_mb=1.0),
         ],
     ),
 ]
@@ -751,6 +866,327 @@ def remote_size(url: str, timeout: int) -> int | None:
             return int(value) if value else None
     except Exception:
         return None
+
+
+def zenodo_file_size(record_id: str, key: str, timeout: int) -> int | None:
+    request = urllib.request.Request(
+        f"https://zenodo.org/api/records/{record_id}",
+        headers={"User-Agent": "eeg-voice-sample-downloader/0.1"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            record = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    for item in record.get("files", []):
+        if item.get("key") == key:
+            size = item.get("size")
+            return int(size) if size is not None else None
+    return None
+
+
+def http_read_range(url: str, start: int, end: int, timeout: int) -> bytes:
+    if end < start:
+        return b""
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "eeg-voice-sample-downloader/0.1",
+            "Range": f"bytes={start}-{end}",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        status = getattr(response, "status", None)
+        data = response.read(end - start + 1)
+    if start and status != 206:
+        raise RuntimeError(f"Server did not honor byte range for {url}: HTTP {status}")
+    return data
+
+
+def parse_zip64_extra(extra: bytes, csize: int, usize: int, offset: int) -> tuple[int, int, int]:
+    pos = 0
+    while pos + 4 <= len(extra):
+        header_id, data_size = struct.unpack_from("<HH", extra, pos)
+        pos += 4
+        data = extra[pos : pos + data_size]
+        pos += data_size
+        if header_id != 0x0001:
+            continue
+        cursor = 0
+        values = [usize, csize, offset]
+        for idx, current in enumerate(values):
+            if current != 0xFFFFFFFF:
+                continue
+            if cursor + 8 > len(data):
+                break
+            values[idx] = struct.unpack_from("<Q", data, cursor)[0]
+            cursor += 8
+        return values[1], values[0], values[2]
+    return csize, usize, offset
+
+
+def list_zip_entries(url: str, archive_size: int, timeout: int, tail_bytes: int = 32 * 1024 * 1024) -> dict[str, dict]:
+    tail_start = max(0, archive_size - tail_bytes)
+    tail = http_read_range(url, tail_start, archive_size - 1, timeout)
+    eocd_rel = tail.rfind(b"PK\x05\x06")
+    if eocd_rel < 0:
+        raise RuntimeError("ZIP EOCD not found in archive tail")
+    eocd_abs = tail_start + eocd_rel
+    if eocd_rel + 22 > len(tail):
+        raise RuntimeError("ZIP EOCD is truncated")
+    fields = struct.unpack_from("<4s4H2LH", tail, eocd_rel)
+    total_entries = fields[4]
+    cd_size = fields[5]
+    cd_offset = fields[6]
+
+    if total_entries == 0xFFFF or cd_size == 0xFFFFFFFF or cd_offset == 0xFFFFFFFF:
+        locator_abs = eocd_abs - 20
+        if locator_abs >= tail_start:
+            locator = tail[locator_abs - tail_start : locator_abs - tail_start + 20]
+        else:
+            locator = http_read_range(url, locator_abs, locator_abs + 19, timeout)
+        if len(locator) != 20 or locator[:4] != b"PK\x06\x07":
+            raise RuntimeError("ZIP64 locator not found")
+        zip64_eocd_offset = struct.unpack_from("<Q", locator, 8)[0]
+        zip64_eocd = http_read_range(url, zip64_eocd_offset, zip64_eocd_offset + 55, timeout)
+        if len(zip64_eocd) < 56 or zip64_eocd[:4] != b"PK\x06\x06":
+            raise RuntimeError("ZIP64 EOCD not found")
+        zip64_fields = struct.unpack_from("<4sQ2H2L4Q", zip64_eocd, 0)
+        total_entries = zip64_fields[7]
+        cd_size = zip64_fields[8]
+        cd_offset = zip64_fields[9]
+
+    if cd_size > 128 * 1024 * 1024:
+        raise RuntimeError(f"ZIP central directory too large for safe probe: {cd_size} bytes")
+    cd_end = cd_offset + cd_size
+    if tail_start <= cd_offset and cd_end <= archive_size:
+        cd = tail[cd_offset - tail_start : cd_end - tail_start]
+    else:
+        cd = http_read_range(url, cd_offset, cd_end - 1, timeout)
+
+    entries: dict[str, dict] = {}
+    pos = 0
+    for _ in range(int(total_entries)):
+        if pos + 46 > len(cd):
+            break
+        fields = struct.unpack_from("<4s6H3L5H2L", cd, pos)
+        if fields[0] != b"PK\x01\x02":
+            break
+        method = fields[4]
+        csize = fields[8]
+        usize = fields[9]
+        name_len = fields[10]
+        extra_len = fields[11]
+        comment_len = fields[12]
+        offset = fields[16]
+        name_start = pos + 46
+        extra_start = name_start + name_len
+        comment_start = extra_start + extra_len
+        name = cd[name_start:extra_start].decode("utf-8", errors="replace")
+        extra = cd[extra_start:comment_start]
+        csize, usize, offset = parse_zip64_extra(extra, csize, usize, offset)
+        entries[name] = {
+            "method": method,
+            "compressed_size": csize,
+            "uncompressed_size": usize,
+            "local_offset": offset,
+        }
+        pos = comment_start + comment_len
+    return entries
+
+
+def download_zip_member_file(member: ZipMemberFile, dataset_dir: Path, timeout: int) -> dict:
+    url = zenodo_content_url(member.record_id, member.archive_key)
+    relpath = member.relpath
+    archive_size = remote_size(url, timeout) or zenodo_file_size(member.record_id, member.archive_key, timeout)
+    if archive_size is None:
+        return {
+            "record_id": member.record_id,
+            "archive_key": member.archive_key,
+            "member_name": member.member_name,
+            "relpath": relpath,
+            "required": member.required,
+            "status": "archive_size_unknown",
+        }
+    try:
+        entries = list_zip_entries(url, archive_size, timeout)
+        entry = entries.get(member.member_name)
+        if entry is None:
+            return {
+                "record_id": member.record_id,
+                "archive_key": member.archive_key,
+                "member_name": member.member_name,
+                "relpath": relpath,
+                "required": member.required,
+                "status": "member_not_found",
+                "archive_entries": len(entries),
+            }
+        max_bytes = int(member.max_compressed_mb * 1024 * 1024)
+        if entry["compressed_size"] > max_bytes:
+            return {
+                "record_id": member.record_id,
+                "archive_key": member.archive_key,
+                "member_name": member.member_name,
+                "relpath": relpath,
+                "required": member.required,
+                "status": "skipped_member_too_large",
+                "compressed_size": entry["compressed_size"],
+                "uncompressed_size": entry["uncompressed_size"],
+                "max_compressed_mb": member.max_compressed_mb,
+            }
+        local_header = http_read_range(url, entry["local_offset"], entry["local_offset"] + 29, timeout)
+        if len(local_header) < 30 or local_header[:4] != b"PK\x03\x04":
+            raise RuntimeError("ZIP local file header not found")
+        local_fields = struct.unpack_from("<4s5H3L2H", local_header, 0)
+        flags = local_fields[2]
+        method = local_fields[3]
+        name_len = local_fields[9]
+        extra_len = local_fields[10]
+        if flags & 0x1:
+            raise RuntimeError("Encrypted ZIP member is not supported")
+        data_start = entry["local_offset"] + 30 + name_len + extra_len
+        compressed = http_read_range(url, data_start, data_start + entry["compressed_size"] - 1, timeout)
+        if method == 0:
+            data = compressed
+        elif method == 8:
+            data = zlib.decompress(compressed, -zlib.MAX_WBITS)
+        else:
+            return {
+                "record_id": member.record_id,
+                "archive_key": member.archive_key,
+                "member_name": member.member_name,
+                "relpath": relpath,
+                "required": member.required,
+                "status": "unsupported_zip_method",
+                "method": method,
+            }
+        dest = dataset_dir / relpath
+        ensure_dir(dest.parent)
+        dest.write_bytes(data)
+        return {
+            "record_id": member.record_id,
+            "archive_key": member.archive_key,
+            "member_name": member.member_name,
+            "relpath": str(dest.relative_to(dataset_dir)),
+            "required": member.required,
+            "status": "downloaded_zip_member",
+            "bytes": len(data),
+            "compressed_size": entry["compressed_size"],
+            "uncompressed_size": entry["uncompressed_size"],
+        }
+    except urllib.error.HTTPError as exc:
+        return {
+            "record_id": member.record_id,
+            "archive_key": member.archive_key,
+            "member_name": member.member_name,
+            "relpath": relpath,
+            "required": member.required,
+            "status": "http_error",
+            "code": exc.code,
+            "reason": str(exc.reason),
+        }
+    except Exception as exc:
+        return {
+            "record_id": member.record_id,
+            "archive_key": member.archive_key,
+            "member_name": member.member_name,
+            "relpath": relpath,
+            "required": member.required,
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def parse_tar_name(header: bytes) -> str:
+    name = header[0:100].split(b"\0", 1)[0].decode("utf-8", errors="replace")
+    prefix = header[345:500].split(b"\0", 1)[0].decode("utf-8", errors="replace")
+    return f"{prefix}/{name}" if prefix else name
+
+
+def parse_tar_size(header: bytes) -> int:
+    raw = header[124:136]
+    if raw and raw[0] & 0x80:
+        value = int.from_bytes(raw, "big", signed=False)
+        value &= (1 << (8 * len(raw) - 1)) - 1
+        return value
+    text = raw.split(b"\0", 1)[0].strip() or b"0"
+    return int(text, 8)
+
+
+def download_tar_member_file(member: TarMemberFile, dataset_dir: Path, timeout: int) -> dict:
+    url = zenodo_content_url(member.record_id, member.archive_key)
+    relpath = member.relpath
+    pos = 0
+    try:
+        for _ in range(5000):
+            header = http_read_range(url, pos, pos + 511, timeout)
+            if len(header) < 512:
+                break
+            if header == b"\0" * 512:
+                break
+            name = parse_tar_name(header)
+            size = parse_tar_size(header)
+            data_start = pos + 512
+            padded_size = ((size + 511) // 512) * 512
+            if name == member.member_name:
+                read_size = member.range_bytes if member.range_bytes is not None else size
+                read_size = min(read_size, size)
+                if member.range_bytes is None and read_size > member.max_mb * 1024 * 1024:
+                    return {
+                        "record_id": member.record_id,
+                        "archive_key": member.archive_key,
+                        "member_name": member.member_name,
+                        "relpath": relpath,
+                        "required": member.required,
+                        "status": "skipped_member_too_large",
+                        "content_length": size,
+                        "max_mb": member.max_mb,
+                    }
+                data = http_read_range(url, data_start, data_start + read_size - 1, timeout)
+                dest = dataset_dir / relpath
+                ensure_dir(dest.parent)
+                dest.write_bytes(data)
+                return {
+                    "record_id": member.record_id,
+                    "archive_key": member.archive_key,
+                    "member_name": member.member_name,
+                    "relpath": str(dest.relative_to(dataset_dir)),
+                    "required": member.required,
+                    "status": "downloaded_tar_member_range" if member.range_bytes is not None else "downloaded_tar_member",
+                    "bytes": len(data),
+                    "content_length": size,
+                    "range_bytes": member.range_bytes,
+                }
+            pos = data_start + padded_size
+        return {
+            "record_id": member.record_id,
+            "archive_key": member.archive_key,
+            "member_name": member.member_name,
+            "relpath": relpath,
+            "required": member.required,
+            "status": "member_not_found",
+        }
+    except urllib.error.HTTPError as exc:
+        return {
+            "record_id": member.record_id,
+            "archive_key": member.archive_key,
+            "member_name": member.member_name,
+            "relpath": relpath,
+            "required": member.required,
+            "status": "http_error",
+            "code": exc.code,
+            "reason": str(exc.reason),
+        }
+    except Exception as exc:
+        return {
+            "record_id": member.record_id,
+            "archive_key": member.archive_key,
+            "member_name": member.member_name,
+            "relpath": relpath,
+            "required": member.required,
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
 
 
 def download_remote_file(remote: RemoteFile, dataset_dir: Path, allow_large: bool, default_max_mb: float, timeout: int) -> dict:
@@ -851,10 +1287,19 @@ def download_remote_file(remote: RemoteFile, dataset_dir: Path, allow_large: boo
         }
 
 
-def write_dataset_readme(spec: DatasetSpec, dataset_dir: Path, local_results: list[dict], remote_results: list[dict]) -> None:
+def write_dataset_readme(
+    spec: DatasetSpec,
+    dataset_dir: Path,
+    local_results: list[dict],
+    remote_results: list[dict],
+    zip_member_results: list[dict],
+    tar_member_results: list[dict],
+) -> None:
     copied_count = sum(len(item.get("copied", [])) for item in local_results)
     downloaded_count = sum(1 for item in remote_results if item.get("status") == "downloaded")
     range_count = sum(1 for item in remote_results if item.get("status") == "downloaded_range")
+    zip_member_count = sum(1 for item in zip_member_results if item.get("status") == "downloaded_zip_member")
+    tar_member_count = sum(1 for item in tar_member_results if item.get("status") in {"downloaded_tar_member", "downloaded_tar_member_range"})
     lines = [
         f"# {spec.title}",
         "",
@@ -867,6 +1312,8 @@ def write_dataset_readme(spec: DatasetSpec, dataset_dir: Path, local_results: li
         f"- local files copied: {copied_count}",
         f"- remote files downloaded: {downloaded_count}",
         f"- remote byte-range samples downloaded: {range_count}",
+        f"- zip members extracted: {zip_member_count}",
+        f"- tar members extracted: {tar_member_count}",
         "",
         "## Local Copy Results",
         "",
@@ -884,6 +1331,17 @@ def write_dataset_readme(spec: DatasetSpec, dataset_dir: Path, local_results: li
             lines.append(f"- {status}: `{relpath}` from {item.get('url')}")
     else:
         lines.append("- No safe automatic remote downloads configured.")
+    lines.extend(["", "## Archive Member Results", ""])
+    archive_results = zip_member_results + tar_member_results
+    if archive_results:
+        for item in archive_results:
+            status = item.get("status")
+            relpath = item.get("relpath")
+            member_name = item.get("member_name")
+            archive_key = item.get("archive_key")
+            lines.append(f"- {status}: `{relpath}` from `{archive_key}` member `{member_name}`")
+    else:
+        lines.append("- No archive member extraction configured.")
     lines.extend(
         [
             "",
@@ -904,8 +1362,17 @@ def prepare_dataset(spec: DatasetSpec, root: Path, allow_large: bool, default_ma
         download_remote_file(remote, dataset_dir, allow_large=allow_large, default_max_mb=default_max_mb, timeout=timeout)
         for remote in spec.remote_files
     ]
+    zip_member_results = [
+        download_zip_member_file(member, dataset_dir, timeout=timeout)
+        for member in spec.zip_members
+    ]
+    tar_member_results = [
+        download_tar_member_file(member, dataset_dir, timeout=timeout)
+        for member in spec.tar_members
+    ]
+    all_download_results = remote_results + zip_member_results + tar_member_results
     has_sample = any(item.get("copied") for item in local_results) or any(
-        item.get("status") in {"downloaded", "downloaded_range"} for item in remote_results
+        item.get("status") in SAMPLE_STATUSES for item in all_download_results
     )
     missing_required = [
         item
@@ -913,8 +1380,8 @@ def prepare_dataset(spec: DatasetSpec, root: Path, allow_large: bool, default_ma
         if item.get("required") and not item.get("copied")
     ] + [
         item
-        for item in remote_results
-        if item.get("required") and item.get("status") not in {"downloaded", "downloaded_range"}
+        for item in all_download_results
+        if item.get("required") and item.get("status") not in SAMPLE_STATUSES
     ]
     status = "ready_or_partial_sample" if has_sample else "manual_required"
     if missing_required:
@@ -931,9 +1398,11 @@ def prepare_dataset(spec: DatasetSpec, root: Path, allow_large: bool, default_ma
         "status": status,
         "local_results": local_results,
         "remote_results": remote_results,
+        "zip_member_results": zip_member_results,
+        "tar_member_results": tar_member_results,
     }
     (dataset_dir / "status.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-    write_dataset_readme(spec, dataset_dir, local_results, remote_results)
+    write_dataset_readme(spec, dataset_dir, local_results, remote_results, zip_member_results, tar_member_results)
     return record
 
 
@@ -942,8 +1411,13 @@ def classify_sample(relpath: str) -> str:
     name = Path(path).name
     parts = Path(path).parts
     suffixes = Path(path).suffixes
+    archive_header_suffixes = (".zip.head.bin", ".tar.head.bin", ".tar.gz.head.bin", ".tgz.head.bin")
+    if "archive_headers" in parts or name.endswith(archive_header_suffixes):
+        return "archive_header"
     if "stimuli" in parts or "audio" in parts or "audio" in name or any(token in path for token in ["vocal", ".wav", ".ogg", ".mp3", ".flac"]):
         return "audio"
+    if "stim" in parts or "annotation" in parts or "meta" in parts or "textdataset" in parts:
+        return "metadata"
     eeg_suffixes = {".edf", ".fif", ".vhdr", ".vmrk", ".eeg", ".set", ".mat", ".bdf", ".cnt"}
     if (
         "eeg" in parts
@@ -975,7 +1449,7 @@ def collect_sample_files(records: list[dict]) -> list[dict]:
                     }
                 )
         for item in record.get("remote_results", []):
-            if item.get("status") not in {"downloaded", "downloaded_range"}:
+            if item.get("status") not in SAMPLE_STATUSES:
                 continue
             relpath = item.get("relpath", "")
             rows.append(
@@ -990,6 +1464,23 @@ def collect_sample_files(records: list[dict]) -> list[dict]:
                     "path": str(base / relpath),
                 }
             )
+        for source_name, key in [("zip_member", "zip_member_results"), ("tar_member", "tar_member_results")]:
+            for item in record.get(key, []):
+                if item.get("status") not in SAMPLE_STATUSES:
+                    continue
+                relpath = item.get("relpath", "")
+                rows.append(
+                    {
+                        "slug": record["slug"],
+                        "category": record["category"],
+                        "priority": record["priority"],
+                        "kind": classify_sample(relpath),
+                        "source": source_name,
+                        "status": item.get("status"),
+                        "bytes": item.get("bytes", ""),
+                        "path": str(base / relpath),
+                    }
+                )
     return rows
 
 
@@ -1102,7 +1593,7 @@ def write_root_files(root: Path, records: list[dict]) -> None:
 
     by_dataset: dict[str, dict[str, int]] = {}
     for row in sample_files:
-        stats = by_dataset.setdefault(row["slug"], {"audio": 0, "eeg": 0, "metadata": 0, "other": 0})
+        stats = by_dataset.setdefault(row["slug"], {"audio": 0, "eeg": 0, "metadata": 0, "archive_header": 0, "other": 0})
         stats[row["kind"]] = stats.get(row["kind"], 0) + 1
     status_lines = [
         "# Unified Sample Status",
@@ -1112,13 +1603,13 @@ def write_root_files(root: Path, records: list[dict]) -> None:
         f"- sample files indexed: `{len(sample_files)}`",
         f"- unified sample links: `{unified_link_count}`",
         "",
-        "| Dataset | Status | Audio files | EEG files | Metadata/other files | Folder |",
-        "| --- | --- | ---: | ---: | ---: | --- |",
+        "| Dataset | Status | Audio files | EEG files | Archive headers | Metadata/other files | Folder |",
+        "| --- | --- | ---: | ---: | ---: | ---: | --- |",
     ]
     for record in records:
-        stats = by_dataset.get(record["slug"], {"audio": 0, "eeg": 0, "metadata": 0, "other": 0})
+        stats = by_dataset.get(record["slug"], {"audio": 0, "eeg": 0, "metadata": 0, "archive_header": 0, "other": 0})
         status_lines.append(
-            f"| `{record['slug']}` | `{record['status']}` | {stats.get('audio', 0)} | {stats.get('eeg', 0)} | {stats.get('metadata', 0) + stats.get('other', 0)} | `{record['dataset_dir']}` |"
+            f"| `{record['slug']}` | `{record['status']}` | {stats.get('audio', 0)} | {stats.get('eeg', 0)} | {stats.get('archive_header', 0)} | {stats.get('metadata', 0) + stats.get('other', 0)} | `{record['dataset_dir']}` |"
         )
     (unified_dir / "sample_status.md").write_text("\n".join(status_lines) + "\n", encoding="utf-8")
 
