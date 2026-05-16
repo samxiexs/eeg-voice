@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import os
 import shutil
 import time
 import urllib.error
@@ -19,6 +20,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import quote
 
 
 DEFAULT_ROOT = Path("data/voice_eeg_dataset_samples")
@@ -31,6 +33,7 @@ class RemoteFile:
     relpath: str
     max_mb: float = 25.0
     required: bool = False
+    range_bytes: int | None = None
 
 
 @dataclass
@@ -54,11 +57,19 @@ class DatasetSpec:
     remote_files: list[RemoteFile] = field(default_factory=list)
 
 
-def openneuro_file(dataset: str, path: str, relpath: str, max_mb: float = 25.0) -> RemoteFile:
+def openneuro_file(
+    dataset: str,
+    path: str,
+    relpath: str,
+    max_mb: float = 25.0,
+    range_bytes: int | None = None,
+) -> RemoteFile:
+    encoded_path = quote(path, safe="/%:_-.,~()")
     return RemoteFile(
-        url=f"https://s3.amazonaws.com/openneuro.org/{dataset}/{path}",
+        url=f"https://s3.amazonaws.com/openneuro.org/{dataset}/{encoded_path}",
         relpath=relpath,
         max_mb=max_mb,
+        range_bytes=range_bytes,
     )
 
 
@@ -67,6 +78,22 @@ def zenodo_metadata(record_id: str, relpath: str = "remote/zenodo_record.json") 
         url=f"https://zenodo.org/api/records/{record_id}",
         relpath=relpath,
         max_mb=10.0,
+    )
+
+
+def zenodo_file(
+    record_id: str,
+    key: str,
+    relpath: str,
+    max_mb: float = 25.0,
+    range_bytes: int | None = None,
+) -> RemoteFile:
+    encoded_key = quote(key, safe="")
+    return RemoteFile(
+        url=f"https://zenodo.org/api/records/{record_id}/files/{encoded_key}/content",
+        relpath=relpath,
+        max_mb=max_mb,
+        range_bytes=range_bytes,
     )
 
 
@@ -86,7 +113,15 @@ DATASETS: list[DatasetSpec] = [
         ],
         remote_files=[
             openneuro_file("ds004408", "dataset_description.json", "remote/dataset_description.json"),
+            openneuro_file("ds004408", "README", "remote/README"),
             openneuro_file("ds004408", "participants.tsv", "remote/participants.tsv"),
+            openneuro_file("ds004408", "stimuli/audio01.TextGrid", "remote/stimuli/audio01.TextGrid"),
+            openneuro_file("ds004408", "stimuli/audio01.wav", "remote/stimuli/audio01.wav.header.bin", range_bytes=65536),
+            openneuro_file("ds004408", "sub-001/eeg/sub-001_task-listening_run-01_channels.tsv", "remote/eeg/sub-001_run01_channels.tsv"),
+            openneuro_file("ds004408", "sub-001/eeg/sub-001_task-listening_run-01_eeg.json", "remote/eeg/sub-001_run01_eeg.json"),
+            openneuro_file("ds004408", "sub-001/eeg/sub-001_task-listening_run-01_eeg.vhdr", "remote/eeg/sub-001_run01_eeg.vhdr"),
+            openneuro_file("ds004408", "sub-001/eeg/sub-001_task-listening_run-01_eeg.vmrk", "remote/eeg/sub-001_run01_eeg.vmrk"),
+            openneuro_file("ds004408", "sub-001/eeg/sub-001_task-listening_run-01_eeg.eeg", "remote/eeg/sub-001_run01_eeg.head.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -97,7 +132,10 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/7086168",
         sample_goal="One subject continuous speech EEG and stimulus metadata.",
         access_note="Zenodo record is public; use record metadata first, then select a subject file manually if files are large.",
-        remote_files=[zenodo_metadata("7086168")],
+        remote_files=[
+            zenodo_metadata("7086168"),
+            zenodo_file("7086168", "WeissbartSurprisal.zip", "remote/archive_headers/WeissbartSurprisal.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="ds006434",
@@ -112,9 +150,14 @@ DATASETS: list[DatasetSpec] = [
         ],
         remote_files=[
             openneuro_file("ds006434", "dataset_description.json", "remote/dataset_description.json"),
-            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_events.tsv", "remote/events.tsv"),
-            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_channels.tsv", "remote/channels.tsv"),
-            openneuro_file("ds006434", "stimuli/exp2Dichotic/wrinkle_alchemyst000.wav", "remote/stimuli/wrinkle_alchemyst000.wav", max_mb=80.0),
+            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_events.tsv", "remote/eeg/events.tsv"),
+            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_events.json", "remote/eeg/events.json"),
+            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_channels.tsv", "remote/eeg/channels.tsv"),
+            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_eeg.json", "remote/eeg/eeg.json"),
+            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_eeg.vhdr", "remote/eeg/eeg.vhdr"),
+            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_eeg.vmrk", "remote/eeg/eeg.vmrk"),
+            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_eeg.eeg", "remote/eeg/eeg.head.bin", range_bytes=65536),
+            openneuro_file("ds006434", "stimuli/exp2Dichotic/wrinkle_alchemyst000.wav", "remote/stimuli/wrinkle_alchemyst000.wav.header.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -124,14 +167,17 @@ DATASETS: list[DatasetSpec] = [
         priority="P0/P2",
         source_url="https://openneuro.org/datasets/ds007630",
         sample_goal="One speechopen run with events/channels/eeg sidecar plus vocal wav header and EDF byte-range probe.",
-        access_note="Public OpenNeuro/EEGDash but about 955 GB; download only selected subjects/runs after metadata probe.",
+        access_note="Public OpenNeuro/EEGDash but about 955 GB. Direct S3 object GET returned 403 in the sample probe; use EEGDash/OpenNeuro client for full pulls.",
         remote_files=[
+            RemoteFile("https://eegdash.org/api/dataset/eegdash.dataset.DS007630.html", "remote/eegdash_record.html", max_mb=5.0),
             openneuro_file("ds007630", "dataset_description.json", "remote/dataset_description.json"),
             openneuro_file("ds007630", "participants.tsv", "remote/participants.tsv"),
-            openneuro_file("ds007630", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_events.tsv", "remote/events.tsv"),
-            openneuro_file("ds007630", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_channels.tsv", "remote/channels.tsv"),
-            openneuro_file("ds007630", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.json", "remote/eeg.json"),
-            openneuro_file("ds007630", "sub-01/ses-20230829/beh/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_recording-vocal_beh.json", "remote/vocal_beh.json"),
+            openneuro_file("ds007630", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_events.tsv", "remote/eeg/events.tsv"),
+            openneuro_file("ds007630", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_channels.tsv", "remote/eeg/channels.tsv"),
+            openneuro_file("ds007630", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.json", "remote/eeg/eeg.json"),
+            openneuro_file("ds007630", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.edf", "remote/eeg/eeg.edf.head.bin", range_bytes=65536),
+            openneuro_file("ds007630", "sub-01/ses-20230829/beh/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_recording-vocal_beh.json", "remote/audio/vocal_beh.json"),
+            openneuro_file("ds007630", "sub-01/ses-20230829/beh/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_recording-vocal_beh.wav", "remote/audio/vocal_beh.wav.header.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -140,15 +186,17 @@ DATASETS: list[DatasetSpec] = [
         category="english_proxy",
         priority="P2",
         source_url="https://openneuro.org/datasets/ds007602",
-        sample_goal="One overt speech production run with BIDS metadata and EDF byte-range probe.",
-        access_note="Public OpenNeuro/EEGDash, about 49.6 GB. README describes vocal recordings, but current probe should verify the actual audio file path before training.",
+        sample_goal="One overt speech production run with BIDS metadata and EDF byte-range probe; audio path is not exposed in the probed beh prefix.",
+        access_note="Public OpenNeuro/EEGDash, about 49.6 GB. No beh/audio object was exposed under the mirrored sub-01 session prefix during the sample probe; use EEGDash/OpenNeuro client if direct S3 GET is denied.",
         remote_files=[
+            RemoteFile("https://eegdash.org/api/dataset/eegdash.dataset.DS007602.html", "remote/eegdash_record.html", max_mb=5.0),
             openneuro_file("ds007602", "dataset_description.json", "remote/dataset_description.json"),
             openneuro_file("ds007602", "README", "remote/README"),
             openneuro_file("ds007602", "participants.tsv", "remote/participants.tsv"),
-            openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_events.tsv", "remote/events.tsv"),
-            openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_channels.tsv", "remote/channels.tsv"),
-            openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.json", "remote/eeg.json"),
+            openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_events.tsv", "remote/eeg/events.tsv"),
+            openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_channels.tsv", "remote/eeg/channels.tsv"),
+            openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.json", "remote/eeg/eeg.json"),
+            openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.edf", "remote/eeg/eeg.edf.head.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -159,7 +207,10 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/7086209",
         sample_goal="One English continuous speech / competing-speaker EEG subject with aligned audiobook metadata.",
         access_note="Zenodo public. Full HDF5/audio bundles can be large; automatic sample stores record metadata only.",
-        remote_files=[zenodo_metadata("7086209")],
+        remote_files=[
+            zenodo_metadata("7086209"),
+            zenodo_file("7086209", "EtardBrainstemAndComprehension.zip", "remote/archive_headers/EtardBrainstemAndComprehension.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="ds007591",
@@ -175,6 +226,10 @@ DATASETS: list[DatasetSpec] = [
         remote_files=[
             openneuro_file("ds007591", "dataset_description.json", "remote/dataset_description.json"),
             openneuro_file("ds007591", "participants.tsv", "remote/participants.tsv"),
+            openneuro_file("ds007591", "sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_events.tsv", "remote/eeg/events.tsv"),
+            openneuro_file("ds007591", "sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_channels.tsv", "remote/eeg/channels.tsv"),
+            openneuro_file("ds007591", "sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_eeg.json", "remote/eeg/eeg.json"),
+            openneuro_file("ds007591", "sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_eeg.edf", "remote/eeg/eeg.edf.head.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -215,7 +270,14 @@ DATASETS: list[DatasetSpec] = [
         ],
         remote_files=[
             openneuro_file("ds005345", "dataset_description.json", "remote/dataset_description.json"),
+            openneuro_file("ds005345", "README", "remote/README"),
             openneuro_file("ds005345", "participants.tsv", "remote/participants.tsv"),
+            openneuro_file("ds005345", "annotation/single_female_word_information.csv", "remote/annotation/single_female_word_information.csv"),
+            openneuro_file("ds005345", "stimuli/single_female.wav", "remote/stimuli/single_female.wav.header.bin", range_bytes=65536),
+            openneuro_file("ds005345", "sub-01/eeg/sub-01_task-multitalker_eeg.json", "remote/eeg/raw_eeg.json"),
+            openneuro_file("ds005345", "sub-01/eeg/sub-01_task-multitalker_eeg.vhdr", "remote/eeg/raw_eeg.vhdr"),
+            openneuro_file("ds005345", "sub-01/eeg/sub-01_task-multitalker_eeg.eeg", "remote/eeg/raw_eeg.head.bin", range_bytes=65536),
+            openneuro_file("ds005345", "derivatives/sub-01/eeg/sub-01_task-multitalker_run-1_eeg_preprocessed.fif", "remote/eeg/preprocessed_run1.fif.head.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -227,7 +289,12 @@ DATASETS: list[DatasetSpec] = [
         sample_goal="One Mandarin AAD subject/trial with audio and attention label.",
         access_note="Zenodo record public. Current local cache has README/preprocess/baseline snippets; full files require selected pull.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/zenodo-7078451/*", "probe_artifacts", required=True)],
-        remote_files=[zenodo_metadata("7078451")],
+        remote_files=[
+            zenodo_metadata("7078451"),
+            zenodo_file("7078451", "readme.txt", "remote/readme.txt", max_mb=1.0),
+            zenodo_file("7078451", "preprocess.zip", "remote/preprocess.zip", max_mb=1.0),
+            zenodo_file("7078451", "S1.zip", "remote/archive_headers/S1.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="nju_aad_7253438",
@@ -237,7 +304,11 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/7253438",
         sample_goal="One Mandarin competing-speech subject/trial with audio and label.",
         access_note="Zenodo metadata can be downloaded; full file selection needs inspection.",
-        remote_files=[zenodo_metadata("7253438")],
+        remote_files=[
+            zenodo_metadata("7253438"),
+            zenodo_file("7253438", "script.zip", "remote/script.zip", max_mb=1.0),
+            zenodo_file("7253438", "NJUNCA_preprocessed_arte_removed.zip", "remote/archive_headers/NJUNCA_preprocessed_arte_removed.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="ds006465_3m_cpseed",
@@ -246,8 +317,17 @@ DATASETS: list[DatasetSpec] = [
         priority="P2",
         source_url="https://openneuro.org/datasets/ds006465",
         sample_goal="One overt/mouthed/imagined pinyin subject example.",
-        access_note="Public OpenNeuro. Exact file paths need a dataset inventory before full sample pull.",
-        remote_files=[openneuro_file("ds006465", "dataset_description.json", "remote/dataset_description.json")],
+        access_note="Public OpenNeuro. It exposes EEG and preprocessed MAT files; no speech audio stimulus files were exposed in the probed public listing.",
+        remote_files=[
+            openneuro_file("ds006465", "dataset_description.json", "remote/dataset_description.json"),
+            openneuro_file("ds006465", "README.md", "remote/README.md"),
+            openneuro_file("ds006465", "sub-01/ses-1/eeg/sub-01_ses-1_task-imaginedspeech_events.tsv", "remote/eeg/events.tsv"),
+            openneuro_file("ds006465", "sub-01/ses-1/eeg/sub-01_ses-1_task-imaginedspeech_channels.tsv", "remote/eeg/channels.tsv"),
+            openneuro_file("ds006465", "sub-01/ses-1/eeg/sub-01_ses-1_task-imaginedspeech_eeg.json", "remote/eeg/eeg.json"),
+            openneuro_file("ds006465", "sub-01/ses-1/eeg/sub-01_ses-1_task-imaginedspeech_eeg.edf", "remote/eeg/eeg.edf.head.bin", range_bytes=65536),
+            openneuro_file("ds006465", "derivatives/preproc/sub-01/ses-1/sub-01_ses-1_speak.mat", "remote/eeg/sub-01_ses-1_speak.mat.head.bin", range_bytes=65536),
+            openneuro_file("ds006465", "derivatives/preproc/sub-01/ses-1/sub-01_ses-1_imagine.mat", "remote/eeg/sub-01_ses-1_imagine.mat.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="ds005170_chisco",
@@ -261,6 +341,8 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds005170", "dataset_description.json", "remote/dataset_description.json"),
             openneuro_file("ds005170", "README", "remote/README"),
             openneuro_file("ds005170", "textdataset/split_data_1.xlsx", "remote/textdataset/split_data_1.xlsx"),
+            openneuro_file("ds005170", "sub-01/ses-01/eeg/sub-01_ses-01_task-imagine_run-01_eeg.edf", "remote/eeg/raw_run01.edf.head.bin", range_bytes=65536),
+            openneuro_file("ds005170", "derivatives/preprocessed_fif/sub-01/eeg/sub-01_task-imagine_run-01_eeg.fif", "remote/eeg/preprocessed_run01.fif.head.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -283,7 +365,11 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/17413336",
         sample_goal="One Mandarin spontaneous attention-switch EEG subject with multi-speaker stimuli metadata.",
         access_note="Zenodo public. Full EEG and audio zips are large; automatic sample stores record metadata only.",
-        remote_files=[zenodo_metadata("17413336")],
+        remote_files=[
+            zenodo_metadata("17413336"),
+            zenodo_file("17413336", "Original EEG.zip", "remote/archive_headers/Original_EEG.zip.head.bin", range_bytes=65536),
+            zenodo_file("17413336", "Stimuli Audio.zip", "remote/archive_headers/Stimuli_Audio.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="ms_aasd_17149387",
@@ -293,7 +379,13 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/17149387",
         sample_goal="One Mandarin mixed-speech self-initiated attention-switch subject with metadata.",
         access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
-        remote_files=[zenodo_metadata("17149387")],
+        remote_files=[
+            zenodo_metadata("17149387"),
+            zenodo_file("17149387", "StimList.xlsx", "remote/StimList.xlsx", max_mb=1.0),
+            zenodo_file("17149387", ".cnt.zip", "remote/archive_headers/cnt.zip.head.bin", range_bytes=65536),
+            zenodo_file("17149387", "Female_wav.zip", "remote/archive_headers/Female_wav.zip.head.bin", range_bytes=65536),
+            zenodo_file("17149387", "Mix_wav_Nospace.zip", "remote/archive_headers/Mix_wav_Nospace.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="ds004718",
@@ -310,6 +402,9 @@ DATASETS: list[DatasetSpec] = [
         remote_files=[
             openneuro_file("ds004718", "dataset_description.json", "remote/dataset_description.json"),
             openneuro_file("ds004718", "participants.tsv", "remote/participants.tsv"),
+            openneuro_file("ds004718", "sub-HK001/eeg/sub-HK001_task-lppHK_eeg.json", "remote/eeg/eeg.json"),
+            openneuro_file("ds004718", "sub-HK001/eeg/sub-HK001_task-lppHK_eeg.set", "remote/eeg/eeg.set.head.bin", range_bytes=65536),
+            openneuro_file("ds004718", "sourcedata/stimuli/audio_files_segmented_by_sentence/Part 1/1.003.wav", "remote/stimuli/part1_1.003.wav", max_mb=5.0),
         ],
     ),
     DatasetSpec(
@@ -320,7 +415,10 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/7750292",
         sample_goal="One tone/syllable ERP subject/trial and stimulus table.",
         access_note="Zenodo metadata can be downloaded; file contents need inspection before EEG/audio pull.",
-        remote_files=[zenodo_metadata("7750292")],
+        remote_files=[
+            zenodo_metadata("7750292"),
+            zenodo_file("7750292", "sub01 Mon.cnt", "remote/eeg/sub01_Mon.cnt.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="ds006104",
@@ -338,6 +436,12 @@ DATASETS: list[DatasetSpec] = [
         ],
         remote_files=[
             openneuro_file("ds006104", "dataset_description.json", "remote/dataset_description.json"),
+            openneuro_file("ds006104", "README", "remote/README"),
+            openneuro_file("ds006104", "sub-P01/ses-01/eeg/sub-P01_ses-01_task-phonemes_events.tsv", "remote/eeg/events.tsv"),
+            openneuro_file("ds006104", "sub-P01/ses-01/eeg/sub-P01_ses-01_task-phonemes_channels.tsv", "remote/eeg/channels.tsv"),
+            openneuro_file("ds006104", "sub-P01/ses-01/eeg/sub-P01_ses-01_task-phonemes_eeg.json", "remote/eeg/eeg.json"),
+            openneuro_file("ds006104", "sub-P01/ses-01/eeg/sub-P01_ses-01_task-phonemes_eeg.edf", "remote/eeg/eeg.edf.head.bin", range_bytes=65536),
+            openneuro_file("ds006104", "derivatives/eeglab/sub-P01/ses-01/P01.set", "remote/eeg/P01.set.head.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -351,6 +455,9 @@ DATASETS: list[DatasetSpec] = [
         remote_files=[
             openneuro_file("ds003626", "dataset_description.json", "remote/dataset_description.json"),
             openneuro_file("ds003626", "README", "remote/README"),
+            openneuro_file("ds003626", "derivatives/sub-01/ses-01/sub-01_ses-01_events.dat", "remote/eeg/sub-01_ses-01_events.dat"),
+            openneuro_file("ds003626", "sub-01/ses-01/eeg/sub-01_ses-01_task-innerspeech_eeg.bdf", "remote/eeg/raw_bdf.head.bin", range_bytes=65536),
+            openneuro_file("ds003626", "derivatives/sub-01/ses-01/sub-01_ses-01_eeg-epo.fif", "remote/eeg/eeg-epo.fif.head.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -361,7 +468,10 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/3554128",
         sample_goal="Zenodo metadata and file list for heard/imagined/spoken English phonemes and Chinese syllables.",
         access_note="Zenodo public, 1.6 GB archive. Automatic sample stores record metadata; archive download is safe after terms/space check.",
-        remote_files=[zenodo_metadata("3554128")],
+        remote_files=[
+            zenodo_metadata("3554128"),
+            zenodo_file("3554128", "scottwellington/FEIS-v1.1.zip", "remote/archive_headers/FEIS-v1.1.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="ugr_mindvoice",
@@ -390,6 +500,7 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds004306", "participants.tsv", "remote/participants.tsv"),
             openneuro_file("ds004306", "README", "remote/README"),
             openneuro_file("ds004306", "stimuli/audio/flower/1.ogg", "remote/stimuli/audio/flower_1.ogg", max_mb=5.0),
+            openneuro_file("ds004306", "derivatives/preprocessed/sub-016/ses-01/eeg/sub16_sess1_50_ica_eeg-1.fif", "remote/eeg/sub16_sess1_50_ica_eeg-1.fif.head.bin", range_bytes=65536),
         ],
     ),
     DatasetSpec(
@@ -401,7 +512,12 @@ DATASETS: list[DatasetSpec] = [
         sample_goal="One AAD subject/trial and competing speech audio.",
         access_note="Zenodo public. Full EEG/audio files are large; local cache currently has README/scripts.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/zenodo-4004271/*", "probe_artifacts", required=True)],
-        remote_files=[zenodo_metadata("4004271")],
+        remote_files=[
+            zenodo_metadata("4004271"),
+            zenodo_file("4004271", "README.txt.txt", "remote/README.txt", max_mb=1.0),
+            zenodo_file("4004271", "S2.mat", "remote/eeg/S2.mat.head.bin", range_bytes=65536),
+            zenodo_file("4004271", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="dtu_aad_1199011",
@@ -412,7 +528,12 @@ DATASETS: list[DatasetSpec] = [
         sample_goal="One reverberant AAD subject/trial with speech audio.",
         access_note="Zenodo public. Local cache currently has preprocess script; full sample requires selecting files from record metadata.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/zenodo-1199011/*", "probe_artifacts", required=True)],
-        remote_files=[zenodo_metadata("1199011")],
+        remote_files=[
+            zenodo_metadata("1199011"),
+            zenodo_file("1199011", "preproc_data.m", "remote/preproc_data.m", max_mb=1.0),
+            zenodo_file("1199011", "AUDIO.zip", "remote/archive_headers/AUDIO.zip.head.bin", range_bytes=65536),
+            zenodo_file("1199011", "EEG.zip", "remote/eeg/EEG.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="eeg_aad_255ch_4518754",
@@ -423,7 +544,12 @@ DATASETS: list[DatasetSpec] = [
         sample_goal="One high-density AAD subject/trial and audio.",
         access_note="Zenodo public. Data can be large; current local cache has misc/scripts zip samples.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/zenodo-4518754/*", "probe_artifacts", required=True)],
-        remote_files=[zenodo_metadata("4518754")],
+        remote_files=[
+            zenodo_metadata("4518754"),
+            zenodo_file("4518754", "misc.zip", "remote/misc.zip", max_mb=5.0),
+            zenodo_file("4518754", "S3.tar.gz", "remote/eeg/S3.tar.gz.head.bin", range_bytes=65536),
+            zenodo_file("4518754", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="openmiir",
@@ -434,6 +560,11 @@ DATASETS: list[DatasetSpec] = [
         sample_goal="One music perception/imagination subject/trial and beat annotation.",
         access_note="Public metadata available; full EEG/audio route follows OpenMIIR instructions.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/openmiir/*", "probe_artifacts", required=True)],
+        remote_files=[
+            RemoteFile("https://raw.githubusercontent.com/sstober/openmiir/master/README.md", "remote/README.md", max_mb=5.0),
+            RemoteFile("https://raw.githubusercontent.com/sstober/openmiir/master/meta/Stimuli_Meta.v2.xlsx", "remote/meta/Stimuli_Meta.v2.xlsx", max_mb=5.0),
+            RemoteFile("https://raw.githubusercontent.com/sstober/openmiir/master/meta/beats.v2/1_beats.txt", "remote/meta/1_beats.txt", max_mb=1.0),
+        ],
     ),
     DatasetSpec(
         slug="musin_g_ds003774",
@@ -444,7 +575,15 @@ DATASETS: list[DatasetSpec] = [
         sample_goal="One music listening EEG event/channel/stimulus sample.",
         access_note="Public OpenNeuro. Current local cache has metadata and small probe snippets.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/ds003774/*", "probe_artifacts", required=True)],
-        remote_files=[openneuro_file("ds003774", "dataset_description.json", "remote/dataset_description.json")],
+        remote_files=[
+            openneuro_file("ds003774", "dataset_description.json", "remote/dataset_description.json"),
+            openneuro_file("ds003774", "README", "remote/README"),
+            openneuro_file("ds003774", "sourcedata/sub-001/eeg/sub-001_task-ListeningandResponse_events.tsv", "remote/eeg/events.tsv"),
+            openneuro_file("ds003774", "sourcedata/sub-001/eeg/sub-001_task-ListeningandResponse_channels.tsv", "remote/eeg/channels.tsv"),
+            openneuro_file("ds003774", "sourcedata/sub-001/eeg/sub-001_task-ListeningandResponse_eeg.json", "remote/eeg/eeg.json"),
+            openneuro_file("ds003774", "sourcedata/sub-001/eeg/sub-001_task-ListeningandResponse_eeg.set", "remote/eeg/eeg.set.head.bin", range_bytes=65536),
+            openneuro_file("ds003774", "Code/ESongs/1.esh.wav", "remote/stimuli/1.esh.wav.header.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="mad_eeg_4537751",
@@ -455,7 +594,13 @@ DATASETS: list[DatasetSpec] = [
         sample_goal="One target-instrument EEG/audio sample.",
         access_note="Zenodo public. Current local cache has behavioral/raw YAML/sequences snippets.",
         local_patterns=[LocalPattern("outputs/probe_artifacts/zenodo-4537751/*", "probe_artifacts", required=True)],
-        remote_files=[zenodo_metadata("4537751")],
+        remote_files=[
+            zenodo_metadata("4537751"),
+            zenodo_file("4537751", "behavioural_data.xlsx", "remote/behavioural_data.xlsx", max_mb=1.0),
+            zenodo_file("4537751", "madeeg_raw.yaml", "remote/madeeg_raw.yaml", max_mb=1.0),
+            zenodo_file("4537751", "madeeg_raw.hdf5", "remote/eeg/madeeg_raw.hdf5.head.bin", range_bytes=65536),
+            zenodo_file("4537751", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="four_talker_aad_10803261",
@@ -465,7 +610,10 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/10803261",
         sample_goal="Zenodo record metadata for 4-speaker spatialized Mandarin AAD (64ch NeuSen + cEEGrid).",
         access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
-        remote_files=[zenodo_metadata("10803261")],
+        remote_files=[
+            zenodo_metadata("10803261"),
+            zenodo_file("10803261", "ear_raw.zip", "remote/eeg/ear_raw.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="four_direction_aad_10803229",
@@ -475,7 +623,10 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/10803229",
         sample_goal="Zenodo record metadata for 4-direction spatialized Mandarin AAD (64ch, anechoic).",
         access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
-        remote_files=[zenodo_metadata("10803229")],
+        remote_files=[
+            zenodo_metadata("10803229"),
+            zenodo_file("10803229", "EEG_raw.zip", "remote/eeg/EEG_raw.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="non_block_aad_14887886",
@@ -485,7 +636,11 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/14887886",
         sample_goal="Zenodo record metadata for non-block 4-speaker Mandarin AAD with attention switching.",
         access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
-        remote_files=[zenodo_metadata("14887886")],
+        remote_files=[
+            zenodo_metadata("14887886"),
+            zenodo_file("14887886", "eareeg.zip", "remote/eeg/eareeg.zip.head.bin", range_bytes=65536),
+            zenodo_file("14887886", "scalpeeg.zip", "remote/eeg/scalpeeg.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="asa_lin2024_11541114",
@@ -495,7 +650,11 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/11541114",
         sample_goal="Zenodo record metadata for multi-angle (±5°–±90°) Mandarin 2-speaker AAD.",
         access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
-        remote_files=[zenodo_metadata("11541114")],
+        remote_files=[
+            zenodo_metadata("11541114"),
+            zenodo_file("11541114", "preproc.zip", "remote/preproc.zip", max_mb=1.0),
+            zenodo_file("11541114", "S001.zip", "remote/eeg/S001.zip.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="fuglsang2020_3618205",
@@ -515,7 +674,11 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/11058711",
         sample_goal="Zenodo record metadata for 13-subject Dutch AAD with 80 min per subject.",
         access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
-        remote_files=[zenodo_metadata("11058711")],
+        remote_files=[
+            zenodo_metadata("11058711"),
+            zenodo_file("11058711", "README.txt", "remote/README.txt", max_mb=1.0),
+            zenodo_file("11058711", "2024-AV-GC-AAD-sub03_preprocessed.mat", "remote/eeg/sub03_preprocessed.mat.head.bin", range_bytes=65536),
+        ],
     ),
     DatasetSpec(
         slug="geirnaert2025_16536441",
@@ -525,7 +688,12 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://zenodo.org/records/16536441",
         sample_goal="Zenodo record metadata for simultaneous scalp/around-ear/in-ear EEG AAD (Danish, 15 subjects).",
         access_note="Zenodo public. Full EEG and audio bundles are large; automatic sample stores record metadata only.",
-        remote_files=[zenodo_metadata("16536441")],
+        remote_files=[
+            zenodo_metadata("16536441"),
+            zenodo_file("16536441", "experiment-manual.pdf", "remote/experiment-manual.pdf", max_mb=5.0),
+            zenodo_file("16536441", "preprocessedData.zip", "remote/eeg/preprocessedData.zip.head.bin", range_bytes=65536),
+            zenodo_file("16536441", "bids_dataset.zip", "remote/eeg/bids_dataset.zip.head.bin", range_bytes=65536),
+        ],
     ),
 ]
 
@@ -588,6 +756,50 @@ def remote_size(url: str, timeout: int) -> int | None:
 def download_remote_file(remote: RemoteFile, dataset_dir: Path, allow_large: bool, default_max_mb: float, timeout: int) -> dict:
     dest = dataset_dir / remote.relpath
     ensure_dir(dest.parent)
+    if remote.range_bytes is not None:
+        try:
+            request = urllib.request.Request(
+                remote.url,
+                headers={
+                    "User-Agent": "eeg-voice-sample-downloader/0.1",
+                    "Range": f"bytes=0-{remote.range_bytes - 1}",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                data = response.read(remote.range_bytes + 1)
+                headers = dict(response.headers.items())
+            if len(data) > remote.range_bytes:
+                data = data[: remote.range_bytes]
+            dest.write_bytes(data)
+            return {
+                "url": remote.url,
+                "relpath": str(dest.relative_to(dataset_dir)),
+                "required": remote.required,
+                "status": "downloaded_range",
+                "bytes": len(data),
+                "range_bytes": remote.range_bytes,
+                "content_range": headers.get("Content-Range"),
+                "content_length": headers.get("Content-Length"),
+            }
+        except urllib.error.HTTPError as exc:
+            return {
+                "url": remote.url,
+                "relpath": remote.relpath,
+                "required": remote.required,
+                "status": "http_error",
+                "code": exc.code,
+                "reason": str(exc.reason),
+                "range_bytes": remote.range_bytes,
+            }
+        except Exception as exc:
+            return {
+                "url": remote.url,
+                "relpath": remote.relpath,
+                "required": remote.required,
+                "status": "error",
+                "error": f"{type(exc).__name__}: {exc}",
+                "range_bytes": remote.range_bytes,
+            }
     max_mb = remote.max_mb if remote.max_mb is not None else default_max_mb
     size = remote_size(remote.url, timeout)
     if size is not None and not allow_large and size > max_mb * 1024 * 1024:
@@ -642,6 +854,7 @@ def download_remote_file(remote: RemoteFile, dataset_dir: Path, allow_large: boo
 def write_dataset_readme(spec: DatasetSpec, dataset_dir: Path, local_results: list[dict], remote_results: list[dict]) -> None:
     copied_count = sum(len(item.get("copied", [])) for item in local_results)
     downloaded_count = sum(1 for item in remote_results if item.get("status") == "downloaded")
+    range_count = sum(1 for item in remote_results if item.get("status") == "downloaded_range")
     lines = [
         f"# {spec.title}",
         "",
@@ -653,6 +866,7 @@ def write_dataset_readme(spec: DatasetSpec, dataset_dir: Path, local_results: li
         f"- access note: {spec.access_note}",
         f"- local files copied: {copied_count}",
         f"- remote files downloaded: {downloaded_count}",
+        f"- remote byte-range samples downloaded: {range_count}",
         "",
         "## Local Copy Results",
         "",
@@ -690,7 +904,9 @@ def prepare_dataset(spec: DatasetSpec, root: Path, allow_large: bool, default_ma
         download_remote_file(remote, dataset_dir, allow_large=allow_large, default_max_mb=default_max_mb, timeout=timeout)
         for remote in spec.remote_files
     ]
-    has_sample = any(item.get("copied") for item in local_results) or any(item.get("status") == "downloaded" for item in remote_results)
+    has_sample = any(item.get("copied") for item in local_results) or any(
+        item.get("status") in {"downloaded", "downloaded_range"} for item in remote_results
+    )
     missing_required = [
         item
         for item in local_results
@@ -698,7 +914,7 @@ def prepare_dataset(spec: DatasetSpec, root: Path, allow_large: bool, default_ma
     ] + [
         item
         for item in remote_results
-        if item.get("required") and item.get("status") != "downloaded"
+        if item.get("required") and item.get("status") not in {"downloaded", "downloaded_range"}
     ]
     status = "ready_or_partial_sample" if has_sample else "manual_required"
     if missing_required:
@@ -721,18 +937,136 @@ def prepare_dataset(spec: DatasetSpec, root: Path, allow_large: bool, default_ma
     return record
 
 
+def classify_sample(relpath: str) -> str:
+    path = relpath.lower()
+    name = Path(path).name
+    parts = Path(path).parts
+    suffixes = Path(path).suffixes
+    if "stimuli" in parts or "audio" in parts or "audio" in name or any(token in path for token in ["vocal", ".wav", ".ogg", ".mp3", ".flac"]):
+        return "audio"
+    eeg_suffixes = {".edf", ".fif", ".vhdr", ".vmrk", ".eeg", ".set", ".mat", ".bdf", ".cnt"}
+    if (
+        "eeg" in parts
+        or any(suffix in eeg_suffixes for suffix in suffixes)
+        or name.endswith(("channels.tsv", "events.tsv", "events.dat"))
+    ):
+        return "eeg"
+    if name.endswith((".json", ".tsv", ".csv", ".xlsx", ".txt", ".md", ".html", ".pdf", "readme")):
+        return "metadata"
+    return "other"
+
+
+def collect_sample_files(records: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for record in records:
+        base = Path(record["dataset_dir"])
+        for item in record.get("local_results", []):
+            for relpath in item.get("copied", []):
+                rows.append(
+                    {
+                        "slug": record["slug"],
+                        "category": record["category"],
+                        "priority": record["priority"],
+                        "kind": classify_sample(relpath),
+                        "source": "local",
+                        "status": "copied",
+                        "bytes": (base / relpath).stat().st_size if (base / relpath).exists() else "",
+                        "path": str(base / relpath),
+                    }
+                )
+        for item in record.get("remote_results", []):
+            if item.get("status") not in {"downloaded", "downloaded_range"}:
+                continue
+            relpath = item.get("relpath", "")
+            rows.append(
+                {
+                    "slug": record["slug"],
+                    "category": record["category"],
+                    "priority": record["priority"],
+                    "kind": classify_sample(relpath),
+                    "source": "remote",
+                    "status": item.get("status"),
+                    "bytes": item.get("bytes", ""),
+                    "path": str(base / relpath),
+                }
+            )
+    return rows
+
+
+def write_unified_sample_links(root: Path, sample_files: list[dict]) -> tuple[Path, int]:
+    unified_samples_dir = root / "_unified_samples"
+    if unified_samples_dir.exists():
+        shutil.rmtree(unified_samples_dir)
+    unified_samples_dir.mkdir(parents=True, exist_ok=True)
+
+    link_count = 0
+    for row in sample_files:
+        source = Path(row["path"])
+        if not source.exists():
+            continue
+        dataset_dir = unified_samples_dir / row["slug"] / row["kind"]
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        prefix = f"{row['source']}__"
+        link = safe_name(dataset_dir / f"{prefix}{source.name}")
+        target = os.path.relpath(source, start=link.parent)
+        link.symlink_to(target)
+        row["unified_path"] = str(link)
+        link_count += 1
+    return unified_samples_dir, link_count
+
+
 def write_root_files(root: Path, records: list[dict]) -> None:
     ready = [r for r in records if r["status"] == "ready_or_partial_sample"]
     manual = [r for r in records if r["status"] != "ready_or_partial_sample"]
+    sample_files = collect_sample_files(records)
+    unified_samples_dir, unified_link_count = write_unified_sample_links(root, sample_files)
+    unified_dir = root / "_unified_index"
+    unified_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "root": str(root),
         "dataset_count": len(records),
         "ready_or_partial_count": len(ready),
         "manual_or_missing_count": len(manual),
+        "sample_file_count": len(sample_files),
+        "unified_index_dir": str(unified_dir),
+        "unified_samples_dir": str(unified_samples_dir),
+        "unified_sample_link_count": unified_link_count,
         "records": records,
     }
     (root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    (unified_dir / "manifest_compact.json").write_text(
+        json.dumps(
+            {
+                "created_at": manifest["created_at"],
+                "dataset_count": len(records),
+                "ready_or_partial_count": len(ready),
+                "manual_or_missing_count": len(manual),
+                "sample_file_count": len(sample_files),
+                "unified_samples_dir": str(unified_samples_dir),
+                "unified_sample_link_count": unified_link_count,
+                "records": [
+                    {
+                        "slug": r["slug"],
+                        "category": r["category"],
+                        "priority": r["priority"],
+                        "status": r["status"],
+                        "dataset_dir": r["dataset_dir"],
+                    }
+                    for r in records
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    tsv_lines = ["slug\tcategory\tpriority\tkind\tsource\tstatus\tbytes\tpath\tunified_path"]
+    for row in sample_files:
+        tsv_lines.append(
+            "\t".join(str(row.get(key, "")).replace("\t", " ") for key in ["slug", "category", "priority", "kind", "source", "status", "bytes", "path", "unified_path"])
+        )
+    (unified_dir / "sample_files.tsv").write_text("\n".join(tsv_lines) + "\n", encoding="utf-8")
     lines = [
         "# Voice EEG Dataset Samples",
         "",
@@ -741,6 +1075,8 @@ def write_root_files(root: Path, records: list[dict]) -> None:
         f"- dataset count: {len(records)}",
         f"- ready or partial sample folders: {len(ready)}",
         f"- manual or missing folders: {len(manual)}",
+        f"- unified sample links: {unified_link_count}",
+        f"- unified sample folder: `{unified_samples_dir}`",
         "",
         "## Status Table",
         "",
@@ -764,6 +1100,28 @@ def write_root_files(root: Path, records: list[dict]) -> None:
     )
     (root / "README.md").write_text("\n".join(lines), encoding="utf-8")
 
+    by_dataset: dict[str, dict[str, int]] = {}
+    for row in sample_files:
+        stats = by_dataset.setdefault(row["slug"], {"audio": 0, "eeg": 0, "metadata": 0, "other": 0})
+        stats[row["kind"]] = stats.get(row["kind"], 0) + 1
+    status_lines = [
+        "# Unified Sample Status",
+        "",
+        f"- root: `{root}`",
+        f"- unified sample folder: `{unified_samples_dir}`",
+        f"- sample files indexed: `{len(sample_files)}`",
+        f"- unified sample links: `{unified_link_count}`",
+        "",
+        "| Dataset | Status | Audio files | EEG files | Metadata/other files | Folder |",
+        "| --- | --- | ---: | ---: | ---: | --- |",
+    ]
+    for record in records:
+        stats = by_dataset.get(record["slug"], {"audio": 0, "eeg": 0, "metadata": 0, "other": 0})
+        status_lines.append(
+            f"| `{record['slug']}` | `{record['status']}` | {stats.get('audio', 0)} | {stats.get('eeg', 0)} | {stats.get('metadata', 0) + stats.get('other', 0)} | `{record['dataset_dir']}` |"
+        )
+    (unified_dir / "sample_status.md").write_text("\n".join(status_lines) + "\n", encoding="utf-8")
+
 
 def selected_specs(names: Iterable[str] | None) -> list[DatasetSpec]:
     if not names:
@@ -776,6 +1134,19 @@ def selected_specs(names: Iterable[str] | None) -> list[DatasetSpec]:
     return specs
 
 
+def load_existing_records(root: Path, specs: list[DatasetSpec]) -> list[dict]:
+    records: list[dict] = []
+    for spec in specs:
+        status_path = root / spec.category / spec.slug / "status.json"
+        if not status_path.exists():
+            continue
+        try:
+            records.append(json.loads(status_path.read_text(encoding="utf-8")))
+        except json.JSONDecodeError:
+            continue
+    return records
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
@@ -786,10 +1157,15 @@ def main() -> None:
     args = parser.parse_args()
 
     ensure_dir(args.root)
-    records = [
-        prepare_dataset(spec, root=args.root, allow_large=args.allow_large, default_max_mb=args.max_mb, timeout=args.timeout)
-        for spec in selected_specs(args.dataset)
-    ]
+    specs = selected_specs(args.dataset)
+    records = []
+    for idx, spec in enumerate(specs, start=1):
+        print(f"[{idx}/{len(specs)}] {spec.slug}", flush=True)
+        records.append(
+            prepare_dataset(spec, root=args.root, allow_large=args.allow_large, default_max_mb=args.max_mb, timeout=args.timeout)
+        )
+    if args.dataset:
+        records = load_existing_records(args.root, DATASETS)
     write_root_files(args.root, records)
     print(json.dumps({"root": str(args.root), "datasets": len(records)}, ensure_ascii=False, indent=2))
 

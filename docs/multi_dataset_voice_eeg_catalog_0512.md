@@ -360,8 +360,8 @@ OpenMIIR · MUSIN-G · MAD-EEG
 
 | 数据集 | 先验 probe |
 | --- | --- |
-| `ds007630` | `dataset_description.json`、`participants.tsv`、single run `events.tsv/channels.tsv/eeg.json`、vocal wav header、EDF byte range |
-| `ds007602` | `dataset_description.json`、`participants.tsv`、single run `events.tsv/channels.tsv/eeg.json`、vocal wav header、EDF byte range |
+| `ds007630` | EEGDash dataset page 已保存；OpenNeuro S3 object GET 对 BIDS/EDF/WAV 返回 403，后续需 EEGDash/OpenNeuro client 拉取 |
+| `ds007602` | `dataset_description.json`、`participants.tsv`、single run `events.tsv/channels.tsv/eeg.json`、EDF byte range；未在 probed `beh/` prefix 暴露 vocal wav |
 | `ds005170` | `dataset_description.json`、`README`、sub-01 raw EDF byte range、preprocessed FIF byte range |
 | `ds003626` | `dataset_description.json`、`README`、derivative events.dat、epoched FIF byte range |
 | Kara One | dataset webpage、participant archive list、helper scripts |
@@ -376,6 +376,11 @@ OpenMIIR · MUSIN-G · MAD-EEG
 data/voice_eeg_dataset_samples/   （已加入 .gitignore）
 ├── manifest.json
 ├── README.md
+├── _unified_index/
+│   ├── manifest_compact.json
+│   ├── sample_files.tsv
+│   └── sample_status.md
+├── _unified_samples/ # 指向各数据集样例文件的统一 symlink 目录
 └── <category>/<dataset_slug>/
     ├── local/           # 本地完整样例
     ├── remote/          # 公开 metadata / 小文件
@@ -383,6 +388,57 @@ data/voice_eeg_dataset_samples/   （已加入 .gitignore）
     ├── status.json
     └── README.md
 ```
+
+### 自动样例下载结果（2026-05-13）
+
+本轮按 MD 已选 37 个数据集逐个生成样例目录。结果：
+
+- `data/voice_eeg_dataset_samples/manifest.json`: 37 / 37 datasets present, 37 / 37 `ready_or_partial_sample`
+- `data/voice_eeg_dataset_samples/_unified_index/sample_files.tsv`: 253 个样例文件记录
+- `data/voice_eeg_dataset_samples/_unified_samples/`: 253 个统一 symlink
+- 23 个数据集已拿到 EEG 小样例或 EEG 文件头；9 个数据集已拿到 audio 小样例或 audio/archive 文件头；24 个数据集至少有 audio 或 EEG
+- 13 个数据集当前仅 metadata 或大 archive header，尚未展开到单 trial audio/eeg
+- 真正自动失败项：`ds007630` 的 OpenNeuro S3 object GET 返回 403；已保存 EEGDash metadata，EEG/audio 需用 EEGDash/OpenNeuro client 或 DataLad/OpenNeuro CLI 继续拉
+
+| 数据集 | Audio | EEG | Metadata/other | 自动样例状态 |
+| --- | ---: | ---: | ---: | --- |
+| `ds004408` | 6 | 8 | 9 | 已拿到 audio/eeg 小样例或文件头 |
+| `weissbart_natural_speech` | 0 | 0 | 2 | metadata 或大 archive header；未展开到单 trial audio/eeg |
+| `ds006434` | 2 | 7 | 6 | 已拿到 audio/eeg 小样例或文件头 |
+| `ds007630_eeg_speech_brain_decoding` | 0 | 0 | 1 | 仅 EEGDash metadata；OpenNeuro S3 object GET 403，EEG/audio 需 EEGDash/OpenNeuro client |
+| `ds007602_eeg_speech_overt` | 0 | 4 | 4 | 已拿到 audio/eeg 小样例或文件头 |
+| `etard_continuous_speech_7086209` | 0 | 0 | 2 | metadata 或大 archive header；未展开到单 trial audio/eeg |
+| `ds007591` | 0 | 4 | 8 | 已拿到 audio/eeg 小样例或文件头 |
+| `kara_one` | 0 | 0 | 1 | 仅网页 metadata；participant archive 需人工选包 |
+| `sparrkulee_eegdash` | 0 | 0 | 1 | metadata 或大 archive header；未展开到单 trial audio/eeg |
+| `ds005345` | 6 | 8 | 16 | 已拿到 audio/eeg 小样例或文件头 |
+| `esaa_7078451` | 0 | 0 | 7 | metadata 或大 archive header；未展开到单 trial audio/eeg |
+| `nju_aad_7253438` | 0 | 0 | 3 | metadata 或大 archive header；未展开到单 trial audio/eeg |
+| `ds006465_3m_cpseed` | 0 | 6 | 2 | 已拿到 audio/eeg 小样例或文件头 |
+| `ds005170_chisco` | 0 | 2 | 3 | 已拿到 audio/eeg 小样例或文件头 |
+| `cire_2025` | 0 | 0 | 1 | 仅论文页 metadata；ScienceDB 数据需人工进入仓库 |
+| `aasd_17413336` | 1 | 0 | 2 | 已拿到 audio/eeg 小样例或文件头 |
+| `ms_aasd_17149387` | 0 | 0 | 5 | metadata 或大 archive header；未展开到单 trial audio/eeg |
+| `ds004718` | 3 | 3 | 9 | 已拿到 audio/eeg 小样例或文件头 |
+| `cantonese_tone_syllable_7750292` | 0 | 1 | 1 | 已拿到 audio/eeg 小样例或文件头 |
+| `ds006104` | 8 | 5 | 19 | 已拿到 audio/eeg 小样例或文件头 |
+| `ds003626_inner_speech` | 0 | 3 | 2 | 已拿到 audio/eeg 小样例或文件头 |
+| `feis_3554128` | 0 | 0 | 2 | metadata 或大 archive header；未展开到单 trial audio/eeg |
+| `ugr_mindvoice` | 0 | 0 | 3 | OSF/GitHub metadata；subject EEG/audio 需按 OSF 文件树继续选包 |
+| `ds004306_semantic_imagination` | 1 | 1 | 3 | 已拿到 audio/eeg 小样例或文件头 |
+| `kul_aad_4004271` | 0 | 1 | 5 | 已拿到 audio/eeg 小样例或文件头 |
+| `dtu_aad_1199011` | 1 | 1 | 3 | 已拿到 audio/eeg 小样例或文件头 |
+| `eeg_aad_255ch_4518754` | 0 | 1 | 5 | 已拿到 audio/eeg 小样例或文件头 |
+| `openmiir` | 0 | 0 | 6 | metadata 或大 archive header；未展开到单 trial audio/eeg |
+| `musin_g_ds003774` | 2 | 4 | 7 | 已拿到 audio/eeg 小样例或文件头 |
+| `mad_eeg_4537751` | 0 | 1 | 7 | 已拿到 audio/eeg 小样例或文件头 |
+| `four_talker_aad_10803261` | 0 | 1 | 1 | 已拿到 audio/eeg 小样例或文件头 |
+| `four_direction_aad_10803229` | 0 | 1 | 1 | 已拿到 audio/eeg 小样例或文件头 |
+| `non_block_aad_14887886` | 0 | 2 | 1 | 已拿到 audio/eeg 小样例或文件头 |
+| `asa_lin2024_11541114` | 0 | 1 | 2 | 已拿到 audio/eeg 小样例或文件头 |
+| `fuglsang2020_3618205` | 0 | 0 | 1 | metadata 或大 archive header；未展开到单 trial audio/eeg |
+| `rotaru2024_11058711` | 0 | 1 | 2 | 已拿到 audio/eeg 小样例或文件头 |
+| `geirnaert2025_16536441` | 0 | 2 | 2 | 已拿到 audio/eeg 小样例或文件头 |
 
 ### 本地完整样例（可直接跑代码）
 
