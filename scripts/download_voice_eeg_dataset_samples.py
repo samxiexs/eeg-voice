@@ -176,6 +176,8 @@ DATASETS: list[DatasetSpec] = [
         zip_members=[
             ZipMemberFile("7086168", "WeissbartSurprisal.zip", "WeissbartSurprisal/stim/onsets.mat", "remote/stim/onsets.mat", max_compressed_mb=1.0),
             ZipMemberFile("7086168", "WeissbartSurprisal.zip", "WeissbartSurprisal/stim/word_frequencies/FLOP01_word_freq_timed.csv", "remote/stim/FLOP01_word_freq_timed.csv", max_compressed_mb=1.0),
+            ZipMemberFile("7086168", "WeissbartSurprisal.zip", "WeissbartSurprisal/stim/alignment_data/FLOP03/FLOP03.wav", "remote/audio/FLOP03.wav", max_compressed_mb=4.0),
+            ZipMemberFile("7086168", "WeissbartSurprisal.zip", "WeissbartSurprisal/eeg/P08_21072016/P08.eeg", "remote/eeg/P08.eeg", max_compressed_mb=450.0),
         ],
     ),
     DatasetSpec(
@@ -198,7 +200,9 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_eeg.vhdr", "remote/eeg/eeg.vhdr"),
             openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_eeg.vmrk", "remote/eeg/eeg.vmrk"),
             openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_eeg.eeg", "remote/eeg/eeg.head.bin", range_bytes=65536),
+            openneuro_file("ds006434", "sub-dichotic02/eeg/sub-dichotic02_task-exp2DichoticCortex_eeg.eeg", "remote/eeg/eeg.eeg", max_mb=320.0),
             openneuro_file("ds006434", "stimuli/exp2Dichotic/wrinkle_alchemyst000.wav", "remote/stimuli/wrinkle_alchemyst000.wav.header.bin", range_bytes=65536),
+            openneuro_file("ds006434", "stimuli/exp2Dichotic/wrinkle_alchemyst000.wav", "remote/stimuli/wrinkle_alchemyst000.wav", max_mb=10.0),
         ],
     ),
     DatasetSpec(
@@ -238,6 +242,7 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_channels.tsv", "remote/eeg/channels.tsv"),
             openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.json", "remote/eeg/eeg.json"),
             openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.edf", "remote/eeg/eeg.edf.head.bin", range_bytes=65536),
+            openneuro_file("ds007602", "sub-01/ses-20230829/eeg/sub-01_ses-20230829_task-speechopen_acq-pangolin_run-01_eeg.edf", "remote/eeg/eeg.edf", max_mb=500.0),
         ],
     ),
     DatasetSpec(
@@ -255,6 +260,7 @@ DATASETS: list[DatasetSpec] = [
         zip_members=[
             ZipMemberFile("7086209", "EtardBrainstemAndComprehension.zip", "EtardBrainstemAndComprehension/eeg/YH20/YH20_hb_1.vhdr", "remote/eeg/YH20_hb_1.vhdr"),
             ZipMemberFile("7086209", "EtardBrainstemAndComprehension.zip", "EtardBrainstemAndComprehension/eeg/YH20/YH20_hb_2.vmrk", "remote/eeg/YH20_hb_2.vmrk"),
+            ZipMemberFile("7086209", "EtardBrainstemAndComprehension.zip", "EtardBrainstemAndComprehension/eeg/YH02/YH02_fM_2.eeg", "remote/eeg/YH02_fM_2.eeg", max_compressed_mb=25.0),
         ],
     ),
     DatasetSpec(
@@ -275,6 +281,7 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds007591", "sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_channels.tsv", "remote/eeg/channels.tsv"),
             openneuro_file("ds007591", "sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_eeg.json", "remote/eeg/eeg.json"),
             openneuro_file("ds007591", "sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_eeg.edf", "remote/eeg/eeg.edf.head.bin", range_bytes=65536),
+            openneuro_file("ds007591", "sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_eeg.edf", "remote/eeg/eeg.edf", max_mb=90.0),
         ],
     ),
     DatasetSpec(
@@ -289,6 +296,7 @@ DATASETS: list[DatasetSpec] = [
             RemoteFile("https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html", "remote/kara_one.html", max_mb=5.0),
             RemoteFile("https://www.cs.toronto.edu/~complingweb/data/karaOne/src/split_data.m", "remote/src/split_data.m", max_mb=1.0),
             RemoteFile("https://www.cs.toronto.edu/~complingweb/data/karaOne/src.zip", "remote/src.zip", max_mb=5.0),
+            RemoteFile("https://www.cs.toronto.edu/~complingweb/data/karaOne/P02.tar.bz2", "remote/archives/P02.tar.bz2", max_mb=2500.0),
         ],
     ),
     DatasetSpec(
@@ -342,6 +350,9 @@ DATASETS: list[DatasetSpec] = [
             zenodo_file("7078451", "preprocess.zip", "remote/preprocess.zip", max_mb=1.0),
             zenodo_file("7078451", "S1.zip", "remote/archive_headers/S1.zip.head.bin", range_bytes=65536),
         ],
+        zip_members=[
+            ZipMemberFile("7078451", "S1.zip", "S1/S1.mat", "remote/eeg/S1.mat", max_compressed_mb=550.0),
+        ],
     ),
     DatasetSpec(
         slug="nju_aad_7253438",
@@ -355,6 +366,9 @@ DATASETS: list[DatasetSpec] = [
             zenodo_metadata("7253438"),
             zenodo_file("7253438", "script.zip", "remote/script.zip", max_mb=1.0),
             zenodo_file("7253438", "NJUNCA_preprocessed_arte_removed.zip", "remote/archive_headers/NJUNCA_preprocessed_arte_removed.zip.head.bin", range_bytes=65536),
+        ],
+        zip_members=[
+            ZipMemberFile("7253438", "NJUNCA_preprocessed_arte_removed.zip", "NJUNCA_preprocessed_arte_removed/S18.mat", "remote/eeg/S18.mat", max_compressed_mb=105.0),
         ],
     ),
     DatasetSpec(
@@ -374,6 +388,7 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds006465", "sub-01/ses-1/eeg/sub-01_ses-1_task-imaginedspeech_eeg.edf", "remote/eeg/eeg.edf.head.bin", range_bytes=65536),
             openneuro_file("ds006465", "derivatives/preproc/sub-01/ses-1/sub-01_ses-1_speak.mat", "remote/eeg/sub-01_ses-1_speak.mat.head.bin", range_bytes=65536),
             openneuro_file("ds006465", "derivatives/preproc/sub-01/ses-1/sub-01_ses-1_imagine.mat", "remote/eeg/sub-01_ses-1_imagine.mat.head.bin", range_bytes=65536),
+            openneuro_file("ds006465", "derivatives/preproc/sub-01/ses-1/sub-01_ses-1_speak.mat", "remote/eeg/sub-01_ses-1_speak.mat", max_mb=20.0),
         ],
     ),
     DatasetSpec(
@@ -390,6 +405,7 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds005170", "textdataset/split_data_1.xlsx", "remote/textdataset/split_data_1.xlsx"),
             openneuro_file("ds005170", "sub-01/ses-01/eeg/sub-01_ses-01_task-imagine_run-01_eeg.edf", "remote/eeg/raw_run01.edf.head.bin", range_bytes=65536),
             openneuro_file("ds005170", "derivatives/preprocessed_fif/sub-01/eeg/sub-01_task-imagine_run-01_eeg.fif", "remote/eeg/preprocessed_run01.fif.head.bin", range_bytes=65536),
+            openneuro_file("ds005170", "derivatives/preprocessed_fif/sub-01/eeg/sub-01_task-imagine_run-01_eeg.fif", "remote/eeg/preprocessed_run01.fif", max_mb=160.0),
         ],
     ),
     DatasetSpec(
@@ -406,6 +422,7 @@ DATASETS: list[DatasetSpec] = [
             RemoteFile("https://china.scidb.cn/download?fileId=103b970f465a2c50bbe62e2cc9026500", "remote/sentences.csv", max_mb=1.0),
             RemoteFile("https://china.scidb.cn/download?fileId=f440a98d3035d8e80fa0bab03605d615", "remote/audio/156.wav", max_mb=2.0),
             RemoteFile("https://china.scidb.cn/download?fileId=cf84f5ef2c08558ceb97765bd0762958", "remote/eeg/sub-02_task-CIRE_eeg.set.head.bin", range_bytes=65536),
+            RemoteFile("https://china.scidb.cn/download?fileId=cf84f5ef2c08558ceb97765bd0762958", "remote/eeg/sub-02_task-CIRE_eeg.set", max_mb=160.0),
         ],
     ),
     DatasetSpec(
@@ -423,7 +440,7 @@ DATASETS: list[DatasetSpec] = [
         ],
         zip_members=[
             ZipMemberFile("17413336", "Stimuli Audio.zip", "Stimuli Audio/mixed_001.wav", "remote/audio/mixed_001.wav", max_compressed_mb=4.0),
-            ZipMemberFile("17413336", "Original EEG.zip", "Original EEG/S1/S1.cnt", "remote/eeg/S1.cnt", max_compressed_mb=5.0),
+            ZipMemberFile("17413336", "Original EEG.zip", "Original EEG/S5/S5.cnt", "remote/eeg/S5.cnt", max_compressed_mb=460.0),
         ],
     ),
     DatasetSpec(
@@ -446,7 +463,7 @@ DATASETS: list[DatasetSpec] = [
             ZipMemberFile("17149387", "Female_wav.zip", "Female_wav/female_001.wav", "remote/audio/female_001.wav"),
             ZipMemberFile("17149387", "Male_wav.zip", "Male_wav/male_001.wav", "remote/audio/male_001.wav"),
             ZipMemberFile("17149387", "Mix_wav_Nospace.zip", "Mix_wav_Nospace/mixed_001.wav", "remote/audio/mixed_001.wav"),
-            ZipMemberFile("17149387", ".cnt.zip", ".cnt/S1.cnt", "remote/eeg/S1.cnt", max_compressed_mb=5.0),
+            ZipMemberFile("17149387", ".cnt.zip", ".cnt/S1.cnt", "remote/eeg/S1.cnt", max_compressed_mb=500.0),
         ],
     ),
     DatasetSpec(
@@ -480,6 +497,7 @@ DATASETS: list[DatasetSpec] = [
         remote_files=[
             zenodo_metadata("7750292"),
             zenodo_file("7750292", "sub01 Mon.cnt", "remote/eeg/sub01_Mon.cnt.head.bin", range_bytes=65536),
+            zenodo_file("7750292", "sub01 Mon.cnt", "remote/eeg/sub01_Mon.cnt", max_mb=500.0),
         ],
     ),
     DatasetSpec(
@@ -520,6 +538,7 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds003626", "derivatives/sub-01/ses-01/sub-01_ses-01_events.dat", "remote/eeg/sub-01_ses-01_events.dat"),
             openneuro_file("ds003626", "sub-01/ses-01/eeg/sub-01_ses-01_task-innerspeech_eeg.bdf", "remote/eeg/raw_bdf.head.bin", range_bytes=65536),
             openneuro_file("ds003626", "derivatives/sub-01/ses-01/sub-01_ses-01_eeg-epo.fif", "remote/eeg/eeg-epo.fif.head.bin", range_bytes=65536),
+            openneuro_file("ds003626", "derivatives/sub-01/ses-01/sub-01_ses-01_eeg-epo.fif", "remote/eeg/eeg-epo.fif", max_mb=240.0),
         ],
     ),
     DatasetSpec(
@@ -557,6 +576,8 @@ DATASETS: list[DatasetSpec] = [
             RemoteFile("https://osf.io/download/nfpm2/", "remote/eeg/sub-01_run01_eeg.edf.head.bin", range_bytes=65536),
             RemoteFile("https://osf.io/download/jvgeu/", "remote/audio/sub-01_run01_audio_events.tsv", max_mb=2.0),
             RemoteFile("https://osf.io/download/n6w4m/", "remote/audio/anonymized.wav.header.bin", range_bytes=65536),
+            RemoteFile("https://osf.io/download/nfpm2/", "remote/eeg/sub-01_run01_eeg.edf", max_mb=900.0),
+            RemoteFile("https://osf.io/download/n6w4m/", "remote/audio/anonymized.wav", max_mb=210.0),
             RemoteFile("https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/Readme.md", "remote/Readme.md", max_mb=5.0),
             RemoteFile("https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/config.yaml", "remote/config.yaml", max_mb=1.0),
         ],
@@ -575,6 +596,7 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds004306", "README", "remote/README"),
             openneuro_file("ds004306", "stimuli/audio/flower/1.ogg", "remote/stimuli/audio/flower_1.ogg", max_mb=5.0),
             openneuro_file("ds004306", "derivatives/preprocessed/sub-016/ses-01/eeg/sub16_sess1_50_ica_eeg-1.fif", "remote/eeg/sub16_sess1_50_ica_eeg-1.fif.head.bin", range_bytes=65536),
+            openneuro_file("ds004306", "derivatives/preprocessed/sub-016/ses-01/eeg/sub16_sess1_50_ica_eeg-1.fif", "remote/eeg/sub16_sess1_50_ica_eeg-1.fif", max_mb=300.0),
         ],
     ),
     DatasetSpec(
@@ -590,6 +612,7 @@ DATASETS: list[DatasetSpec] = [
             zenodo_metadata("4004271"),
             zenodo_file("4004271", "README.txt.txt", "remote/README.txt", max_mb=1.0),
             zenodo_file("4004271", "S2.mat", "remote/eeg/S2.mat.head.bin", range_bytes=65536),
+            zenodo_file("4004271", "S2.mat", "remote/eeg/S2.mat", max_mb=700.0),
             zenodo_file("4004271", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
         ],
         zip_members=[
@@ -613,7 +636,7 @@ DATASETS: list[DatasetSpec] = [
         ],
         zip_members=[
             ZipMemberFile("1199011", "AUDIO.zip", "aske_story4_trial_8.wav", "remote/audio/aske_story4_trial_8.wav", max_compressed_mb=3.0),
-            ZipMemberFile("1199011", "EEG.zip", "S2.mat", "remote/eeg/S2.mat", max_compressed_mb=5.0),
+            ZipMemberFile("1199011", "EEG.zip", "S2.mat", "remote/eeg/S2.mat", max_compressed_mb=800.0),
         ],
     ),
     DatasetSpec(
@@ -629,6 +652,7 @@ DATASETS: list[DatasetSpec] = [
             zenodo_metadata("4518754"),
             zenodo_file("4518754", "misc.zip", "remote/misc.zip", max_mb=5.0),
             zenodo_file("4518754", "S3.tar.gz", "remote/eeg/S3.tar.gz.head.bin", range_bytes=65536),
+            zenodo_file("4518754", "S3.tar.gz", "remote/archives/S3.tar.gz", max_mb=3000.0),
             zenodo_file("4518754", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
         ],
         zip_members=[
@@ -667,6 +691,8 @@ DATASETS: list[DatasetSpec] = [
             openneuro_file("ds003774", "sourcedata/sub-001/eeg/sub-001_task-ListeningandResponse_eeg.json", "remote/eeg/eeg.json"),
             openneuro_file("ds003774", "sourcedata/sub-001/eeg/sub-001_task-ListeningandResponse_eeg.set", "remote/eeg/eeg.set.head.bin", range_bytes=65536),
             openneuro_file("ds003774", "Code/ESongs/1.esh.wav", "remote/stimuli/1.esh.wav.header.bin", range_bytes=65536),
+            openneuro_file("ds003774", "sourcedata/sub-001/eeg/sub-001_task-ListeningandResponse_eeg.set", "remote/eeg/eeg.set", max_mb=270.0),
+            openneuro_file("ds003774", "Code/ESongs/1.esh.wav", "remote/stimuli/1.esh.wav", max_mb=5.0),
         ],
     ),
     DatasetSpec(
@@ -683,6 +709,7 @@ DATASETS: list[DatasetSpec] = [
             zenodo_file("4537751", "behavioural_data.xlsx", "remote/behavioural_data.xlsx", max_mb=1.0),
             zenodo_file("4537751", "madeeg_raw.yaml", "remote/madeeg_raw.yaml", max_mb=1.0),
             zenodo_file("4537751", "madeeg_raw.hdf5", "remote/eeg/madeeg_raw.hdf5.head.bin", range_bytes=65536),
+            zenodo_file("4537751", "madeeg_raw.hdf5", "remote/eeg/madeeg_raw.hdf5", max_mb=500.0),
             zenodo_file("4537751", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
         ],
         zip_members=[
@@ -703,7 +730,7 @@ DATASETS: list[DatasetSpec] = [
         ],
         zip_members=[
             ZipMemberFile("10803261", "ear_raw.zip", "sub1/Record.xses", "remote/eeg/sub1_Record.xses", max_compressed_mb=1.0),
-            ZipMemberFile("10803261", "ear_raw.zip", "sub1/sub1.Poly5", "remote/eeg/sub1.Poly5", max_compressed_mb=5.0),
+            ZipMemberFile("10803261", "ear_raw.zip", "sub1/sub1.Poly5", "remote/eeg/sub1.Poly5", max_compressed_mb=145.0),
         ],
     ),
     DatasetSpec(
@@ -738,6 +765,7 @@ DATASETS: list[DatasetSpec] = [
         ],
         zip_members=[
             ZipMemberFile("14887886", "eareeg.zip", "eareeg/sub001/Record.xses", "remote/eeg/eareeg_sub001_Record.xses", max_compressed_mb=1.0),
+            ZipMemberFile("14887886", "eareeg.zip", "eareeg/sub002/sub002.DATA.Poly5", "remote/eeg/eareeg_sub002.DATA.Poly5", max_compressed_mb=145.0),
             ZipMemberFile("14887886", "scalpeeg.zip", "scalpeeg/sub001/recordInformation.json", "remote/eeg/scalpeeg_sub001_recordInformation.json", max_compressed_mb=1.0),
             ZipMemberFile("14887886", "scalpeeg.zip", "scalpeeg/sub001/evt.bdf", "remote/eeg/scalpeeg_sub001_evt.bdf", max_compressed_mb=1.0),
         ],
@@ -772,6 +800,7 @@ DATASETS: list[DatasetSpec] = [
             TarMemberFile("3618205", "ds-eeg-snhl.tar", "ds-eeg-snhl/sub-026/eeg/sub-026_task-selectiveattention_eeg.json", "remote/eeg/sub-026_task-selectiveattention_eeg.json"),
             TarMemberFile("3618205", "ds-eeg-snhl.tar", "ds-eeg-snhl/sub-026/eeg/sub-026_task-selectiveattention_channels.tsv", "remote/eeg/sub-026_task-selectiveattention_channels.tsv"),
             TarMemberFile("3618205", "ds-eeg-snhl.tar", "ds-eeg-snhl/sub-026/eeg/sub-026_task-rest_eeg.bdf", "remote/eeg/sub-026_task-rest_eeg.bdf.head.bin", range_bytes=65536),
+            TarMemberFile("3618205", "ds-eeg-snhl.tar", "ds-eeg-snhl/sub-026/eeg/sub-026_task-rest_eeg.bdf", "remote/eeg/sub-026_task-rest_eeg.bdf", max_mb=20.0),
         ],
     ),
     DatasetSpec(
@@ -786,6 +815,7 @@ DATASETS: list[DatasetSpec] = [
             zenodo_metadata("11058711"),
             zenodo_file("11058711", "README.txt", "remote/README.txt", max_mb=1.0),
             zenodo_file("11058711", "2024-AV-GC-AAD-sub03_preprocessed.mat", "remote/eeg/sub03_preprocessed.mat.head.bin", range_bytes=65536),
+            zenodo_file("11058711", "2024-AV-GC-AAD-sub03_preprocessed.mat", "remote/eeg/sub03_preprocessed.mat", max_mb=130.0),
         ],
     ),
     DatasetSpec(
@@ -808,6 +838,7 @@ DATASETS: list[DatasetSpec] = [
             ZipMemberFile("16536441", "bids_dataset.zip", "bids_dataset/sub-01/ses-01/eeg/sub-01_ses-01_task-selectiveAttention_events.tsv", "remote/eeg/sub-01_events.tsv", max_compressed_mb=1.0),
             ZipMemberFile("16536441", "bids_dataset.zip", "bids_dataset/sub-01/ses-01/eeg/sub-01_ses-01_task-selectiveAttention_channels.tsv", "remote/eeg/sub-01_channels.tsv", max_compressed_mb=1.0),
             ZipMemberFile("16536441", "bids_dataset.zip", "bids_dataset/sub-01/ses-01/eeg/sub-01_ses-01_task-selectiveAttention_eeg.json", "remote/eeg/sub-01_eeg.json", max_compressed_mb=1.0),
+            ZipMemberFile("16536441", "preprocessedData.zip", "preprocessedData/dataSubject8.mat", "remote/eeg/dataSubject8.mat", max_compressed_mb=26.0),
         ],
     ),
 ]
@@ -1249,24 +1280,34 @@ def download_remote_file(remote: RemoteFile, dataset_dir: Path, allow_large: boo
         }
     try:
         request = urllib.request.Request(remote.url, headers={"User-Agent": "eeg-voice-sample-downloader/0.1"})
+        bytes_written = 0
+        tmp = dest.with_name(dest.name + ".part")
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = response.read()
-        if not allow_large and len(data) > max_mb * 1024 * 1024:
-            return {
-                "url": remote.url,
-                "relpath": remote.relpath,
-                "required": remote.required,
-                "status": "skipped_too_large_after_read",
-                "bytes_read": len(data),
-                "max_mb": max_mb,
-            }
-        dest.write_bytes(data)
+            with tmp.open("wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    bytes_written += len(chunk)
+                    if not allow_large and bytes_written > max_mb * 1024 * 1024:
+                        handle.close()
+                        tmp.unlink(missing_ok=True)
+                        return {
+                            "url": remote.url,
+                            "relpath": remote.relpath,
+                            "required": remote.required,
+                            "status": "skipped_too_large_after_read",
+                            "bytes_read": bytes_written,
+                            "max_mb": max_mb,
+                        }
+                    handle.write(chunk)
+        tmp.replace(dest)
         return {
             "url": remote.url,
             "relpath": str(dest.relative_to(dataset_dir)),
             "required": remote.required,
             "status": "downloaded",
-            "bytes": len(data),
+            "bytes": bytes_written,
         }
     except urllib.error.HTTPError as exc:
         return {
