@@ -307,7 +307,9 @@ DATASETS: list[DatasetSpec] = [
         source_url="https://eegdash.org/api/dataset/eegdash.dataset.NM000238.html",
         sample_goal="One EEGDash subject recording and speech metadata.",
         access_note="Use EEGDash metadata first; exact raw download route requires separate confirmation.",
-        remote_files=[RemoteFile("https://eegdash.org/api/dataset/eegdash.dataset.NM000238.html", "remote/eegdash_record.html", max_mb=10.0)],
+        remote_files=[
+            RemoteFile("https://eegdash.org/api/dataset/eegdash.dataset.NM000238.html", "remote/eegdash_record.html", max_mb=10.0),
+        ],
     ),
     DatasetSpec(
         slug="ds005345",
@@ -673,6 +675,8 @@ DATASETS: list[DatasetSpec] = [
             RemoteFile("https://raw.githubusercontent.com/sstober/openmiir/master/README.md", "remote/README.md", max_mb=5.0),
             RemoteFile("https://raw.githubusercontent.com/sstober/openmiir/master/meta/Stimuli_Meta.v2.xlsx", "remote/meta/Stimuli_Meta.v2.xlsx", max_mb=5.0),
             RemoteFile("https://raw.githubusercontent.com/sstober/openmiir/master/meta/beats.v2/1_beats.txt", "remote/meta/1_beats.txt", max_mb=1.0),
+            RemoteFile("https://raw.githubusercontent.com/sstober/openmiir/master/audio/full.v2/S01_Chim%20Chim%20Cheree_lyrics.wav", "remote/audio/S01_Chim_Chim_Cheree_lyrics.wav", max_mb=5.0),
+            RemoteFile("https://raw.githubusercontent.com/sstober/openmiir/master/eeg/preprocessing/ica/P01-100p_64c-ica.fif", "remote/eeg/P01-100p_64c-ica.fif", max_mb=1.0),
         ],
     ),
     DatasetSpec(

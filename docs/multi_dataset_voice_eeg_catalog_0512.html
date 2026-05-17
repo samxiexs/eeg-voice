@@ -27,7 +27,120 @@
                                         |
                         voice image retrieval / reconstruction
 </code></pre>
-<hr>
+<hr />
+<h2 id="0">0. 超级整理后的最终判断</h2>
+<h3 id="01">0.1 数据池是否足够</h3>
+<p>这里的判断只针对 <strong>MD 已选中的 selected 数据池</strong>，不是针对本地已经下载了多少。</p>
+<table>
+<thead>
+<tr>
+<th>研究目标</th>
+<th>当前 selected 数据是否足够</th>
+<th>判断</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Speech EEG tokenizer 预训练</td>
+<td>足够</td>
+<td>P0/P1 已覆盖英文、普通话、粤语、荷兰语/丹麦语 AAD、自然语音和竞争语音，可以先训练稳定 EEG token。</td>
+</tr>
+<tr>
+<td>AAD / attended speaker stream retrieval</td>
+<td>足够</td>
+<td>中文 AAD、Yan 系列 4-speaker、KUL/DTU/255ch、Fuglsang/Rotaru/Geirnaert 足够支撑 speaker-stream retrieval。</td>
+</tr>
+<tr>
+<td>Phoneme / syllable / pitch / prosody probe</td>
+<td>基本足够</td>
+<td><code>ds006104</code>、<code>ds006465</code>、FEIS、Cantonese tone、CIRE、<code>ds004718</code> 可以覆盖 phoneme、syllable、tone、F0、emotion/intention。</td>
+</tr>
+<tr>
+<td>Imagined / inner / overt speech transfer</td>
+<td>可做第一版</td>
+<td><code>ds005170</code>、<code>ds003626</code>、Kara One、UGR-MINDVOICE、<code>ds007602</code> 已经把 P2 从弱支撑补到可训练 probe 的水平。</td>
+</tr>
+<tr>
+<td>直接 waveform-level EEG-to-speech generation</td>
+<td>不建议作为第一目标</td>
+<td>公开数据的跨数据集差异、音频权限和 covert/imagined 缺少真实声波，会让 waveform 目标不稳定。</td>
+</tr>
+<tr>
+<td>最终 personalized voice image reconstruction</td>
+<td>公开数据仍不够</td>
+<td>缺统一 voice bank、同一被试主观相似度评分、系统 F0/formant/style 全因子操控，仍需要自采。</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：当前 selected 数据池已经可以认真启动第一版研究，不再是“数据太少不能做”的状态。最合理的目标是先做 <code>EEG -&gt; discrete token -&gt; content / pitch / timbre / speaker / style probe + retrieval</code>；最终个体化 voice image reconstruction 需要在公开数据预训练后接一套自采 voice-bank 实验。</p>
+<h3 id="02">0.2 归纳图</h3>
+<pre><code class="language-mermaid">flowchart LR
+  A[&quot;37 selected EEG-voice datasets&quot;] --&gt; B[&quot;P0/P1: listening, natural speech, AAD&quot;]
+  A --&gt; C[&quot;P2: phoneme, prosody, imagined, inner, overt speech&quot;]
+  A --&gt; D[&quot;P3: music / weak auditory proxy&quot;]
+
+  B --&gt; E[&quot;Speech EEG tokenizer&quot;]
+  B --&gt; F[&quot;Attended speaker-stream retrieval&quot;]
+  C --&gt; G[&quot;Content / pitch / timbre / style probes&quot;]
+  C --&gt; H[&quot;Heard-to-imagined and overt-to-covert transfer&quot;]
+  D --&gt; I[&quot;Auxiliary pitch / timbre / beat pretraining&quot;]
+
+  E --&gt; J[&quot;Voice-image foundation model&quot;]
+  F --&gt; J
+  G --&gt; J
+  H --&gt; J
+  I --&gt; J
+
+  J --&gt; K[&quot;Public-data deliverables: tokenizer, retrieval, probe, transfer&quot;]
+  J --&gt; L[&quot;Still requires self collection: personalized voice bank and subjective similarity ratings&quot;]
+</code></pre>
+<h3 id="03">0.3 整理后的单一入口</h3>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>保留入口</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主 catalog</td>
+<td><code>docs/multi_dataset_voice_eeg_catalog_0512.md</code></td>
+</tr>
+<tr>
+<td>可浏览版本</td>
+<td><code>docs/multi_dataset_voice_eeg_catalog_0512.html</code></td>
+</tr>
+<tr>
+<td>样例下载脚本</td>
+<td><code>scripts/download_voice_eeg_dataset_samples.py</code></td>
+</tr>
+<tr>
+<td>metadata / path probe</td>
+<td><code>scripts/probe_eeg_audio_datasets.py</code></td>
+</tr>
+<tr>
+<td>样例可视化</td>
+<td><code>scripts/visualize_eeg_samples.py</code></td>
+</tr>
+<tr>
+<td>完整 OpenNeuro 派生转换</td>
+<td><code>scripts/build_full_openneuro_derivatives.py</code></td>
+</tr>
+<tr>
+<td>本地样例根目录</td>
+<td><code>data/voice_eeg_dataset_samples/</code></td>
+</tr>
+<tr>
+<td>统一样例索引</td>
+<td><code>data/voice_eeg_dataset_samples/_unified_index/sample_files.tsv</code></td>
+</tr>
+<tr>
+<td>统一样例 symlink 目录</td>
+<td><code>data/voice_eeg_dataset_samples/_unified_samples/</code></td>
+</tr>
+</tbody>
+</table>
 <h2 id="1">1. 筛选标准、优先级与可用性口径</h2>
 <h3 id="_2">入池条件（满足其一即可）</h3>
 <table>
@@ -120,7 +233,7 @@
 </tr>
 </tbody>
 </table>
-<hr>
+<hr />
 <h2 id="2">2. 数据集全览</h2>
 <h3 id="21-speech-decoding">2.1 英文 / speech-decoding 扩展数据集</h3>
 <table>
@@ -642,7 +755,7 @@
 </tr>
 </tbody>
 </table>
-<hr>
+<hr />
 <h2 id="3-md-selected">3. 当前数据情况（按 MD selected 口径）</h2>
 <h3 id="31">3.1 结论</h3>
 <ul>
@@ -711,7 +824,7 @@
 <pre><code>ds004408 · ds005345 · ds004718 · ds006104
 </code></pre>
 <p>其余 selected 数据集先按 metadata probe、单被试/单 run、再分批下载的节奏推进。</p>
-<hr>
+<hr />
 <h2 id="4">4. 四阶段训练路线</h2>
 <pre><code>Stage 1  -&gt;  通用 speech EEG tokenizer
 Stage 2  -&gt;  voice attribute / phoneme / prosody probe
@@ -784,7 +897,7 @@ token -&gt; happy-angry / prosody / intention / affective style proxy
 </tr>
 </tbody>
 </table>
-<hr>
+<hr />
 <h2 id="5-core-expansion-p2-probe">5. 最小可行数据组合（Core + Expansion + P2 Probe）</h2>
 <h3 id="core">Core（第一批主训练）</h3>
 <table>
@@ -904,7 +1017,7 @@ Fuglsang 2020 · Rotaru 2024 · Geirnaert 2025
 <h3 id="speech">弱代理（不进入主 speech 结论）</h3>
 <pre><code>OpenMIIR · MUSIN-G · MAD-EEG
 </code></pre>
-<hr>
+<hr />
 <h2 id="6">6. 多数据集组合策略</h2>
 <p>单个公开数据集的 speaker identity 空间通常很小，AAD 数据尤其常见 2-4 个说话人。跨数据集组合是在不自采前提下最大化 speaker identity、phoneme、prosody 和 speaking-mode 覆盖的唯一路径。</p>
 <h3 id="_5">组合原则</h3>
@@ -1043,7 +1156,7 @@ Fuglsang 2020 · Rotaru 2024 · Geirnaert 2025
 - 西班牙语：espeak-ng / MFA Spanish model，统一到 IPA 或 articulatory feature
 - 统一映射到 IPA 或 articulatory feature（manner/place/voicing）
 </code></pre>
-<hr>
+<hr />
 <h2 id="7">7. 公开数据的能力边界</h2>
 <h3 id="_7">公开数据可以训练和验证</h3>
 <ul>
@@ -1090,7 +1203,7 @@ Fuglsang 2020 · Rotaru 2024 · Geirnaert 2025
 <blockquote>
 <p><strong>结论</strong>：公开多数据集组合已经足够训练 EEG speech tokenizer、AAD speaker-stream retrieval、P2 phoneme/prosody/imagined-overt probes；最终 voice image reconstruction 仍需要自采 multi-speaker / multi-style / multi-F0 voice bank 数据。</p>
 </blockquote>
-<hr>
+<hr />
 <h2 id="8">8. 样例抓取状态与剩余缺口</h2>
 <h3 id="_9">口径</h3>
 <ul>
@@ -1104,7 +1217,9 @@ Fuglsang 2020 · Rotaru 2024 · Geirnaert 2025
 <li>数据集目录：37 / 37 均存在，且每个目录都有 <code>status.json</code> 和 <code>README.md</code></li>
 <li>统一索引：<code>data/voice_eeg_dataset_samples/_unified_index/sample_files.tsv</code></li>
 <li>统一样例目录：<code>data/voice_eeg_dataset_samples/_unified_samples/</code></li>
-<li>当前样例记录：296 个文件，统一 symlink：296 个</li>
+<li>当前样例记录：331 个文件，统一 symlink：331 个</li>
+<li>broken symlink：0</li>
+<li>严格排除 header / range / HTML 登录页后，35 / 37 个数据集已有至少一个完整真实数据文件。</li>
 </ul>
 <h3 id="_11">本轮实际新增抓取</h3>
 <table>
@@ -1118,78 +1233,78 @@ Fuglsang 2020 · Rotaru 2024 · Geirnaert 2025
 <tbody>
 <tr>
 <td><code>cire_2025</code></td>
-<td>ScienceDB <code>sentences.csv</code>、<code>156.wav</code>、<code>sub-02_task-CIRE_eeg.set</code> 头部</td>
-<td>完整 <code>.set</code> 仍需分批拉</td>
+<td><code>156.wav</code> + 完整 <code>sub-02_task-CIRE_eeg.set</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>ugr_mindvoice</code></td>
-<td>sub-01 <code>events.tsv/channels.tsv/eeg.json</code>、EDF 头、audio events、匿名化 wav 头</td>
-<td>EDF/wav 全文件较大</td>
+<td>完整 sub-01 EDF + 匿名化 wav</td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>ms_aasd_17149387</code></td>
-<td><code>female_001.wav</code>、<code>male_001.wav</code>、<code>mixed_001.wav</code></td>
-<td>CNT EEG 单文件数百 MB</td>
+<td>3 个 wav + 完整 <code>S1.cnt</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>feis_3554128</code></td>
-<td>Hearing/Speaking 两个 decoded wav</td>
-<td>EEG 仍需完整 archive 展开确认</td>
+<td>decoded wav + <code>full_eeg_experiment12/full_eeg.csv</code></td>
+<td>已有完整样例，CSV 是从 nested zip 展开</td>
 </tr>
 <tr>
 <td><code>weissbart_natural_speech</code></td>
-<td><code>onsets.mat</code>、词频 timed CSV</td>
-<td>没有小的 EEG/audio 成员；需完整大包选 subject</td>
+<td><code>FLOP03.wav</code> + 完整 <code>P08.eeg</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>fuglsang2020_3618205</code></td>
-<td>sub-026 EEG JSON、channels、BDF 头</td>
-<td>speech audio 未选到小成员</td>
+<td>完整 sub-026 BDF</td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>aasd_17413336</code></td>
-<td><code>mixed_001.wav</code></td>
-<td>CNT EEG 单文件数百 MB</td>
+<td><code>mixed_001.wav</code> + 完整 <code>S5.cnt</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>kul_aad_4004271</code></td>
-<td><code>rep_part2_track2_dry.wav</code>、<code>S2.mat</code> 头</td>
-<td>完整 EEG MAT 仍大</td>
+<td><code>rep_part2_track2_dry.wav</code> + 完整 <code>S2.mat</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>dtu_aad_1199011</code></td>
-<td><code>aske_story4_trial_8.wav</code></td>
-<td>EEG MAT 单文件约 755 MB 起</td>
+<td><code>aske_story4_trial_8.wav</code> + 完整 <code>S2.mat</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>eeg_aad_255ch_4518754</code></td>
-<td><code>part1_track1_dry.wav</code></td>
-<td>EEG 在 <code>S3.tar.gz</code>，暂不能安全随机展开</td>
+<td><code>part1_track1_dry.wav</code> + 完整 <code>S3.tar.gz</code> subject archive</td>
+<td>gzip archive 已完整落地，未自动解包</td>
 </tr>
 <tr>
 <td><code>mad_eeg_4537751</code></td>
-<td>短 wav stimulus、HDF5 EEG 头</td>
-<td>完整 HDF5 仍需后续拉取</td>
+<td>短 wav stimulus + 完整 <code>madeeg_raw.hdf5</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>etard_continuous_speech_7086209</code></td>
-<td>BrainVision <code>vhdr/vmrk</code> 小成员</td>
-<td>真正 EEG payload / audio 仍在大 Zip64 内</td>
+<td>完整 <code>YH02_fM_2.eeg</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>four_talker_aad_10803261</code></td>
-<td><code>Record.xses</code></td>
-<td>Poly5 EEG 单文件约 140 MB+</td>
+<td>完整 <code>sub1.Poly5</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>four_direction_aad_10803229</code></td>
-<td><code>recordInformation.json</code>、<code>evt.bdf</code></td>
-<td>完整 scalp EEG 大文件、音频未展开</td>
+<td>完整 <code>sub1_data.bdf</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>non_block_aad_14887886</code></td>
-<td>ear/scalp session info、<code>evt.bdf</code></td>
-<td>Poly5 / scalp EEG payload 仍大</td>
+<td>完整 <code>eareeg_sub002.DATA.Poly5</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>asa_lin2024_11541114</code></td>
@@ -1198,13 +1313,18 @@ Fuglsang 2020 · Rotaru 2024 · Geirnaert 2025
 </tr>
 <tr>
 <td><code>geirnaert2025_16536441</code></td>
-<td>BIDS participants、events、channels、eeg.json</td>
-<td>原始/预处理 EEG payload 仍大</td>
+<td>完整 <code>dataSubject8.mat</code></td>
+<td>已有完整样例</td>
 </tr>
 <tr>
 <td><code>kara_one</code></td>
-<td>dataset page、<code>split_data.m</code>、<code>src.zip</code></td>
-<td>participant <code>tar.bz2</code> 不适合 range 抽单 trial，需整包</td>
+<td>完整 <code>P02.tar.bz2</code> participant archive</td>
+<td>archive 已完整落地，未自动解包</td>
+</tr>
+<tr>
+<td><code>openmiir</code></td>
+<td>完整 wav + <code>P01-100p_64c-ica.fif</code></td>
+<td>已有完整样例</td>
 </tr>
 </tbody>
 </table>
@@ -1219,28 +1339,215 @@ Fuglsang 2020 · Rotaru 2024 · Geirnaert 2025
 </thead>
 <tbody>
 <tr>
-<td>direct audio + direct EEG/probe</td>
-<td style="text-align: right;">11</td>
-<td><code>ds004408</code>, <code>ds006434</code>, <code>ds005345</code>, <code>cire_2025</code>, <code>ds004718</code>, <code>ds006104</code>, <code>ugr_mindvoice</code>, <code>ds004306_semantic_imagination</code>, <code>kul_aad_4004271</code>, <code>musin_g_ds003774</code>, <code>mad_eeg_4537751</code></td>
+<td>已有完整真实文件</td>
+<td style="text-align: right;">35</td>
+<td>除 <code>ds007630_eeg_speech_brain_decoding</code>、<code>sparrkulee_eegdash</code> 外的全部数据集</td>
 </tr>
 <tr>
-<td>只有 direct audio</td>
-<td style="text-align: right;">5</td>
-<td><code>aasd_17413336</code>, <code>ms_aasd_17149387</code>, <code>feis_3554128</code>, <code>dtu_aad_1199011</code>, <code>eeg_aad_255ch_4518754</code></td>
-</tr>
-<tr>
-<td>只有 direct EEG/probe</td>
-<td style="text-align: right;">14</td>
-<td><code>ds007602_eeg_speech_overt</code>, <code>etard_continuous_speech_7086209</code>, <code>ds007591</code>, <code>ds006465_3m_cpseed</code>, <code>ds005170_chisco</code>, <code>cantonese_tone_syllable_7750292</code>, <code>ds003626_inner_speech</code>, <code>four_talker_aad_10803261</code>, <code>four_direction_aad_10803229</code>, <code>non_block_aad_14887886</code>, <code>asa_lin2024_11541114</code>, <code>fuglsang2020_3618205</code>, <code>rotaru2024_11058711</code>, <code>geirnaert2025_16536441</code></td>
-</tr>
-<tr>
-<td>仍无 direct audio/eeg</td>
-<td style="text-align: right;">7</td>
-<td><code>weissbart_natural_speech</code>, <code>ds007630_eeg_speech_brain_decoding</code>, <code>kara_one</code>, <code>sparrkulee_eegdash</code>, <code>esaa_7078451</code>, <code>nju_aad_7253438</code>, <code>openmiir</code></td>
+<td>仍被权限/登录卡住</td>
+<td style="text-align: right;">2</td>
+<td><code>ds007630_eeg_speech_brain_decoding</code>, <code>sparrkulee_eegdash</code></td>
 </tr>
 </tbody>
 </table>
-<h3 id="direct-audioeeg">仍无 direct audio/eeg 的条目</h3>
+<h3 id="_13">逐数据集最终样例表</h3>
+<table>
+<thead>
+<tr>
+<th>数据集</th>
+<th>最终状态</th>
+<th>代表完整文件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ds004408</code></td>
+<td>OK</td>
+<td><code>sub-001_task-listening_run-01_eeg_6.eeg</code>; <code>audio01_6.wav</code></td>
+</tr>
+<tr>
+<td><code>weissbart_natural_speech</code></td>
+<td>OK</td>
+<td><code>P08.eeg</code>; <code>FLOP03.wav</code></td>
+</tr>
+<tr>
+<td><code>ds006434</code></td>
+<td>OK</td>
+<td><code>eeg.eeg</code>; <code>wrinkle_alchemyst000.wav</code></td>
+</tr>
+<tr>
+<td><code>ds007630_eeg_speech_brain_decoding</code></td>
+<td>FAILED</td>
+<td>OpenNeuro S3 403；NEMAR download 返回 HTML 登录页 <code>Access denied</code></td>
+</tr>
+<tr>
+<td><code>ds007602_eeg_speech_overt</code></td>
+<td>OK</td>
+<td><code>eeg.edf</code></td>
+</tr>
+<tr>
+<td><code>etard_continuous_speech_7086209</code></td>
+<td>OK</td>
+<td><code>YH02_fM_2.eeg</code></td>
+</tr>
+<tr>
+<td><code>ds007591</code></td>
+<td>OK</td>
+<td><code>eeg.edf</code></td>
+</tr>
+<tr>
+<td><code>kara_one</code></td>
+<td>OK</td>
+<td><code>P02.tar.bz2</code> participant archive</td>
+</tr>
+<tr>
+<td><code>sparrkulee_eegdash</code></td>
+<td>FAILED</td>
+<td>NEMAR download 返回 HTML 登录页；部分 subject 需 KU Leuven data-use agreement</td>
+</tr>
+<tr>
+<td><code>ds005345</code></td>
+<td>OK</td>
+<td><code>sub-01_task-multitalker_run-1_full_eeg_6.npz</code>; <code>mix_6.wav</code></td>
+</tr>
+<tr>
+<td><code>esaa_7078451</code></td>
+<td>OK</td>
+<td><code>S1.mat</code></td>
+</tr>
+<tr>
+<td><code>nju_aad_7253438</code></td>
+<td>OK</td>
+<td><code>S18.mat</code></td>
+</tr>
+<tr>
+<td><code>ds006465_3m_cpseed</code></td>
+<td>OK</td>
+<td><code>sub-01_ses-1_speak.mat</code></td>
+</tr>
+<tr>
+<td><code>ds005170_chisco</code></td>
+<td>OK</td>
+<td><code>preprocessed_run01.fif</code></td>
+</tr>
+<tr>
+<td><code>cire_2025</code></td>
+<td>OK</td>
+<td><code>sub-02_task-CIRE_eeg.set</code>; <code>156.wav</code></td>
+</tr>
+<tr>
+<td><code>aasd_17413336</code></td>
+<td>OK</td>
+<td><code>S5.cnt</code>; <code>mixed_001.wav</code></td>
+</tr>
+<tr>
+<td><code>ms_aasd_17149387</code></td>
+<td>OK</td>
+<td><code>S1.cnt</code>; <code>female_001.wav</code>; <code>mixed_001.wav</code></td>
+</tr>
+<tr>
+<td><code>ds004718</code></td>
+<td>OK</td>
+<td><code>sub-HK001_task-lppHK_eeg_preprocessed_7.set</code>; <code>1.003_7.wav</code></td>
+</tr>
+<tr>
+<td><code>cantonese_tone_syllable_7750292</code></td>
+<td>OK</td>
+<td><code>sub01_Mon.cnt</code></td>
+</tr>
+<tr>
+<td><code>ds006104</code></td>
+<td>OK</td>
+<td><code>sub-P01_ses-01_task-phonemes_full_eeg_6.npz</code>; local wav stimuli</td>
+</tr>
+<tr>
+<td><code>ds003626_inner_speech</code></td>
+<td>OK</td>
+<td><code>eeg-epo.fif</code></td>
+</tr>
+<tr>
+<td><code>feis_3554128</code></td>
+<td>OK</td>
+<td><code>full_eeg_experiment12/full_eeg.csv</code>; <code>feis_speaking_f_raw.wav</code></td>
+</tr>
+<tr>
+<td><code>ugr_mindvoice</code></td>
+<td>OK</td>
+<td><code>sub-01_run01_eeg.edf</code>; <code>anonymized.wav</code></td>
+</tr>
+<tr>
+<td><code>ds004306_semantic_imagination</code></td>
+<td>OK</td>
+<td><code>sub16_sess1_50_ica_eeg-1.fif</code>; <code>flower_1.ogg</code></td>
+</tr>
+<tr>
+<td><code>kul_aad_4004271</code></td>
+<td>OK</td>
+<td><code>S2.mat</code>; <code>rep_part2_track2_dry.wav</code></td>
+</tr>
+<tr>
+<td><code>dtu_aad_1199011</code></td>
+<td>OK</td>
+<td><code>S2.mat</code>; <code>aske_story4_trial_8.wav</code></td>
+</tr>
+<tr>
+<td><code>eeg_aad_255ch_4518754</code></td>
+<td>OK</td>
+<td><code>S3.tar.gz</code>; <code>part1_track1_dry.wav</code></td>
+</tr>
+<tr>
+<td><code>openmiir</code></td>
+<td>OK</td>
+<td><code>P01-100p_64c-ica.fif</code>; <code>S01_Chim_Chim_Cheree_lyrics.wav</code></td>
+</tr>
+<tr>
+<td><code>musin_g_ds003774</code></td>
+<td>OK</td>
+<td><code>eeg.set</code>; <code>1.esh.wav</code></td>
+</tr>
+<tr>
+<td><code>mad_eeg_4537751</code></td>
+<td>OK</td>
+<td><code>madeeg_raw.hdf5</code>; <code>pop_falldead_solo_Dr_theme1_mono_4.wav</code></td>
+</tr>
+<tr>
+<td><code>four_talker_aad_10803261</code></td>
+<td>OK</td>
+<td><code>sub1.Poly5</code></td>
+</tr>
+<tr>
+<td><code>four_direction_aad_10803229</code></td>
+<td>OK</td>
+<td><code>sub1_data.bdf</code></td>
+</tr>
+<tr>
+<td><code>non_block_aad_14887886</code></td>
+<td>OK</td>
+<td><code>eareeg_sub002.DATA.Poly5</code>; <code>scalpeeg_sub001_evt.bdf</code></td>
+</tr>
+<tr>
+<td><code>asa_lin2024_11541114</code></td>
+<td>OK</td>
+<td><code>S001_E1_Trial1_raw.fif</code></td>
+</tr>
+<tr>
+<td><code>fuglsang2020_3618205</code></td>
+<td>OK</td>
+<td><code>sub-026_task-rest_eeg.bdf</code></td>
+</tr>
+<tr>
+<td><code>rotaru2024_11058711</code></td>
+<td>OK</td>
+<td><code>sub03_preprocessed.mat</code></td>
+</tr>
+<tr>
+<td><code>geirnaert2025_16536441</code></td>
+<td>OK</td>
+<td><code>dataSubject8.mat</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_14">仍未完成的条目</h3>
 <table>
 <thead>
 <tr>
@@ -1252,50 +1559,20 @@ Fuglsang 2020 · Rotaru 2024 · Geirnaert 2025
 </thead>
 <tbody>
 <tr>
-<td><code>weissbart_natural_speech</code></td>
-<td>Zenodo metadata、archive header、stim timing/word CSV</td>
-<td>小成员主要是 stimulus metadata；EEG/audio 在 13.97 GB Zip64 大包内</td>
-<td>选定 subject 后允许大文件或分块下载</td>
-</tr>
-<tr>
 <td><code>ds007630_eeg_speech_brain_decoding</code></td>
-<td>EEGDash 页面</td>
-<td>直接 OpenNeuro S3 object GET 返回 403</td>
-<td>用 EEGDash / OpenNeuro / DataLad client 拉 BIDS 文件</td>
-</tr>
-<tr>
-<td><code>kara_one</code></td>
-<td>webpage、helper code</td>
-<td>participant <code>tar.bz2</code> 每个约 2.1-2.35 GB，不能安全 range 抽单 trial</td>
-<td>选择一个 participant 整包下载</td>
+<td>EEGDash 页面、DataLad GitHub metadata clone</td>
+<td>OpenNeuro S3 返回 403；NEMAR download 返回 HTML 登录页 <code>Access denied</code></td>
+<td>需要 OpenNeuro/NEMAR 登录或 EEGDash 包授权下载</td>
 </tr>
 <tr>
 <td><code>sparrkulee_eegdash</code></td>
-<td>EEGDash metadata</td>
-<td>raw 下载路由未从页面暴露</td>
-<td>继续查 EEGDash API/raw resolver</td>
-</tr>
-<tr>
-<td><code>esaa_7078451</code></td>
-<td>README、preprocess、<code>S1.zip</code> header</td>
-<td><code>S1.zip</code> 里主要是 528 MB <code>S1.mat</code>，无小 trial 成员</td>
-<td>允许拉完整 <code>S1.mat</code> 或换更小 subject</td>
-</tr>
-<tr>
-<td><code>nju_aad_7253438</code></td>
-<td>metadata、script、archive header</td>
-<td>subject MAT 最小也约 103 MB</td>
-<td>允许拉 <code>S18.mat</code> 或先只做 metadata 级接入</td>
-</tr>
-<tr>
-<td><code>openmiir</code></td>
-<td>GitHub README、stim meta、beat annotations</td>
-<td>EEG/audio 数据不在当前 repo 小文件内</td>
-<td>按 OpenMIIR 数据说明找原始数据镜像</td>
+<td>EEGDash 页面</td>
+<td>NEMAR download 返回 HTML 登录页；页面说明部分 subjects 需 KU Leuven data-use agreement</td>
+<td>需要 NEMAR 登录或向 <code>sparrkulee@kuleuven.be</code> 申请</td>
 </tr>
 </tbody>
 </table>
-<h3 id="_13">当前可直接跑的本地完整样例</h3>
+<h3 id="_15">当前可直接跑的本地完整样例</h3>
 <table>
 <thead>
 <tr>
@@ -1327,11 +1604,135 @@ Fuglsang 2020 · Rotaru 2024 · Geirnaert 2025
 </tr>
 </tbody>
 </table>
-<h3 id="_14">样例管理命令</h3>
+<h3 id="_16">样例管理命令</h3>
 <pre><code class="language-bash">python3 scripts/download_voice_eeg_dataset_samples.py
 python3 scripts/download_voice_eeg_dataset_samples.py --dataset cire_2025
 python3 scripts/download_voice_eeg_dataset_samples.py --allow-large
 python3 scripts/probe_eeg_audio_datasets.py --only ds007602 ds005170 ds003626
 </code></pre>
+<hr />
+<h2 id="9">9. 文件整理记录</h2>
+<h3 id="python">Python 脚本整理口径</h3>
+<table>
+<thead>
+<tr>
+<th>位置</th>
+<th style="text-align: right;">当前数量</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scripts/*.py</code></td>
+<td style="text-align: right;">4</td>
+<td>只保留当前数据集下载、metadata probe、样例可视化、完整 OpenNeuro 派生转换。</td>
+</tr>
+<tr>
+<td><code>src/eeg_voice_model/*.py</code></td>
+<td style="text-align: right;">10</td>
+<td>核心模型包，全部保留。</td>
+</tr>
+<tr>
+<td><code>tests/*.py</code></td>
+<td style="text-align: right;">1</td>
+<td>smoke test，保留。</td>
+</tr>
+<tr>
+<td><code>docs/models-ref/**/*.py</code></td>
+<td style="text-align: right;">78</td>
+<td>第三方参考模型代码，保留为参考仓库，不纳入项目脚本清理。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_17">已删除</h3>
+<table>
+<thead>
+<tr>
+<th>路径</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>eeg-datasets.md</code></td>
+<td>早期会议口径说明，内容已被本 catalog、<code>docs/model_v0_design.md</code> 和 <code>docs/voice_image_dataset_experimental_design.md</code> 覆盖；保留会造成数据口径重复。</td>
+</tr>
+<tr>
+<td><code>scripts/prepare_meeting_eeg_audio_examples.py</code></td>
+<td>早期 presentation-sized 小样例脚本，依赖 header / byte-range 小抽样；当前严格样例口径已要求每个数据集抓完整 subject/trial 文件，因此由 <code>scripts/download_voice_eeg_dataset_samples.py</code> 取代。</td>
+</tr>
+<tr>
+<td><code>scripts/analyze_ds006104_voice_features.py</code></td>
+<td>早期单数据集会议分析脚本，输出到 <code>data/meeting_examples/</code>；当前 selected 数据池已进入统一 catalog / downloader 口径。</td>
+</tr>
+<tr>
+<td><code>scripts/plot_full_eeg_npz.py</code></td>
+<td>单个 NPZ 快速画图脚本，功能已被 <code>scripts/visualize_eeg_samples.py</code> 的统一样例预览覆盖。</td>
+</tr>
+<tr>
+<td><code>scripts/prepare_downloaded_openneuro_artifacts.py</code></td>
+<td>旧 OpenNeuro preview/inventory 脚本；当前训练派生统一交给 <code>scripts/build_full_openneuro_derivatives.py</code>。</td>
+</tr>
+<tr>
+<td><code>scripts/model_v0_dryrun.py</code></td>
+<td>独立 dry-run 入口已被 <code>tests/test_model_v0_synthetic.py</code> 覆盖，避免维护重复 smoke-test 逻辑。</td>
+</tr>
+<tr>
+<td><code>.DS_Store</code> / <code>__pycache__</code> / <code>*.pyc</code></td>
+<td>macOS 与 Python 生成物，不属于数据、代码或文档证据链。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_18">明确保留</h3>
+<table>
+<thead>
+<tr>
+<th>路径</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scripts/download_voice_eeg_dataset_samples.py</code></td>
+<td>当前主下载器；负责每个 selected 数据集的完整真实样例、状态文件和统一 symlink。</td>
+</tr>
+<tr>
+<td><code>scripts/probe_eeg_audio_datasets.py</code></td>
+<td>metadata/path probe；只用于确认远程结构、下载路径和 sidecar，不再把 header/range 当 train-ready 样例。</td>
+</tr>
+<tr>
+<td><code>scripts/visualize_eeg_samples.py</code></td>
+<td>本地完整样例预览与 EEG/音频 sanity check。</td>
+</tr>
+<tr>
+<td><code>scripts/build_full_openneuro_derivatives.py</code></td>
+<td>OpenNeuro 完整数据转本地派生格式时使用。</td>
+</tr>
+<tr>
+<td><code>src/eeg_voice_model/*.py</code></td>
+<td>项目核心模型包，不按脚本清理。</td>
+</tr>
+<tr>
+<td><code>tests/test_model_v0_synthetic.py</code></td>
+<td>v0.1 模型 smoke test，替代旧 dry-run 脚本。</td>
+</tr>
+<tr>
+<td><code>docs/models-ref/**/*.py</code></td>
+<td>第三方参考模型代码，作为文献/实现参考保留，不属于本项目执行脚本。</td>
+</tr>
+<tr>
+<td><code>docs/model_v0_design.md</code></td>
+<td>模型 v0.1 设计入口。</td>
+</tr>
+<tr>
+<td><code>docs/voice_image_dataset_experimental_design.md</code></td>
+<td>公开数据之后的自采 voice-bank 实验方案。</td>
+</tr>
+<tr>
+<td><code>docs/audio_decoder_ccf_a_papers_0512.md</code></td>
+<td>EEG token 接 voice/audio decoder 的方法文献地图。</td>
+</tr>
+</tbody>
+</table>
 </body>
 </html>

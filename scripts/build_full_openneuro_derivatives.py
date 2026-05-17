@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Build full-length derived files for the newly downloaded OpenNeuro subsets.
+"""Build full-length derived files for downloaded OpenNeuro subsets.
 
-This script is separate from `prepare_downloaded_openneuro_artifacts.py`.
-The older script creates quick preview SVGs. This one creates training-oriented
-derivatives that keep the full available recordings.
+This is the training-oriented OpenNeuro conversion entrypoint. It keeps the
+full available recordings and writes derived arrays plus manifest files.
 
 Default output:
   data/derived/openneuro_full/

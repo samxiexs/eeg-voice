@@ -208,21 +208,9 @@ pooled EEG token embedding
 | `ds004718` | Cantonese story tokenization | word/prosody/content alignment |
 | Voice Image EEG Dataset | controlled voice-bank tokenization | content/pitch/timbre/speaker/style alignment |
 
-## 9. Dry-run
+## 9. Smoke tests
 
-Tokenizer-only：
-
-```bash
-python3 scripts/model_v0_dryrun.py --mode synthetic
-```
-
-Token-centric v0.1：
-
-```bash
-python3 scripts/model_v0_dryrun.py --mode synthetic --model v01
-```
-
-Tests：
+模型形状、tokenizer、probe head 和 v0.1 wrapper 统一用 pytest 检查。旧的独立 dry-run 脚本已删除，避免维护两套入口。
 
 ```bash
 PYTHONPATH=. pytest -q tests/test_model_v0_synthetic.py
