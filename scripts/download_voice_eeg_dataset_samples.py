@@ -463,7 +463,7 @@ DATASETS: list[DatasetSpec] = [
             ZipMemberFile("17149387", "Female_wav.zip", "Female_wav/female_001.wav", "remote/audio/female_001.wav"),
             ZipMemberFile("17149387", "Male_wav.zip", "Male_wav/male_001.wav", "remote/audio/male_001.wav"),
             ZipMemberFile("17149387", "Mix_wav_Nospace.zip", "Mix_wav_Nospace/mixed_001.wav", "remote/audio/mixed_001.wav"),
-            ZipMemberFile("17149387", ".cnt.zip", ".cnt/S1.cnt", "remote/eeg/S1.cnt", max_compressed_mb=500.0),
+            ZipMemberFile("17149387", ".cnt.zip", ".cnt/S1.cnt", "remote/eeg/S1.cnt", max_compressed_mb=560.0),
         ],
     ),
     DatasetSpec(
@@ -556,6 +556,7 @@ DATASETS: list[DatasetSpec] = [
         zip_members=[
             ZipMemberFile("3554128", "scottwellington/FEIS-v1.1.zip", "scottwellington-FEIS-7e726fd/B059691/decoded wavs/Raw/Hearing/f_raw.wav", "remote/audio/feis_hearing_f_raw.wav"),
             ZipMemberFile("3554128", "scottwellington/FEIS-v1.1.zip", "scottwellington-FEIS-7e726fd/B059691/decoded wavs/Raw/Speaking/f_raw.wav", "remote/audio/feis_speaking_f_raw.wav"),
+            ZipMemberFile("3554128", "scottwellington/FEIS-v1.1.zip", "scottwellington-FEIS-7e726fd/experiments/12/full_eeg.zip", "remote/eeg/full_eeg_experiment12.zip", max_compressed_mb=25.0),
         ],
     ),
     DatasetSpec(
@@ -709,7 +710,7 @@ DATASETS: list[DatasetSpec] = [
             zenodo_file("4537751", "behavioural_data.xlsx", "remote/behavioural_data.xlsx", max_mb=1.0),
             zenodo_file("4537751", "madeeg_raw.yaml", "remote/madeeg_raw.yaml", max_mb=1.0),
             zenodo_file("4537751", "madeeg_raw.hdf5", "remote/eeg/madeeg_raw.hdf5.head.bin", range_bytes=65536),
-            zenodo_file("4537751", "madeeg_raw.hdf5", "remote/eeg/madeeg_raw.hdf5", max_mb=500.0),
+            zenodo_file("4537751", "madeeg_raw.hdf5", "remote/eeg/madeeg_raw.hdf5", max_mb=710.0),
             zenodo_file("4537751", "stimuli.zip", "remote/archive_headers/stimuli.zip.head.bin", range_bytes=65536),
         ],
         zip_members=[
@@ -748,6 +749,7 @@ DATASETS: list[DatasetSpec] = [
         zip_members=[
             ZipMemberFile("10803229", "EEG_raw.zip", "EEG_raw/sub1/recordInformation.json", "remote/eeg/sub1_recordInformation.json", max_compressed_mb=1.0),
             ZipMemberFile("10803229", "EEG_raw.zip", "EEG_raw/sub1/evt.bdf", "remote/eeg/sub1_evt.bdf", max_compressed_mb=1.0),
+            ZipMemberFile("10803229", "EEG_raw.zip", "EEG_raw/sub1/data.bdf", "remote/eeg/sub1_data.bdf", max_compressed_mb=520.0),
         ],
     ),
     DatasetSpec(
