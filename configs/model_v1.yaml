@@ -1,0 +1,66 @@
+runtime:
+  device: cuda
+  precision: bf16
+  requires: [torch, mne, numpy, pandas, scipy, torchaudio]
+
+model:
+  version: v1
+  primary_output: grouped_discrete_eeg_tokens
+  first_stage: english_first_token_retrieval
+
+tokenizer:
+  sample_rate: 250
+  window_sec: 2.0
+  dim: 256
+  latent_queries: 32
+  codebook_dim: 128
+  codebook_size: 1024
+  num_quantizers: 8
+  quantizer_groups:
+    base: [0, 1]
+    content: [2, 3]
+    prosody: [4]
+    voice: [5, 6]
+    residual: [7]
+  encoder_channels: 96
+  downsample_rates: [2, 2, 2, 2]
+  n_heads: 8
+  dropout: 0.1
+  sensor_pos_dim: 6
+  n_sensor_types: 3
+  mask_ratio: 0.25
+  noise_std: 0.05
+  encoder_residual_layers: 2
+  temporal_layers: 2
+  q7_full_recon_weight: 0.25
+  q7_group_dropout: 0.5
+
+heads:
+  audio_embedding_dim: 11
+  projection_dim: 256
+  content_classes: 64
+  phoneme_classes: 48
+  pitch_dim: 1
+  prosody_dim: 2
+  timbre_dim: 8
+  style_classes: 5
+  mode_labels: [heard, imagined, inner, overt, visualized_control]
+  dataset_adapter_count: 128
+
+retrieval:
+  queue_size: 4096
+  queue_negatives: 256
+  temperature: 0.07
+
+data:
+  domain_priority: english_first
+  english_first_core:
+    - ds004408
+    - ds006434
+    - weissbart_natural_speech
+    - etard_continuous_speech_7086209
+    - ds007591
+    - ds007602_eeg_speech_overt
+    - kara_one
+    - feis_3554128
+    - ds006104

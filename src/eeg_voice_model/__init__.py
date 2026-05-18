@@ -1,65 +1,39 @@
-"""BrainOmni-style EEG voice model v0.
-
-Heavy torch modules are loaded lazily so lightweight helpers such as
-`audio_features` can still be used before PyTorch is installed.
-"""
+"""EEGVoiceTokenV1 public package exports."""
 
 __all__ = [
-    "AudioContrastiveHead",
-    "BrainStyleEEGTokenizerConfig",
-    "BrainStyleEEGTokenizerV0",
-    "PhonemeSequenceHead",
-    "ProbeHead",
-    "SegmentContrastiveHead",
-    "TokenCentricEEGVoiceConfig",
-    "TokenCentricEEGVoiceModelV01",
-    "TokenMetrics",
-    "VoiceAttributeHead",
-    "VoiceProfileHead",
+    "EEGVoiceBatch",
+    "EEGVoiceTokenV1",
+    "EEGVoiceTokenizerV1",
+    "EEGVoiceV1Config",
+    "GroupedRVQOutput",
+    "VoiceAlignmentTargets",
+    "build_eeg_voice_token_v1",
+    "build_model_v1_bundle",
 ]
 
 
 def __getattr__(name: str):
-    if name in {"BrainStyleEEGTokenizerV0", "BrainStyleEEGTokenizerConfig"}:
-        from .tokenizer import BrainStyleEEGTokenizerConfig, BrainStyleEEGTokenizerV0
+    if name in {"EEGVoiceTokenizerV1", "EEGVoiceV1Config", "GroupedRVQOutput"}:
+        from .tokenizer import EEGVoiceTokenizerV1, EEGVoiceV1Config, GroupedRVQOutput
 
         return {
-            "BrainStyleEEGTokenizerConfig": BrainStyleEEGTokenizerConfig,
-            "BrainStyleEEGTokenizerV0": BrainStyleEEGTokenizerV0,
+            "EEGVoiceTokenizerV1": EEGVoiceTokenizerV1,
+            "EEGVoiceV1Config": EEGVoiceV1Config,
+            "GroupedRVQOutput": GroupedRVQOutput,
         }[name]
-    if name in {
-        "AudioContrastiveHead",
-        "PhonemeSequenceHead",
-        "ProbeHead",
-        "SegmentContrastiveHead",
-        "TokenMetrics",
-        "VoiceAttributeHead",
-        "VoiceProfileHead",
-    }:
-        from .heads import (
-            AudioContrastiveHead,
-            PhonemeSequenceHead,
-            ProbeHead,
-            SegmentContrastiveHead,
-            TokenMetrics,
-            VoiceAttributeHead,
-            VoiceProfileHead,
-        )
+    if name in {"EEGVoiceBatch", "EEGVoiceTokenV1", "VoiceAlignmentTargets"}:
+        from .voice_model import EEGVoiceBatch, EEGVoiceTokenV1, VoiceAlignmentTargets
 
         return {
-            "AudioContrastiveHead": AudioContrastiveHead,
-            "PhonemeSequenceHead": PhonemeSequenceHead,
-            "ProbeHead": ProbeHead,
-            "SegmentContrastiveHead": SegmentContrastiveHead,
-            "TokenMetrics": TokenMetrics,
-            "VoiceAttributeHead": VoiceAttributeHead,
-            "VoiceProfileHead": VoiceProfileHead,
+            "EEGVoiceBatch": EEGVoiceBatch,
+            "EEGVoiceTokenV1": EEGVoiceTokenV1,
+            "VoiceAlignmentTargets": VoiceAlignmentTargets,
         }[name]
-    if name in {"TokenCentricEEGVoiceConfig", "TokenCentricEEGVoiceModelV01"}:
-        from .voice_model import TokenCentricEEGVoiceConfig, TokenCentricEEGVoiceModelV01
+    if name in {"build_eeg_voice_token_v1", "build_model_v1_bundle"}:
+        from .builders import build_eeg_voice_token_v1, build_model_v1_bundle
 
         return {
-            "TokenCentricEEGVoiceConfig": TokenCentricEEGVoiceConfig,
-            "TokenCentricEEGVoiceModelV01": TokenCentricEEGVoiceModelV01,
+            "build_eeg_voice_token_v1": build_eeg_voice_token_v1,
+            "build_model_v1_bundle": build_model_v1_bundle,
         }[name]
     raise AttributeError(name)
