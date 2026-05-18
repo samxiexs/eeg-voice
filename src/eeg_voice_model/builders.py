@@ -1,4 +1,4 @@
-"""Factory functions for assembling token-centric EEG voice models."""
+"""Factory functions for EEGVoiceTokenV1."""
 
 from __future__ import annotations
 
@@ -6,107 +6,74 @@ from pathlib import Path
 from typing import Any
 
 from .config import load_simple_yaml
-from .heads import AudioContrastiveHead, ProbeHead, VoiceAttributeHead
-from .tokenizer import BrainStyleEEGTokenizerConfig, BrainStyleEEGTokenizerV0
-from .voice_model import TokenCentricEEGVoiceConfig, TokenCentricEEGVoiceModelV01
+from .tokenizer import EEGVoiceV1Config, default_quantizer_groups
+from .voice_model import EEGVoiceTokenV1
 
 
-def tokenizer_config_from_dict(cfg: dict[str, Any]) -> BrainStyleEEGTokenizerConfig:
-    """Convert the `tokenizer:` section of `configs/model_v0.yaml`."""
-    return BrainStyleEEGTokenizerConfig(
-        sample_rate=int(cfg["sample_rate"]),
-        window_sec=float(cfg["window_sec"]),
-        dim=int(cfg["dim"]),
-        latent_queries=int(cfg["latent_queries"]),
-        codebook_dim=int(cfg.get("codebook_dim", cfg["dim"])),
-        codebook_size=int(cfg["codebook_size"]),
-        num_quantizers=int(cfg["num_quantizers"]),
-        encoder_channels=int(cfg["encoder_channels"]),
-        downsample_rates=tuple(int(x) for x in cfg["downsample_rates"]),
-        n_heads=int(cfg["n_heads"]),
-        dropout=float(cfg["dropout"]),
-        sensor_pos_dim=int(cfg.get("sensor_pos_dim", 6)),
-        n_sensor_types=int(cfg.get("n_sensor_types", 3)),
-        mask_ratio=float(cfg.get("mask_ratio", 0.25)),
-        noise_std=float(cfg.get("noise_std", 0.05)),
-        encoder_residual_layers=int(cfg.get("encoder_residual_layers", 2)),
-        temporal_layers=int(cfg.get("temporal_layers", 2)),
+def _as_tuple(value: Any) -> tuple[int, ...]:
+    if isinstance(value, tuple):
+        return tuple(int(x) for x in value)
+    if isinstance(value, list):
+        return tuple(int(x) for x in value)
+    raise TypeError(f"Expected list/tuple, got {type(value)!r}")
+
+
+def v1_config_from_dict(cfg: dict[str, Any]) -> EEGVoiceV1Config:
+    tokenizer = cfg.get("tokenizer", {})
+    heads = cfg.get("heads", {})
+    retrieval = cfg.get("retrieval", {})
+    quantizer_groups = default_quantizer_groups()
+    if "quantizer_groups" in tokenizer:
+        quantizer_groups = {name: _as_tuple(values) for name, values in tokenizer["quantizer_groups"].items()}
+    return EEGVoiceV1Config(
+        sample_rate=int(tokenizer.get("sample_rate", 250)),
+        window_sec=float(tokenizer.get("window_sec", 2.0)),
+        dim=int(tokenizer.get("dim", 256)),
+        latent_queries=int(tokenizer.get("latent_queries", 32)),
+        codebook_dim=int(tokenizer.get("codebook_dim", tokenizer.get("dim", 256))),
+        codebook_size=int(tokenizer.get("codebook_size", 1024)),
+        num_quantizers=int(tokenizer.get("num_quantizers", 8)),
+        quantizer_groups=quantizer_groups,
+        encoder_channels=int(tokenizer.get("encoder_channels", 96)),
+        downsample_rates=_as_tuple(tokenizer.get("downsample_rates", [2, 2, 2, 2])),
+        n_heads=int(tokenizer.get("n_heads", 8)),
+        dropout=float(tokenizer.get("dropout", 0.1)),
+        sensor_pos_dim=int(tokenizer.get("sensor_pos_dim", 6)),
+        n_sensor_types=int(tokenizer.get("n_sensor_types", 3)),
+        mask_ratio=float(tokenizer.get("mask_ratio", 0.25)),
+        noise_std=float(tokenizer.get("noise_std", 0.05)),
+        encoder_residual_layers=int(tokenizer.get("encoder_residual_layers", 2)),
+        temporal_layers=int(tokenizer.get("temporal_layers", 2)),
+        q7_full_recon_weight=float(tokenizer.get("q7_full_recon_weight", 0.25)),
+        q7_group_dropout=float(tokenizer.get("q7_group_dropout", 0.5)),
+        retrieval_queue_size=int(retrieval.get("queue_size", 4096)),
+        retrieval_queue_negatives=int(retrieval.get("queue_negatives", 256)),
+        retrieval_temperature=float(retrieval.get("temperature", 0.07)),
+        audio_embedding_dim=int(heads.get("audio_embedding_dim", 11)),
+        projection_dim=int(heads.get("projection_dim", 256)),
+        content_classes=int(heads.get("content_classes", 64)),
+        phoneme_classes=int(heads.get("phoneme_classes", 48)),
+        pitch_dim=int(heads.get("pitch_dim", 1)),
+        prosody_dim=int(heads.get("prosody_dim", 2)),
+        timbre_dim=int(heads.get("timbre_dim", 8)),
+        style_classes=int(heads.get("style_classes", 5)),
+        mode_labels=tuple(str(x) for x in heads.get("mode_labels", ["heard", "imagined", "inner", "overt", "visualized_control"])),
+        dataset_adapter_count=int(heads.get("dataset_adapter_count", 128)),
     )
 
 
-def build_tokenizer_v0(config: BrainStyleEEGTokenizerConfig | dict[str, Any] | None = None) -> BrainStyleEEGTokenizerV0:
-    """Build only the BrainOmni-style EEG tokenizer."""
+def build_eeg_voice_token_v1(config: EEGVoiceV1Config | dict[str, Any] | str | Path | None = None) -> EEGVoiceTokenV1:
     if config is None:
-        return BrainStyleEEGTokenizerV0()
+        return EEGVoiceTokenV1()
+    if isinstance(config, EEGVoiceV1Config):
+        return EEGVoiceTokenV1(config)
     if isinstance(config, dict):
-        config = tokenizer_config_from_dict(config)
-    return BrainStyleEEGTokenizerV0(config)
+        return EEGVoiceTokenV1(v1_config_from_dict(config))
+    cfg = load_simple_yaml(Path(config))
+    return EEGVoiceTokenV1(v1_config_from_dict(cfg))
 
 
-def build_ds006104_probe_heads(dim: int, label_sizes: dict[str, int]) -> dict[str, ProbeHead]:
-    """Build classification probes for ds006104 labels."""
-    return {name: ProbeHead(dim, num_classes=size) for name, size in label_sizes.items()}
-
-
-def build_ds005345_retrieval_head(dim: int, audio_dim: int = 11, proj_dim: int = 256) -> AudioContrastiveHead:
-    """Build the EEG/audio contrastive head for speaker stream retrieval."""
-    return AudioContrastiveHead(eeg_dim=dim, audio_dim=audio_dim, proj_dim=proj_dim)
-
-
-def build_voice_attribute_heads(dim: int) -> dict[str, VoiceAttributeHead]:
-    """Build optional pitch/intensity/timbre attribute heads."""
-    return {
-        "f0_bin": VoiceAttributeHead(dim, output_dim=2, task="classification"),
-        "intensity_bin": VoiceAttributeHead(dim, output_dim=2, task="classification"),
-        "voice_stats": VoiceAttributeHead(dim, output_dim=11, task="regression"),
-    }
-
-
-def build_token_centric_model_v01(config_path: str | Path = "configs/model_v0.yaml") -> TokenCentricEEGVoiceModelV01:
-    """Build the v0.1 token-centric model with downstream token evaluation heads."""
+def build_model_v1_bundle(config_path: str | Path = "configs/model_v1.yaml") -> dict[str, Any]:
     cfg = load_simple_yaml(Path(config_path))
-    tokenizer_cfg = tokenizer_config_from_dict(cfg["tokenizer"])
-    heads_cfg = cfg.get("heads", {})
-    model_cfg = TokenCentricEEGVoiceConfig(
-        tokenizer=tokenizer_cfg,
-        audio_embedding_dim=int(heads_cfg.get("audio_embedding_dim", 11)),
-        projection_dim=int(heads_cfg.get("projection_dim", 256)),
-        contrastive_temperature=float(heads_cfg.get("contrastive_temperature", 0.07)),
-        phoneme_classes=int(heads_cfg.get("phoneme_classes", 48)),
-        pitch_dim=int(heads_cfg.get("pitch_dim", 1)),
-        timbre_dim=int(heads_cfg.get("timbre_dim", 8)),
-        speaker_dim=int(heads_cfg.get("speaker_dim", 128)),
-        style_classes=int(heads_cfg.get("style_classes", 5)),
-        dropout=float(heads_cfg.get("dropout", tokenizer_cfg.dropout)),
-    )
-    return TokenCentricEEGVoiceModelV01(model_cfg)
-
-
-def build_model_v0_bundle(config_path: str | Path = "configs/model_v0.yaml") -> dict[str, Any]:
-    """Build tokenizer and default heads from a YAML config.
-
-    The bundle is intentionally a plain dict so notebooks and demo scripts can
-    show each component without a large training framework.
-    """
-    cfg = load_simple_yaml(Path(config_path))
-    tokenizer_cfg = tokenizer_config_from_dict(cfg["tokenizer"])
-    tokenizer = build_tokenizer_v0(tokenizer_cfg)
-    return {
-        "config": cfg,
-        "tokenizer": tokenizer,
-        "ds005345_retrieval": build_ds005345_retrieval_head(
-            dim=tokenizer_cfg.dim,
-            audio_dim=int(cfg["heads"]["audio_embedding_dim"]),
-            proj_dim=int(cfg["heads"]["projection_dim"]),
-        ),
-        "voice_attributes": build_voice_attribute_heads(tokenizer_cfg.dim),
-    }
-
-
-def build_model_v01_bundle(config_path: str | Path = "configs/model_v0.yaml") -> dict[str, Any]:
-    """Build the token-centric v0.1 wrapper plus its parsed config."""
-    cfg = load_simple_yaml(Path(config_path))
-    return {
-        "config": cfg,
-        "model": build_token_centric_model_v01(config_path),
-    }
+    config = v1_config_from_dict(cfg)
+    return {"config": cfg, "model_config": config, "model": EEGVoiceTokenV1(config)}
