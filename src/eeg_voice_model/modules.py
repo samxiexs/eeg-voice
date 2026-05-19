@@ -3,6 +3,7 @@
 The blocks keep the same ideas as BrainOmni's tokenizer stack:
 
 - sensor position/type embedding
+- acquisition device and montage context
 - SEANet-like temporal encoder
 - latent neural queries with backward solution
 - residual vector quantization
@@ -108,6 +109,97 @@ class SensorEmbedding(nn.Module):
         x = self.pos_mlp(self._prepare_pos(sensor_pos)) + self.type_embedding(sensor_type.long())
         x = x + self.aggregate_mlp(x)
         return self.dropout(self.norm(x))
+
+
+class DeviceContextEmbedding(nn.Module):
+    """Embed acquisition context that is global to a recording.
+
+    Sensor position/type handles channel-local geometry. This module handles
+    recording-level acquisition differences: EEG device, montage, reference,
+    native sampling rate, and native channel count.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        dropout: float,
+        device_vocab_size: int = 256,
+        montage_vocab_size: int = 64,
+        reference_vocab_size: int = 32,
+        max_sampling_rate_hz: float = 4096.0,
+        max_channel_count: int = 512,
+    ):
+        super().__init__()
+        self.device_vocab_size = int(device_vocab_size)
+        self.montage_vocab_size = int(montage_vocab_size)
+        self.reference_vocab_size = int(reference_vocab_size)
+        self.max_sampling_rate_hz = float(max_sampling_rate_hz)
+        self.max_channel_count = int(max_channel_count)
+        self.device_embedding = nn.Embedding(self.device_vocab_size, dim)
+        self.montage_embedding = nn.Embedding(self.montage_vocab_size, dim)
+        self.reference_embedding = nn.Embedding(self.reference_vocab_size, dim)
+        self.continuous_mlp = nn.Sequential(
+            nn.Linear(2, max(dim // 4, 8)),
+            nn.SELU(),
+            nn.Linear(max(dim // 4, 8), dim),
+        )
+        self.norm = RMSNorm(dim)
+        self.dropout = nn.Dropout(dropout)
+
+    @staticmethod
+    def _long_or_zeros(value: torch.Tensor | None, batch: int, device: torch.device, limit: int) -> torch.Tensor:
+        if value is None:
+            out = torch.zeros(batch, dtype=torch.long, device=device)
+        else:
+            out = value.to(device=device, dtype=torch.long).reshape(batch)
+        return out.clamp(min=0, max=max(0, limit - 1))
+
+    @staticmethod
+    def _float_or_default(
+        value: torch.Tensor | None,
+        batch: int,
+        device: torch.device,
+        default: float,
+    ) -> torch.Tensor:
+        if value is None:
+            return torch.full((batch,), float(default), dtype=torch.float32, device=device)
+        return value.to(device=device, dtype=torch.float32).reshape(batch)
+
+    def forward(
+        self,
+        batch_size: int,
+        device: torch.device,
+        acquisition_device_id: torch.Tensor | None = None,
+        montage_id: torch.Tensor | None = None,
+        reference_id: torch.Tensor | None = None,
+        sampling_rate_hz: torch.Tensor | None = None,
+        native_channel_count: torch.Tensor | None = None,
+        observed_channel_count: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        acq = self._long_or_zeros(acquisition_device_id, batch_size, device, self.device_vocab_size)
+        montage = self._long_or_zeros(montage_id, batch_size, device, self.montage_vocab_size)
+        ref = self._long_or_zeros(reference_id, batch_size, device, self.reference_vocab_size)
+        if observed_channel_count is not None:
+            default_channels = observed_channel_count.to(device=device, dtype=torch.float32).reshape(batch_size)
+        else:
+            default_channels = torch.full((batch_size,), 1.0, dtype=torch.float32, device=device)
+        sr = self._float_or_default(sampling_rate_hz, batch_size, device, self.max_sampling_rate_hz)
+        ch = self._float_or_default(native_channel_count, batch_size, device, 1.0)
+        ch = torch.where(ch > 0, ch, default_channels)
+        sr_norm = torch.log1p(sr.clamp(min=1.0, max=self.max_sampling_rate_hz)) / torch.log1p(
+            torch.tensor(self.max_sampling_rate_hz, device=device)
+        )
+        ch_norm = torch.log1p(ch.clamp(min=1.0, max=float(self.max_channel_count))) / torch.log1p(
+            torch.tensor(float(self.max_channel_count), device=device)
+        )
+        continuous = torch.stack([sr_norm, ch_norm], dim=-1)
+        context = (
+            self.device_embedding(acq)
+            + self.montage_embedding(montage)
+            + self.reference_embedding(ref)
+            + self.continuous_mlp(continuous)
+        )
+        return self.dropout(self.norm(context))
 
 
 class SEANetResidualBlock(nn.Module):

@@ -35,6 +35,11 @@ class EEGVoiceBatch:
     audio_embedding: torch.Tensor | None = None
     targets: VoiceAlignmentTargets | None = None
     sensor_type: torch.Tensor | None = None
+    acquisition_device_id: torch.Tensor | None = None
+    montage_id: torch.Tensor | None = None
+    reference_id: torch.Tensor | None = None
+    sampling_rate_hz: torch.Tensor | None = None
+    native_channel_count: torch.Tensor | None = None
 
 
 class EEGVoiceTokenV1(nn.Module):
@@ -76,22 +81,34 @@ class EEGVoiceTokenV1(nn.Module):
     def route(self, rvq: GroupedRVQOutput, groups: tuple[str, ...]) -> torch.Tensor:
         return self.tokenizer.group_latent(rvq, groups)
 
+    @staticmethod
+    def _metadata_labels(value: torch.Tensor | None, prefix: str) -> list[str] | None:
+        if value is None:
+            return None
+        flat = value.detach().cpu().reshape(-1).tolist()
+        return [f"{prefix}:{int(item)}" for item in flat]
+
     def q7_metrics(
         self,
         rvq: GroupedRVQOutput,
         dataset_id: list[str],
         dropout_ablation: torch.Tensor,
+        device_id: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         residual_tokens = rvq.group_tokens["residual"]
         metrics = token_usage_metrics(residual_tokens, self.config.codebook_size)
         residual_embedding = pool_tokens(rvq.group_latents["residual"])
-        return {
+        out = {
             "q7_usage": metrics["usage"],
             "q7_perplexity": metrics["perplexity"],
             "q7_dead_code_ratio": metrics["dead_code_ratio"],
             "q7_dropout_ablation": dropout_ablation.detach(),
             "q7_dataset_predictability": dataset_predictability_proxy(residual_embedding.detach(), dataset_id),
         }
+        device_labels = self._metadata_labels(device_id, "device")
+        if device_labels is not None:
+            out["q7_device_predictability"] = dataset_predictability_proxy(residual_embedding.detach(), device_labels)
+        return out
 
     def forward(self, batch: EEGVoiceBatch) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:
         token_out = self.tokenizer(
@@ -99,6 +116,11 @@ class EEGVoiceTokenV1(nn.Module):
             batch.sensor_pos,
             channel_mask=batch.channel_mask,
             sensor_type=batch.sensor_type,
+            acquisition_device_id=batch.acquisition_device_id,
+            montage_id=batch.montage_id,
+            reference_id=batch.reference_id,
+            sampling_rate_hz=batch.sampling_rate_hz,
+            native_channel_count=batch.native_channel_count,
         )
         rvq = token_out["rvq"]
         assert isinstance(rvq, GroupedRVQOutput)
@@ -131,6 +153,7 @@ class EEGVoiceTokenV1(nn.Module):
             "group_names": rvq.group_names,
             "z": rvq.z,
             "z_q": rvq.z_q,
+            "device_context": token_out["device_context"],
             "group_latents": rvq.group_latents,
             "recon_aligned": token_out["recon_aligned"],
             "recon_full": token_out["recon_full"],
@@ -143,7 +166,12 @@ class EEGVoiceTokenV1(nn.Module):
             "mode_logits": mode_out["logits"],
             "head_groups": self.head_groups,
             "token_metrics": rvq.token_metrics,
-            "q7_metrics": self.q7_metrics(rvq, batch.dataset_id, token_out["q7_dropout_ablation"]),
+            "q7_metrics": self.q7_metrics(
+                rvq,
+                batch.dataset_id,
+                token_out["q7_dropout_ablation"],
+                device_id=batch.acquisition_device_id,
+            ),
         }
 
         for name, branch in {

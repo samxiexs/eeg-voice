@@ -20,6 +20,7 @@ def _as_tuple(value: Any) -> tuple[int, ...]:
 
 def v1_config_from_dict(cfg: dict[str, Any]) -> EEGVoiceV1Config:
     tokenizer = cfg.get("tokenizer", {})
+    device_context = cfg.get("device_context", {})
     heads = cfg.get("heads", {})
     retrieval = cfg.get("retrieval", {})
     quantizer_groups = default_quantizer_groups()
@@ -40,6 +41,20 @@ def v1_config_from_dict(cfg: dict[str, Any]) -> EEGVoiceV1Config:
         dropout=float(tokenizer.get("dropout", 0.1)),
         sensor_pos_dim=int(tokenizer.get("sensor_pos_dim", 6)),
         n_sensor_types=int(tokenizer.get("n_sensor_types", 3)),
+        use_device_context=bool(device_context.get("enabled", tokenizer.get("use_device_context", True))),
+        device_vocab_size=int(device_context.get("device_vocab_size", tokenizer.get("device_vocab_size", 256))),
+        montage_vocab_size=int(device_context.get("montage_vocab_size", tokenizer.get("montage_vocab_size", 64))),
+        reference_vocab_size=int(
+            device_context.get("reference_vocab_size", tokenizer.get("reference_vocab_size", 32))
+        ),
+        max_sampling_rate_hz=float(
+            device_context.get("max_sampling_rate_hz", tokenizer.get("max_sampling_rate_hz", 4096.0))
+        ),
+        max_channel_count=int(device_context.get("max_channel_count", tokenizer.get("max_channel_count", 512))),
+        device_context_dropout=float(
+            device_context.get("dropout", tokenizer.get("device_context_dropout", tokenizer.get("dropout", 0.1)))
+        ),
+        device_film_scale=float(device_context.get("film_scale", tokenizer.get("device_film_scale", 0.1))),
         mask_ratio=float(tokenizer.get("mask_ratio", 0.25)),
         noise_std=float(tokenizer.get("noise_std", 0.05)),
         encoder_residual_layers=int(tokenizer.get("encoder_residual_layers", 2)),

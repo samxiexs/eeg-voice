@@ -23,6 +23,7 @@ The real-data training system is not finished yet. Dataset registry, real-data c
 | Hierarchical grouped RVQ | Implemented |
 | q7 weak residual policy | Implemented |
 | Speaking-mode dataset adapter | Implemented |
+| Acquisition device context | Implemented |
 | Memory queue retrieval negatives | Implemented |
 | Synthetic model tests | Passing |
 | Real selected-dataset training | Not connected yet |
@@ -57,6 +58,7 @@ The V1 model is named `EEGVoiceTokenV1`.
 ```text
 EEG
 -> preprocessing / montage normalization
+-> acquisition device context
 -> sensor-aware temporal encoder
 -> latent token former
 -> hierarchical grouped RVQ
@@ -86,6 +88,8 @@ Head routing is fixed:
 | Full reconstruction | q0-q7 |
 
 q7 does not enter alignment, retrieval, or speaking-mode heads. It only participates in low-weight full reconstruction.
+
+Device information is handled separately from q7. `acquisition_device_id`, `montage_id`, `reference_id`, `sampling_rate_hz`, and `native_channel_count` are embedded as recording-level acquisition context. This context conditions the sensor representation and latent token former, but it is not used as a retrieval target or an attribute label.
 
 ## Repository Layout
 
@@ -159,11 +163,12 @@ EEGVoiceTokenV1
 The next phase should turn the model skeleton into a real selected-dataset training system:
 
 1. Build a `DatasetRegistry` for the English-first core datasets.
-2. Implement a real `EEGVoiceBatch` collator for local sample folders and derived EEG/audio files.
+2. Implement a real `EEGVoiceBatch` collator for local sample folders and derived EEG/audio files, including device, montage, reference, sampling-rate, and channel-count metadata.
 3. Extract content, phoneme, F0, prosody, style, speaker, and audio embeddings into a unified target schema.
 4. Add English-first mixed batching and retrieval hard-negative sampling.
 5. Add smoke training on one or two real examples.
 6. Add evaluation scripts for Recall@K, phoneme accuracy, pitch correlation, token usage, q7 ablation, and q7 dataset predictability.
+7. Add seen-device and held-out-device splits to test whether device context improves cross-device transfer instead of creating a shortcut.
 
 ## Data Handling
 

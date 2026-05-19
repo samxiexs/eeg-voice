@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 from .losses import token_usage_metrics
 from .modules import (
+    DeviceContextEmbedding,
     LatentQueryAggregator,
     ResidualVectorQuantizer,
     SensorEmbedding,
@@ -47,6 +48,14 @@ class EEGVoiceV1Config:
     dropout: float = 0.1
     sensor_pos_dim: int = 6
     n_sensor_types: int = 3
+    use_device_context: bool = True
+    device_vocab_size: int = 256
+    montage_vocab_size: int = 64
+    reference_vocab_size: int = 32
+    max_sampling_rate_hz: float = 4096.0
+    max_channel_count: int = 512
+    device_context_dropout: float = 0.1
+    device_film_scale: float = 0.1
     mask_ratio: float = 0.25
     noise_std: float = 0.05
     encoder_residual_layers: int = 2
@@ -179,6 +188,16 @@ class EEGVoiceTokenizerV1(nn.Module):
         self.config.validate()
         cfg = self.config
         self.sensor_embedding = SensorEmbedding(cfg.dim, cfg.dropout, cfg.sensor_pos_dim, cfg.n_sensor_types)
+        self.device_context = DeviceContextEmbedding(
+            cfg.dim,
+            cfg.device_context_dropout,
+            device_vocab_size=cfg.device_vocab_size,
+            montage_vocab_size=cfg.montage_vocab_size,
+            reference_vocab_size=cfg.reference_vocab_size,
+            max_sampling_rate_hz=cfg.max_sampling_rate_hz,
+            max_channel_count=cfg.max_channel_count,
+        )
+        self.device_film = nn.Linear(cfg.dim, cfg.dim * 2)
         self.encoder = TemporalEncoder(
             cfg.dim,
             cfg.encoder_channels,
@@ -241,22 +260,73 @@ class EEGVoiceTokenizerV1(nn.Module):
             return eeg_windows + torch.randn_like(eeg_windows) * self.config.noise_std
         return eeg_windows
 
+    def build_device_context(
+        self,
+        batch_size: int,
+        device: torch.device,
+        acquisition_device_id: torch.Tensor | None = None,
+        montage_id: torch.Tensor | None = None,
+        reference_id: torch.Tensor | None = None,
+        sampling_rate_hz: torch.Tensor | None = None,
+        native_channel_count: torch.Tensor | None = None,
+        observed_channel_count: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if not self.config.use_device_context:
+            return torch.zeros(batch_size, self.config.dim, dtype=torch.float32, device=device)
+        return self.device_context(
+            batch_size,
+            device,
+            acquisition_device_id=acquisition_device_id,
+            montage_id=montage_id,
+            reference_id=reference_id,
+            sampling_rate_hz=sampling_rate_hz,
+            native_channel_count=native_channel_count,
+            observed_channel_count=observed_channel_count,
+        )
+
+    def apply_device_film(self, z: torch.Tensor, device_context: torch.Tensor) -> torch.Tensor:
+        if not self.config.use_device_context or self.config.device_film_scale <= 0:
+            return z
+        scale, shift = self.device_film(device_context).chunk(2, dim=-1)
+        factor = self.config.device_film_scale
+        scale = torch.tanh(scale)[:, None, None, :] * factor
+        shift = torch.tanh(shift)[:, None, None, :] * factor
+        return z * (1.0 + scale) + shift
+
     def encode(
         self,
         eeg: torch.Tensor,
         sensor_pos: torch.Tensor,
         channel_mask: torch.Tensor | None = None,
         sensor_type: torch.Tensor | None = None,
+        acquisition_device_id: torch.Tensor | None = None,
+        montage_id: torch.Tensor | None = None,
+        reference_id: torch.Tensor | None = None,
+        sampling_rate_hz: torch.Tensor | None = None,
+        native_channel_count: torch.Tensor | None = None,
         overlap_ratio: float = 0.0,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
         target = self.normalize_eeg(eeg)
         eeg_windows, original_samples = self.unfold_windows(target, overlap_ratio=overlap_ratio)
         eeg_windows, effective_mask = self.apply_channel_masking(eeg_windows, channel_mask)
         eeg_windows = self.add_noise(eeg_windows)
+        observed_channel_count = effective_mask.sum(dim=1).clamp(min=1).float()
+        device_context = self.build_device_context(
+            batch_size=eeg.shape[0],
+            device=eeg.device,
+            acquisition_device_id=acquisition_device_id,
+            montage_id=montage_id,
+            reference_id=reference_id,
+            sampling_rate_hz=sampling_rate_hz,
+            native_channel_count=native_channel_count,
+            observed_channel_count=observed_channel_count,
+        )
         sensor = self.sensor_embedding(sensor_pos, channel_mask, sensor_type=sensor_type)
+        sensor = sensor + device_context[:, None, :]
         channel_features = self.encoder(eeg_windows)
         z = self.aggregator(channel_features, sensor, effective_mask)
-        return target, sensor, z, original_samples
+        z = self.apply_device_film(z, device_context)
+        return target, sensor, device_context, z, original_samples
 
     def group_latent(
         self,
@@ -288,13 +358,23 @@ class EEGVoiceTokenizerV1(nn.Module):
         sensor_pos: torch.Tensor,
         channel_mask: torch.Tensor | None = None,
         sensor_type: torch.Tensor | None = None,
+        acquisition_device_id: torch.Tensor | None = None,
+        montage_id: torch.Tensor | None = None,
+        reference_id: torch.Tensor | None = None,
+        sampling_rate_hz: torch.Tensor | None = None,
+        native_channel_count: torch.Tensor | None = None,
         overlap_ratio: float = 0.0,
     ) -> dict[str, torch.Tensor | GroupedRVQOutput | dict[str, torch.Tensor]]:
-        target, sensor, z, original_samples = self.encode(
+        target, sensor, device_context, z, original_samples = self.encode(
             eeg,
             sensor_pos,
             channel_mask=channel_mask,
             sensor_type=sensor_type,
+            acquisition_device_id=acquisition_device_id,
+            montage_id=montage_id,
+            reference_id=reference_id,
+            sampling_rate_hz=sampling_rate_hz,
+            native_channel_count=native_channel_count,
             overlap_ratio=overlap_ratio,
         )
         rvq = self.quantizer(z)
@@ -308,6 +388,7 @@ class EEGVoiceTokenizerV1(nn.Module):
         return {
             "target": target,
             "sensor_embedding": sensor,
+            "device_context": device_context,
             "rvq": rvq,
             "z": z,
             "z_q": rvq.z_q,
@@ -327,6 +408,22 @@ class EEGVoiceTokenizerV1(nn.Module):
         sensor_pos: torch.Tensor,
         channel_mask: torch.Tensor | None = None,
         sensor_type: torch.Tensor | None = None,
+        acquisition_device_id: torch.Tensor | None = None,
+        montage_id: torch.Tensor | None = None,
+        reference_id: torch.Tensor | None = None,
+        sampling_rate_hz: torch.Tensor | None = None,
+        native_channel_count: torch.Tensor | None = None,
         overlap_ratio: float = 0.0,
     ) -> torch.Tensor:
-        return self.forward(eeg, sensor_pos, channel_mask, sensor_type, overlap_ratio=overlap_ratio)["tokens"]
+        return self.forward(
+            eeg,
+            sensor_pos,
+            channel_mask=channel_mask,
+            sensor_type=sensor_type,
+            acquisition_device_id=acquisition_device_id,
+            montage_id=montage_id,
+            reference_id=reference_id,
+            sampling_rate_hz=sampling_rate_hz,
+            native_channel_count=native_channel_count,
+            overlap_ratio=overlap_ratio,
+        )["tokens"]

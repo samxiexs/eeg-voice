@@ -25,6 +25,7 @@ EEG -> grouped discrete token
 | `EEGVoiceV1Config`               | 已完成 | 定义 V1 主配置，包含 grouped RVQ、q7 residual、retrieval queue、mode labels 等参数。                             |
 | `EEGVoiceTokenizerV1`            | 已完成 | 复用 sensor-aware encoder、latent query aggregator 和 temporal decoder，输出 grouped RVQ token。                 |
 | `GroupedResidualVectorQuantizer` | 已完成 | 实现 `base/content/prosody/voice/residual` 五组 token，覆盖 q0-q7。                                            |
+| `DeviceContextEmbedding`       | 已完成 | 显式编码 acquisition device、montage、reference、native sampling rate 和 channel count，并条件化 sensor / latent token。 |
 | `EEGVoiceTokenV1`                | 已完成 | 接入 tokenizer、alignment heads、mode head、retrieval head 和总 loss。                                           |
 | q7 weak residual                   | 已完成 | 输出 `recon_aligned` 与 `recon_full`；q7 只进入 full reconstruction，不进入 alignment/retrieval/mode heads。 |
 | Speaking-mode adapter              | 已完成 | 使用 shared classifier + per-dataset FiLM adapter。                                                              |
@@ -66,6 +67,11 @@ speaker_id
 audio_embedding
 targets
 sensor_type
+acquisition_device_id
+montage_id
+reference_id
+sampling_rate_hz
+native_channel_count
 ```
 
 ### Target schema
@@ -109,6 +115,8 @@ Head routing 当前固定为：
 
 q7 不进入任何 alignment、retrieval 或 speaking-mode head。
 
+设备信息不进入 q7，也不作为 retrieval 或 attribute target。当前代码将 acquisition device、montage、reference、原始采样率和原始通道数编码为 `device_context`，用于条件化 sensor embedding 和 latent token former。这样保留了跨设备校正能力，同时避免把设备标签直接当作任务标签使用。若 batch 提供 `acquisition_device_id`，q7 diagnostics 还会报告 `q7_device_predictability`。
+
 ![Grouped RVQ routing matrix](assets/model_v1_rvq_head_routing.svg)
 
 图 2 展示当前代码已经实现的 group routing contract。`base/content/prosody/voice` 进入对应 alignment、retrieval 和 speaking-mode heads；`residual` 只进入 full reconstruction，并通过 q7 metrics 单独检查。
@@ -117,7 +125,7 @@ q7 不进入任何 alignment、retrieval 或 speaking-mode head。
 
 ## 已验证
 
-模型实现阶段已运行：
+模型实现阶段在有 `torch` / `pytest` 的环境中已运行：
 
 ```bash
 python3 -m py_compile src/eeg_voice_model/*.py
@@ -139,15 +147,16 @@ git diff --check
 | `test_eeg_voice_token_v1_all_optional_losses_and_queue`  | 所有 optional losses、retrieval queue hard negatives、logits shape。       |
 | `test_builder_loads_model_v1_yaml`                       | `configs/model_v1.yaml` 能构建 `EEGVoiceTokenV1`。                     |
 
-本轮 legacy cleanup 后额外检查：
+本轮 legacy cleanup 与 device-context update 后，在当前系统 Python 环境中额外检查：
 
 ```bash
 python3 -m py_compile src/eeg_voice_model/*.py
 git diff --check
+python3 -c "import xml.etree.ElementTree as ET; [ET.parse(p) for p in ['docs/assets/model_v1_architecture.svg','docs/assets/model_v1_development_stack.svg','docs/assets/model_v1_rvq_head_routing.svg']]"
 rg "from \\.audio_features|from \\.datasets|eeg_voice_model\\.audio_features|eeg_voice_model\\.datasets" src tests scripts configs README.md
 ```
 
-当前系统 Python 没有安装 `torch` 和 `pytest`，因此本轮没有重新执行 pytest。删除的 legacy 文件没有被当前 V1 package、tests、configs 或 scripts 引用。
+当前系统 Python 没有安装 `torch` 和 `pytest`，因此本轮没有重新执行 pytest。删除的 legacy 文件没有被当前 V1 package、tests、configs 或 scripts 引用；device-context 相关改动已通过 Python 语法编译、SVG 解析和 `git diff --check` 检查。
 
 ---
 
@@ -159,7 +168,8 @@ rg "from \\.audio_features|from \\.datasets|eeg_voice_model\\.audio_features|eeg
 | Real-data batch builder | 还没有从本地样例目录生成 `EEGVoiceBatch`。                                                         |
 | Target extraction       | phoneme、F0、prosody、style、speaker/audio embedding 还没有统一提取管线。                            |
 | Training loop           | 还没有 V1 pretraining / finetuning 脚本。                                                            |
-| Evaluation scripts      | 还没有 Recall@K、phoneme accuracy、pitch correlation、q7 dataset predictability 的真实数据评估脚本。 |
+| Evaluation scripts      | 还没有 Recall@K、phoneme accuracy、pitch correlation、q7 dataset/device predictability 的真实数据评估脚本。 |
+| Device split evaluation | 还没有 seen-device / held-out-device split，用于检验 device context 是否改善跨设备泛化。               |
 | English-first sampler   | 还没有实现 English-first / retrieval expansion / cross-lingual reserved 的 sampler。                 |
 | Model checkpointing     | 还没有保存、加载、resume、metric logging。                                                           |
 
@@ -189,21 +199,9 @@ src/eeg_voice_model/__init__.py
 src/eeg_voice_model/builders.py
 src/eeg_voice_model/heads.py
 src/eeg_voice_model/losses.py
+src/eeg_voice_model/modules.py
 src/eeg_voice_model/tokenizer.py
 src/eeg_voice_model/voice_model.py
-```
-
-已清理的 legacy 文件：
-
-```text
-configs/ds005345_runs.yaml
-configs/model_v0.yaml
-docs/model_v0_design.md
-docs/assets/model_v0_code_module_diagram.svg
-docs/assets/model_v0_component_diagram.svg
-src/eeg_voice_model/audio_features.py
-src/eeg_voice_model/datasets.py
-tests/test_model_v0_synthetic.py
 ```
 
 这些 legacy 文件不再作为 V1 代码或文档入口保留。后续真实数据接入应通过 V1 `DatasetRegistry` 和 `EEGVoiceBatch` collator 重建，避免继续沿用 ds006104 / ds005345 的早期专用 adapter。
@@ -216,8 +214,9 @@ tests/test_model_v0_synthetic.py
 
 1. 建立 `DatasetRegistry`，把 English-first core 数据先纳入统一元数据表。
 2. 实现 `EEGVoiceBatch` collator，先支持本地完整样例和 derived NPZ/FIF/EDF。
-3. 建立 audio/speaker embedding extraction，先用轻量 mel / acoustic stats，后续替换为 HuBERT / WavLM / ECAPA。
-4. 写 V1 smoke training loop，只跑 synthetic + 1-2 个真实小样例。
-5. 补 evaluation：retrieval Recall@K、token metrics、q7 metrics、phoneme/mode probe。
+3. 在 `DatasetRegistry` 中记录 device、montage、reference、native sampling rate、native channel count。
+4. 建立 audio/speaker embedding extraction，先用轻量 mel / acoustic stats，后续替换为 HuBERT / WavLM / ECAPA。
+5. 写 V1 smoke training loop，只跑 synthetic + 1-2 个真实小样例。
+6. 补 evaluation：retrieval Recall@K、token metrics、q7 metrics、phoneme/mode probe、held-out-device split。
 
 当前模型代码已经为这些阶段预留接口。

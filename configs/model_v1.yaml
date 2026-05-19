@@ -35,6 +35,16 @@ tokenizer:
   q7_full_recon_weight: 0.25
   q7_group_dropout: 0.5
 
+device_context:
+  enabled: true
+  device_vocab_size: 256
+  montage_vocab_size: 64
+  reference_vocab_size: 32
+  max_sampling_rate_hz: 4096
+  max_channel_count: 512
+  dropout: 0.1
+  film_scale: 0.1
+
 heads:
   audio_embedding_dim: 11
   projection_dim: 256

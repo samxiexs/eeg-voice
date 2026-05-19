@@ -38,7 +38,7 @@
 
   <rect class="core" x="275" y="185" width="190" height="88"/>
   <text class="label" x="302" y="216">Tokenizer</text>
-  <text class="small" x="302" y="241">sensor encoder + LTF</text>
+  <text class="small" x="302" y="241">sensor + device context</text>
 
   <rect class="core" x="510" y="185" width="190" height="88"/>
   <text class="label" x="537" y="216">Grouped RVQ</text>
@@ -98,7 +98,7 @@
 
   <rect class="partial" x="82" y="775" width="190" height="72"/>
   <text class="label" x="108" y="803">DatasetRegistry</text>
-  <text class="tiny" x="108" y="827">selected datasets</text>
+  <text class="tiny" x="108" y="827">selected + device meta</text>
 
   <rect class="todo" x="315" y="775" width="190" height="72"/>
   <text class="label" x="341" y="803">Collator</text>

@@ -48,6 +48,12 @@ def make_batch(config: EEGVoiceV1Config, targets: VoiceAlignmentTargets | None =
         speaker_id=["ds004408_spk01", "ds006104_spk01", "kara_one_p02"],
         audio_embedding=torch.randn(batch, config.audio_embedding_dim),
         targets=targets,
+        sensor_type=torch.ones(batch, channels, dtype=torch.long),
+        acquisition_device_id=torch.tensor([1, 2, 3]),
+        montage_id=torch.tensor([1, 2, 1]),
+        reference_id=torch.tensor([1, 1, 2]),
+        sampling_rate_hz=torch.tensor([512.0, 1000.0, 250.0]),
+        native_channel_count=torch.tensor([64.0, 128.0, 14.0]),
     )
 
 
@@ -62,6 +68,7 @@ def test_eeg_voice_token_v1_grouped_forward_without_labels():
     assert out["group_tokens"]["base"].shape[-1] == 2
     assert out["group_tokens"]["residual"].shape[-1] == 1
     assert out["recon_aligned"].shape == out["recon_full"].shape == (3, 6, config.window_samples)
+    assert out["device_context"].shape == (3, config.dim)
     assert out["retrieval_logits"].shape == (3, 3)
     assert "residual" not in out["head_groups"]["content"]
     assert "residual" not in out["head_groups"]["voice"]
@@ -70,6 +77,7 @@ def test_eeg_voice_token_v1_grouped_forward_without_labels():
     assert torch.isfinite(out["q7_metrics"]["q7_usage"])
     assert torch.isfinite(out["q7_metrics"]["q7_perplexity"])
     assert torch.isfinite(out["q7_metrics"]["q7_dataset_predictability"])
+    assert torch.isfinite(out["q7_metrics"]["q7_device_predictability"])
 
 
 def test_eeg_voice_token_v1_all_optional_losses_and_queue():
@@ -111,3 +119,5 @@ def test_builder_loads_model_v1_yaml():
     model = build_eeg_voice_token_v1("configs/model_v1.yaml")
     assert isinstance(model, EEGVoiceTokenV1)
     assert model.config.quantizer_groups["residual"] == (7,)
+    assert model.config.use_device_context is True
+    assert model.config.device_vocab_size == 256
