@@ -1,6 +1,6 @@
 # Selected EEG-Voice Datasets: Detailed Reading Notes（0519）
 
-# 研究口径
+## 研究口径
 
 这份说明基于 `multi_dataset_voice_eeg_catalog_0518.md` 中已经选定的 37 个 EEG-voice / EEG-audio / speech-proxy 数据集。这里的可用性沿用 catalog 口径：数据集已经进入研究池，并且存在公开下载、公开申请或可追踪访问路径。本地样例只是执行进度，它说明哪些数据已经被拉到机器上，不能替代对整个研究数据池的判断。
 
@@ -39,6 +39,50 @@ EEG -> discrete token
 | 当前研究边界     | foundation + retrieval，不做 waveform generation 或 personalized reconstruction | 数据池与目标匹配；个体化主观 voice image 仍需自采                     |
 
 本地统一音频状态见 `data/voice_eeg_dataset_samples/_unified_audio/audio_coverage_37.md`。37 个 selected 数据集里，22 个已有完整本地可播放音频样例，15 个公开包不含音频、受版权限制或需要权限/登录。这个差异主要影响样例整理和快速试听，不改变 EEG 训练、属性验证和 retrieval 实验的基本可行性。
+
+## 37 个数据集说明总表
+
+这张表把后文的逐项解读压缩成横向比较。设备栏只写已经从 BIDS sidecar、README、数据页或论文中能够确认的核心参数；尚需完整包确认的条目保留为“待复核”。
+
+| # | 数据集 | 语言/任务族 | 优先级 | 实验范式 | 设备与参数 | 对 V1 的用途与本地样例 |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 1 | `ds004408` | 英文自然语音 | P0 | 听英文有声书，word/phoneme TextGrid 对齐 | BioSemi ActiveTwo，128ch，512 Hz | content/base auditory 主训练；本地有 EEG、wav、TextGrid |
+| 2 | `weissbart_natural_speech` | 英文自然语音 | P1 | 连续语音理解，surprisal 与 word frequency tracking | BrainVision EEG，完整通道和采样率待完整包复核 | language-feature tracking；本地有 wav 与 timing/频率 metadata |
+| 3 | `ds006434` | 英文 attention / ABR | P0/P1 | diotic/dichotic natural speech selective attention | Brain Products actiChamp EP，32ch，500 Hz | early auditory 与 attention response 分离；本地有 EEG 与 speech wav |
+| 4 | `ds007630_eeg_speech_brain_decoding` | 英文 perception/production | P0/P2 | `speechopen` 发声与 `listening` 听觉任务 | EEGDash: 3 subjects，1974 recordings，70-140ch，主要 1200 Hz | 大规模英文扩展；当前本地仅 metadata，音频访问受限 |
+| 5 | `ds007602_eeg_speech_overt` | 英文 overt speech | P2 | 视觉文本提示后的 overt speech production | ANT Neuro Pangolin 64 / EasyCap M10，128 EEG + aux，1200 Hz | speaking-mode `overt` probe；本地有 EDF 与 MIC-channel wav |
+| 6 | `etard_continuous_speech_7086209` | 英文 competing speech | P0/P1 | 连续语音理解与竞争说话人注意 | BrainVision sidecar 已抽取，完整设备参数待复核 | competing-speech tracking；本地有 EEG/metadata，无 playable wav |
+| 7 | `ds007591` | 英文 minimally overt speech | P2 | speech decoding calibration，区分 EEG/EMG 贡献 | g.tec Pangolin，128 EEG，256 Hz，总 139ch 含 aux | production artifact control；本地有 EDF 与 metadata |
+| 8 | `kara_one` | 英文 imagined/overt | P2 | imagined 与 vocalized phoneme/word prompts | Neuroscan Quick-Cap 64ch，SynAmps RT，1 kHz，Kinect audio/face | phonological mode probe；本地有 P02 Kinect wav |
+| 9 | `sparrkulee_eegdash` | 英文大样本 speech EEG | P1 | natural speech response 与 match/mismatch | EEGDash: 87 subjects，4088 recordings，64ch，8192 Hz | tokenizer 泛化与 match/mismatch retrieval；本地仅 EEGDash metadata |
+| 10 | `ds005345` | 普通话 multi-talker | P0 | Le Petit Prince single male/female/mixed speech | Brain Products BrainAmp DC，EasyCap M10，64ch，500 Hz | Mandarin speaker-stream retrieval；本地有 EEG、annotation、18 个 wav |
+| 11 | `esaa_7078451` | 普通话 AAD | P0 | 17 名被试，32 trials，普通话竞争语音注意 | MAT 内含 channel coordinates 和 sample rate，设备型号待复核 | Mandarin AAD retrieval；本地有 S1 EEG 与 `Trail1.wav` |
+| 12 | `nju_aad_7253438` | 普通话 AAD | P0/P1 | 普通话竞争语音 attention decoding | 公开包为 preprocessed MAT，设备参数待复核 | Mandarin AAD 扩展；本地有 EEG MAT，无 playable wav |
+| 13 | `aasd_17413336` | 普通话 switch AAD | P0/P1 | spontaneous auditory attention switch，60 trials | 64ch EEG，双说话人 HRTF ±90°，trial 60 s | dynamic attention retrieval；本地有 EEG 与 mixed audio |
+| 14 | `ms_aasd_17149387` | 普通话 mixed-speech switch | P0/P1 | 无空间线索 mixed speech，自发切换男女说话人注意 | NeuroScan SynAmps RT，66 electrodes，500 Hz | switch-aware retrieval，减少空间捷径；本地有 male/female/mixed wav |
+| 15 | `four_talker_aad_10803261` | 普通话四说话人 AAD | P0 | 四说话人空间化 attention decoding | 64ch NeuSen scalp EEG + cEEGrid ear EEG，采样率待复核 | multi-speaker identity 与 ear/scalp 对比；本地无 playable wav |
+| 16 | `four_direction_aad_10803229` | 普通话四方向 AAD | P0 | 四方向空间化 speech attention | 64ch scalp EEG，BDF/event metadata，采样率待复核 | spatial speaker-stream baseline；本地无 playable wav |
+| 17 | `non_block_aad_14887886` | 普通话 non-block AAD | P0/P1 | non-block attention switching | ear EEG + scalp EEG，Poly5/BDF metadata，采样率待复核 | naturalistic dynamic AAD；本地无 playable wav |
+| 18 | `asa_lin2024_11541114` | 普通话多角度 ASAD | P1 | 多 speaking locations 的 auditory spatial attention | raw FIF 样例，角度约 ±5° 到 ±90°，设备参数待复核 | spatial generalization；本地有 EEG，无 playable wav |
+| 19 | `ds004718` | 粤语自然语音 | P0 | 粤语 Little Prince，自然语音听觉 | 64ch Neuroscan，1000 Hz，10-20 layout | tone/prosody 与 natural speech alignment；本地有 EEG 与 wav |
+| 20 | `cantonese_tone_syllable_7750292` | 粤语 tone/syllable ERP | P2 | 粤语声调与音节 ERP | CNT EEG，设备和采样率待复核 | pitch/tone probe；本地有 EEG，无 playable wav |
+| 21 | `ds006104` | 受控 speech decoding | P0/P2 | phoneme discrimination with TMS，CV/VC/words/pseudowords | ANT Neuro eego mylab，WaveGuard 64ch，2000 Hz | content/coarticulation/style probe；本地有 EEG 与 48 个 wav |
+| 22 | `ds006465_3m_cpseed` | 普通话 pinyin speech | P2 | speak、mouthed/silent articulation、imagined pinyin | 32 EEG channels，500 Hz，extended 10/20 | Mandarin mode 与 pinyin probe；本地有 EDF/MAT，无 audio |
+| 23 | `ds005170_chisco` | 中文 imagined speech | P2 | sentence-level imagined speech，5 名被试多天采集 | SynAmps-2 + 128ch Quik-Cap，原始 1000 Hz，预处理 500 Hz | imagined semantic/content proxy；本地有 EEG/text，无 audio |
+| 24 | `cire_2025` | 普通话 prosody/intention | P2 | 240 Mandarin stimuli，prosodic emotion 调制 speech intention | Neuroscan Quik-Cap/SynAmps 2/RT，128ch | prosody/style/intention alignment；本地有 EEG set 与 `156.wav` |
+| 25 | `ds003626_inner_speech` | 西语 inner speech | P2 | inner、pronounced、visualized command speech | BioSemi ActiveTwo，128 EEG + 8 external，1024 Hz | speaking-mode transfer；本地有 BDF/FIF，无 audio |
+| 26 | `feis_3554128` | English/Chinese imagined speech | P2 | heard、imagined、spoken phonemes/Chinese syllables | 14-channel EEG，设备和采样率待完整 archive 复核 | 低通道 mode/phoneme probe；本地有 hearing/speaking wav |
+| 27 | `ugr_mindvoice` | 西语 overt/covert speech | P2 | overt/covert phoneme、word、pseudoword production | Brain Products actiCAP 64ch + actiCHamp，1000 Hz；audio 48 kHz | overt-to-covert transfer；本地有 EDF、events、wav |
+| 28 | `ds004306_semantic_imagination` | semantic perception/imagination | P2/P3 | auditory/visual/orthographic perception and imagination | EEGDash: 12 subjects，128ch，约 18.18 h，采样率待复核 | semantic imagination bridge；本地有 ogg 与 FIF |
+| 29 | `kul_aad_4004271` | 荷兰语 AAD | P1 | 16 subjects，Dutch stories，HRTF/dry dichotic AAD | BioSemi ActiveTwo 64ch，8192 Hz 原始，发布数据 128 Hz | AAD benchmark 与 split sanity check；本地有 EEG MAT 与 wav |
+| 30 | `dtu_aad_1199011` | Danish/Dutch AAD | P1 | reverberant competing speech AAD | BioSemi 64ch，512 Hz | room robustness retrieval；本地有 EEG MAT 与 wav |
+| 31 | `eeg_aad_255ch_4518754` | high-density AAD | P1 | 30 名被试，高密度 EEG AAD | SynAmps RT，255ch，1000 Hz | sensor-density ablation；本地有 dry speech wav |
+| 32 | `fuglsang2020_3618205` | 丹麦语 AAD / hearing-impaired | P1 | large-sample competing-speech AAD | BioSemi ActiveTwo，64 EEG，512 Hz，channels.tsv 73 行含 aux | population shift robustness；本地有 EEG metadata，无 playable wav |
+| 33 | `rotaru2024_11058711` | 荷兰语 long-session AAD | P1 | gaze/visual condition controlled competing listening | BioSemi ActiveTwo 64ch + 4 EOG，8196 Hz 原始，128 Hz 预处理 | gaze/spatial shortcut control；本地有 MAT，无原始 audio |
+| 34 | `geirnaert2025_16536441` | multi-device AAD | P1 | scalp、around-ear、in-ear 同步 AAD | scalp 29ch + EOG，around-ear 19ch，in-ear 12ch，1000 Hz | device adapter 与 sensor robustness；本地有 MAT、metadata、wav |
+| 35 | `openmiir` | music perception/imagery | P3 | 12 个音乐片段的 perception and imagination | 64ch EEG，设备和采样率待原始说明复核 | pitch/beat/auditory imagery proxy；本地有 wav/beat/FIF |
+| 36 | `musin_g_ds003774` | music listening | P3 | 自然音乐听觉与 response task | Magstim EGI NetAmps 400，Hydrocel 128ch + Cz，250 Hz | timbre/pitch auditory proxy；本地有 EEG set 与 wav |
+| 37 | `mad_eeg_4537751` | music target attention | P3 | polyphonic music 中注意目标乐器 | 20-channel EEG，硬件和采样率待 paper/YAML 复核 | target-source attention proxy；本地有 HDF5 与 wav |
 
 ---
 
