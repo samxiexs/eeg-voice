@@ -103,6 +103,9 @@ outputs/probe_artifacts/
 # Reference PDFs can be large; force-add explicitly if a PDF must be versioned
 *.pdf
 
+# Local cloned/reference model repositories
+docs/models-ref/
+
 # Logs and generated reports that can grow large
 *.log
 logs/
