@@ -1,6 +1,6 @@
 # Selected EEG-Voice Datasets: Detailed Reading Notes（0519）
 
-## 研究口径
+# 研究口径
 
 这份说明基于 `multi_dataset_voice_eeg_catalog_0518.md` 中已经选定的 37 个 EEG-voice / EEG-audio / speech-proxy 数据集。这里的可用性沿用 catalog 口径：数据集已经进入研究池，并且存在公开下载、公开申请或可追踪访问路径。本地样例只是执行进度，它说明哪些数据已经被拉到机器上，不能替代对整个研究数据池的判断。
 
@@ -22,21 +22,21 @@ EEG -> discrete token
 
 ## 数据总结表
 
-| 组别 | 数据集 | 主任务 | 主要监督信号 |
-| --- | --- | --- | --- |
-| English natural / decoding | `ds004408`, Weissbart, `ds006434`, `ds007630`, `ds007602`, Etard, `ds007591`, Kara One, SparrKULee | 连续听觉、选择性注意、overt / imagined speech | speech envelope、word/phoneme timing、speech mode、vocal / MIC、attention |
-| Mandarin / Cantonese speech | `ds005345`, ESAA, NJU AAD, AASD, MS-AASD, Yan 系列、ASA、`ds004718`, tone/syllable ERP | 多说话人 AAD、自然语音、声调/音节 | speaker stream、attention label、tone、F0/intensity、spatial stream |
-| Controlled speech / inner speech | `ds006104`, `ds006465`, Chisco, Inner Speech, FEIS, UGR-MINDVOICE, CIRE, `ds004306` | phoneme、pinyin、inner/imagined/overt、prosody/intention | phoneme class、pinyin unit、mode label、emotion/intention、semantic category |
-| AAD expansion / music proxy | KUL, DTU, 255ch AAD, Fuglsang, Rotaru, Geirnaert, OpenMIIR, MUSIN-G, MAD-EEG | AAD、设备泛化、音乐注意 | attended stream、room/spatial condition、sensor modality、pitch/timbre/beat proxy |
+| 组别                             | 数据集                                                                                                       | 主任务                                                   | 主要监督信号                                                                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| English natural / decoding       | `ds004408`, Weissbart, `ds006434`, `ds007630`, `ds007602`, Etard, `ds007591`, Kara One, SparrKULee | 连续听觉、选择性注意、overt / imagined speech            | speech envelope、word/phoneme timing、speech mode、vocal / MIC、attention         |
+| Mandarin / Cantonese speech      | `ds005345`, ESAA, NJU AAD, AASD, MS-AASD, Yan 系列、ASA、`ds004718`, tone/syllable ERP                   | 多说话人 AAD、自然语音、声调/音节                        | speaker stream、attention label、tone、F0/intensity、spatial stream               |
+| Controlled speech / inner speech | `ds006104`, `ds006465`, Chisco, Inner Speech, FEIS, UGR-MINDVOICE, CIRE, `ds004306`                    | phoneme、pinyin、inner/imagined/overt、prosody/intention | phoneme class、pinyin unit、mode label、emotion/intention、semantic category      |
+| AAD expansion / music proxy      | KUL, DTU, 255ch AAD, Fuglsang, Rotaru, Geirnaert, OpenMIIR, MUSIN-G, MAD-EEG                                 | AAD、设备泛化、音乐注意                                  | attended stream、room/spatial condition、sensor modality、pitch/timbre/beat proxy |
 
-| 维度 | 当前状态 | 对 V1 模型的含义 |
-| --- | --- | --- |
-| Selected 数据集 | 37 个 | 已经从候选集合转为可训练研究池 |
-| 训练优先级 | P0 13、P1 10、P2 11、P3 3 | P0/P1 形成主训练，P2/P3 支撑属性解释和边界验证 |
-| 本地完整音频样例 | 22 / 37 | 足够做快速试听、特征抽样和统一 manifest；未覆盖项不等同于数据集不可用 |
-| 主要任务类型 | 自然语音、AAD、多说话人、phoneme/pinyin/tone、imagined/inner/overt、音乐代理 | 覆盖 tokenizer、alignment、retrieval、mode transfer 四条实验线 |
-| 设备跨度 | 14 到 255 通道；128 Hz 到 8192 Hz；scalp、ear、in-ear 多形态 | 模型必须显式处理 montage、采样率和 device/domain shift |
-| 当前研究边界 | foundation + retrieval，不做 waveform generation 或 personalized reconstruction | 数据池与目标匹配；个体化主观 voice image 仍需自采 |
+| 维度             | 当前状态                                                                        | 对 V1 模型的含义                                                      |
+| ---------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Selected 数据集  | 37 个                                                                           | 已经从候选集合转为可训练研究池                                        |
+| 训练优先级       | P0 13、P1 10、P2 11、P3 3                                                       | P0/P1 形成主训练，P2/P3 支撑属性解释和边界验证                        |
+| 本地完整音频样例 | 22 / 37                                                                         | 足够做快速试听、特征抽样和统一 manifest；未覆盖项不等同于数据集不可用 |
+| 主要任务类型     | 自然语音、AAD、多说话人、phoneme/pinyin/tone、imagined/inner/overt、音乐代理    | 覆盖 tokenizer、alignment、retrieval、mode transfer 四条实验线        |
+| 设备跨度         | 14 到 255 通道；128 Hz 到 8192 Hz；scalp、ear、in-ear 多形态                    | 模型必须显式处理 montage、采样率和 device/domain shift                |
+| 当前研究边界     | foundation + retrieval，不做 waveform generation 或 personalized reconstruction | 数据池与目标匹配；个体化主观 voice image 仍需自采                     |
 
 本地统一音频状态见 `data/voice_eeg_dataset_samples/_unified_audio/audio_coverage_37.md`。37 个 selected 数据集里，22 个已有完整本地可播放音频样例，15 个公开包不含音频、受版权限制或需要权限/登录。这个差异主要影响样例整理和快速试听，不改变 EEG 训练、属性验证和 retrieval 实验的基本可行性。
 
