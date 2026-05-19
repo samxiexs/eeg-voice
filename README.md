@@ -92,13 +92,12 @@ q7 does not enter alignment, retrieval, or speaking-mode heads. It only particip
 ```text
 configs/
   model_v1.yaml                  # V1 default model and data-layer config
-  model_v0.yaml                  # Earlier design config, kept for reference
 
 docs/
   multi_dataset_voice_eeg_catalog_0518.md
   model_v1_design_0518.md
   model_v1_development_status_0518.md
-  model_v0_design.md
+  assets/                        # V1 architecture and routing figures
 
 paper-ref/
   Reference papers used for model and dataset design
@@ -113,8 +112,6 @@ src/eeg_voice_model/
   losses.py                       # Reconstruction, retrieval, and token metrics
   builders.py                     # Config-to-model construction
   modules.py                      # Encoder, latent aggregator, decoder blocks
-  datasets.py                     # Early dataset adapters, pending V1 registry replacement
-  audio_features.py               # Early audio feature utilities
 
 tests/
   test_model_v1_synthetic.py      # Synthetic V1 forward and builder tests
@@ -156,7 +153,6 @@ EEGVoiceTokenV1
 | [`docs/multi_dataset_voice_eeg_catalog_0518.md`](docs/multi_dataset_voice_eeg_catalog_0518.md) | Selected EEG-voice dataset catalog and availability interpretation |
 | [`docs/model_v1_design_0518.md`](docs/model_v1_design_0518.md) | Full V1 model design, data-to-loss mapping, RVQ policy, and future interfaces |
 | [`docs/model_v1_development_status_0518.md`](docs/model_v1_development_status_0518.md) | Current implementation status and next engineering steps |
-| [`docs/model_v0_design.md`](docs/model_v0_design.md) | Earlier model design reference |
 
 ## Current Engineering Gaps
 

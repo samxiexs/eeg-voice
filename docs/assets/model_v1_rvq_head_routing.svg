@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="860" viewBox="0 0 1500 860" role="img" aria-labelledby="title desc">
+  <title id="title">Hierarchical grouped RVQ and head routing matrix</title>
+  <desc id="desc">A routing matrix showing which RVQ groups are read by each alignment, retrieval, mode, and reconstruction head. q7 is only used for low-weight full reconstruction.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font: 700 24px Arial, Helvetica, sans-serif; fill: #1f2d3d; }
+      .subtitle { font: 14px Arial, Helvetica, sans-serif; fill: #5f6d7a; }
+      .axis { font: 700 15px Arial, Helvetica, sans-serif; fill: #26384c; }
+      .cell-text { font: 700 14px Arial, Helvetica, sans-serif; fill: #1f2d3d; }
+      .note { font: 13px Arial, Helvetica, sans-serif; fill: #4f5f70; }
+      .code { font: 700 13px "SFMono-Regular", Consolas, monospace; fill: #1f2d3d; }
+      .panel { fill: #ffffff; stroke: #d5dde7; stroke-width: 1.4; rx: 16; }
+      .row { fill: #ffffff; stroke: #dbe2ea; stroke-width: 1; }
+      .head { fill: #edf3f8; stroke: #dbe2ea; stroke-width: 1; }
+      .on-base { fill: #dff1e6; stroke: #4d8f63; stroke-width: 1.2; }
+      .on-content { fill: #dbeefd; stroke: #3d7ea6; stroke-width: 1.2; }
+      .on-prosody { fill: #fff3cf; stroke: #b9892b; stroke-width: 1.2; }
+      .on-voice { fill: #ece6f7; stroke: #735ba7; stroke-width: 1.2; }
+      .on-residual { fill: #ffe8e5; stroke: #a5534b; stroke-width: 1.2; }
+      .off { fill: #f2f5f8; stroke: #d5dde7; stroke-width: 1; }
+      .off-text { font: 700 14px Arial, Helvetica, sans-serif; fill: #a0aab5; }
+      .warn { fill: #fff0ee; stroke: #a5534b; stroke-width: 1.4; rx: 12; }
+      .stage { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.2; rx: 10; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1500" height="860"/>
+  <text class="title" x="52" y="55">B. Hierarchical grouped RVQ: supervised routes and blocked residual routes</text>
+  <text class="subtitle" x="52" y="82">The matrix encodes the V1 contract: q0-q6 support interpretable alignment; q7 is a weak residual nuisance code and is never read by alignment, retrieval, or mode heads.</text>
+
+  <rect class="panel" x="46" y="110" width="1408" height="525"/>
+
+  <rect class="head" x="270" y="150" width="170" height="56"/>
+  <rect class="head" x="440" y="150" width="170" height="56"/>
+  <rect class="head" x="610" y="150" width="170" height="56"/>
+  <rect class="head" x="780" y="150" width="170" height="56"/>
+  <rect class="head" x="950" y="150" width="170" height="56"/>
+  <rect class="head" x="1120" y="150" width="170" height="56"/>
+  <rect class="head" x="1290" y="150" width="130" height="56"/>
+
+  <text class="axis" x="300" y="177">base</text>
+  <text class="code" x="300" y="197">q0-q1</text>
+  <text class="axis" x="464" y="177">content</text>
+  <text class="code" x="464" y="197">q2-q3</text>
+  <text class="axis" x="641" y="177">prosody</text>
+  <text class="code" x="641" y="197">q4</text>
+  <text class="axis" x="817" y="177">voice</text>
+  <text class="code" x="817" y="197">q5-q6</text>
+  <text class="axis" x="984" y="177">residual</text>
+  <text class="code" x="984" y="197">q7</text>
+  <text class="axis" x="1146" y="177">adapter</text>
+  <text class="code" x="1146" y="197">dataset_id</text>
+  <text class="axis" x="1315" y="185">target</text>
+
+  <g transform="translate(80,220)">
+    <rect class="row" x="0" y="0" width="1340" height="58"/>
+    <rect class="row" x="0" y="58" width="1340" height="58"/>
+    <rect class="row" x="0" y="116" width="1340" height="58"/>
+    <rect class="row" x="0" y="174" width="1340" height="58"/>
+    <rect class="row" x="0" y="232" width="1340" height="58"/>
+    <rect class="row" x="0" y="290" width="1340" height="58"/>
+
+    <text class="axis" x="16" y="35">content / phoneme head</text>
+    <text class="axis" x="16" y="93">pitch / prosody head</text>
+    <text class="axis" x="16" y="151">timbre / style head</text>
+    <text class="axis" x="16" y="209">speaker / voice retrieval</text>
+    <text class="axis" x="16" y="267">speaking-mode head</text>
+    <text class="axis" x="16" y="325">EEG reconstruction</text>
+
+    <rect class="on-base" x="190" y="10" width="132" height="38" rx="8"/><text class="cell-text" x="242" y="35">read</text>
+    <rect class="on-content" x="360" y="10" width="132" height="38" rx="8"/><text class="cell-text" x="412" y="35">read</text>
+    <rect class="off" x="530" y="10" width="132" height="38" rx="8"/><text class="off-text" x="587" y="35">-</text>
+    <rect class="off" x="700" y="10" width="132" height="38" rx="8"/><text class="off-text" x="757" y="35">-</text>
+    <rect class="off" x="870" y="10" width="132" height="38" rx="8"/><text class="off-text" x="915" y="35">blocked</text>
+    <rect class="off" x="1040" y="10" width="132" height="38" rx="8"/><text class="off-text" x="1097" y="35">-</text>
+    <text class="note" x="1220" y="35">phoneme / unit</text>
+
+    <rect class="on-base" x="190" y="68" width="132" height="38" rx="8"/><text class="cell-text" x="242" y="93">read</text>
+    <rect class="off" x="360" y="68" width="132" height="38" rx="8"/><text class="off-text" x="417" y="93">-</text>
+    <rect class="on-prosody" x="530" y="68" width="132" height="38" rx="8"/><text class="cell-text" x="582" y="93">read</text>
+    <rect class="off" x="700" y="68" width="132" height="38" rx="8"/><text class="off-text" x="757" y="93">-</text>
+    <rect class="off" x="870" y="68" width="132" height="38" rx="8"/><text class="off-text" x="915" y="93">blocked</text>
+    <rect class="off" x="1040" y="68" width="132" height="38" rx="8"/><text class="off-text" x="1097" y="93">-</text>
+    <text class="note" x="1220" y="93">F0 / rhythm</text>
+
+    <rect class="on-base" x="190" y="126" width="132" height="38" rx="8"/><text class="cell-text" x="242" y="151">read</text>
+    <rect class="off" x="360" y="126" width="132" height="38" rx="8"/><text class="off-text" x="417" y="151">-</text>
+    <rect class="off" x="530" y="126" width="132" height="38" rx="8"/><text class="off-text" x="587" y="151">-</text>
+    <rect class="on-voice" x="700" y="126" width="132" height="38" rx="8"/><text class="cell-text" x="752" y="151">read</text>
+    <rect class="off" x="870" y="126" width="132" height="38" rx="8"/><text class="off-text" x="915" y="151">blocked</text>
+    <rect class="off" x="1040" y="126" width="132" height="38" rx="8"/><text class="off-text" x="1097" y="151">-</text>
+    <text class="note" x="1220" y="151">timbre / style</text>
+
+    <rect class="on-base" x="190" y="184" width="132" height="38" rx="8"/><text class="cell-text" x="242" y="209">read</text>
+    <rect class="off" x="360" y="184" width="132" height="38" rx="8"/><text class="off-text" x="417" y="209">-</text>
+    <rect class="off" x="530" y="184" width="132" height="38" rx="8"/><text class="off-text" x="587" y="209">-</text>
+    <rect class="on-voice" x="700" y="184" width="132" height="38" rx="8"/><text class="cell-text" x="752" y="209">read</text>
+    <rect class="off" x="870" y="184" width="132" height="38" rx="8"/><text class="off-text" x="915" y="209">blocked</text>
+    <rect class="off" x="1040" y="184" width="132" height="38" rx="8"/><text class="off-text" x="1097" y="209">-</text>
+    <text class="note" x="1220" y="209">Recall@K</text>
+
+    <rect class="on-base" x="190" y="242" width="132" height="38" rx="8"/><text class="cell-text" x="242" y="267">read</text>
+    <rect class="on-content" x="360" y="242" width="132" height="38" rx="8"/><text class="cell-text" x="412" y="267">read</text>
+    <rect class="on-prosody" x="530" y="242" width="132" height="38" rx="8"/><text class="cell-text" x="582" y="267">read</text>
+    <rect class="on-voice" x="700" y="242" width="132" height="38" rx="8"/><text class="cell-text" x="752" y="267">read</text>
+    <rect class="off" x="870" y="242" width="132" height="38" rx="8"/><text class="off-text" x="915" y="267">blocked</text>
+    <rect class="on-voice" x="1040" y="242" width="132" height="38" rx="8"/><text class="cell-text" x="1092" y="267">read</text>
+    <text class="note" x="1220" y="267">mode logits</text>
+
+    <rect class="on-base" x="190" y="300" width="132" height="38" rx="8"/><text class="cell-text" x="242" y="325">read</text>
+    <rect class="on-content" x="360" y="300" width="132" height="38" rx="8"/><text class="cell-text" x="412" y="325">read</text>
+    <rect class="on-prosody" x="530" y="300" width="132" height="38" rx="8"/><text class="cell-text" x="582" y="325">read</text>
+    <rect class="on-voice" x="700" y="300" width="132" height="38" rx="8"/><text class="cell-text" x="752" y="325">read</text>
+    <rect class="on-residual" x="870" y="300" width="132" height="38" rx="8"/><text class="cell-text" x="922" y="325">weak</text>
+    <rect class="off" x="1040" y="300" width="132" height="38" rx="8"/><text class="off-text" x="1097" y="325">-</text>
+    <text class="note" x="1220" y="325">aligned/full</text>
+  </g>
+
+  <rect class="panel" x="46" y="670" width="445" height="132"/>
+  <text class="axis" x="74" y="705">Reconstruction policy</text>
+  <text class="code" x="74" y="735">L_recon = L_aligned(q0-q6)</text>
+  <text class="code" x="162" y="760">+ 0.25 * L_full(q0-q7)</text>
+  <text class="note" x="74" y="785">q7 group dropout is applied during training.</text>
+
+  <rect class="warn" x="530" y="670" width="430" height="132"/>
+  <text class="axis" x="558" y="705">Residual safety check</text>
+  <text class="note" x="558" y="735">If q7 strongly predicts dataset_id, it is treated as nuisance absorption.</text>
+  <text class="note" x="558" y="762">It is not counted as improved voice-token quality.</text>
+
+  <rect class="panel" x="1000" y="670" width="454" height="132"/>
+  <text class="axis" x="1028" y="705">Token diagnostics</text>
+  <text class="note" x="1028" y="735">usage, perplexity, dead-code ratio</text>
+  <text class="note" x="1028" y="762">dropout ablation, dataset predictability</text>
+</svg>
