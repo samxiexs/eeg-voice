@@ -105,6 +105,7 @@ outputs/probe_artifacts/
 
 # Local cloned/reference model repositories
 docs/models-ref/
+paper-ref/audio-decoder/
 
 # Logs and generated reports that can grow large
 *.log
