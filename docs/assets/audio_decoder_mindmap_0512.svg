@@ -1,119 +1,123 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="980" viewBox="0 0 1500 980">
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1040" viewBox="0 0 1680 1040">
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#536678"/>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
     </marker>
     <style>
       .bg { fill: #f8fafc; }
-      .title { font: 700 30px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #111827; }
-      .subtitle { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #4b5563; }
-      .stageTitle { font: 700 17px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #111827; }
-      .stageSub { font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #374151; }
-      .paper { font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #1f2937; }
-      .detail { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #4b5563; }
-      .note { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #6b7280; }
-      .box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.4; rx: 12; }
-      .input { fill: #111827; stroke: #111827; rx: 14; }
-      .output { fill: #0f766e; stroke: #0f766e; rx: 14; }
-      .inputText { font: 700 17px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #ffffff; }
-      .label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #ffffff; letter-spacing: .4px; }
-      .pillA { fill: #2563eb; }
-      .pillB { fill: #059669; }
-      .pillC { fill: #d97706; }
-      .pillD { fill: #7c3aed; }
-      .pillE { fill: #be123c; }
-      .line { stroke: #536678; stroke-width: 2; fill: none; marker-end: url(#arrow); }
-      .softLine { stroke: #94a3b8; stroke-width: 1.6; stroke-dasharray: 5 5; fill: none; marker-end: url(#arrow); }
-      .constraint { fill: #fff7ed; stroke: #fdba74; stroke-width: 1.3; rx: 12; }
-      .renderer { fill: #f5f3ff; stroke: #c4b5fd; stroke-width: 1.3; rx: 12; }
-      .bridge { fill: #eff6ff; stroke: #93c5fd; stroke-width: 1.3; rx: 12; }
-      .seq { fill: #ecfdf5; stroke: #86efac; stroke-width: 1.3; rx: 12; }
-      .voice { fill: #fffbeb; stroke: #fcd34d; stroke-width: 1.3; rx: 12; }
+      .title { font: 700 34px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #475569; }
+      .section { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .body { font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #334155; }
+      .small { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #64748b; }
+      .paper { font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #1e293b; }
+      .label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; fill: #ffffff; }
+      .box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.4; rx: 10; }
+      .wave { fill: #111827; stroke: #111827; stroke-width: 1.4; rx: 14; }
+      .bundle { fill: #f0fdfa; stroke: #14b8a6; stroke-width: 1.6; rx: 12; }
+      .align { fill: #eff6ff; stroke: #2563eb; stroke-width: 1.6; rx: 12; }
+      .decoder { fill: #fff7ed; stroke: #f97316; stroke-width: 1.6; rx: 12; }
+      .render { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 1.6; rx: 12; }
+      .semantic { fill: #eef2ff; stroke: #6366f1; stroke-width: 1.3; rx: 10; }
+      .prosody { fill: #ecfdf5; stroke: #10b981; stroke-width: 1.3; rx: 10; }
+      .voice { fill: #fffbeb; stroke: #f59e0b; stroke-width: 1.3; rx: 10; }
+      .codec { fill: #fef2f2; stroke: #ef4444; stroke-width: 1.3; rx: 10; }
+      .dash { stroke: #94a3b8; stroke-width: 1.8; stroke-dasharray: 6 6; fill: none; marker-end: url(#arrow); }
+      .line { stroke: #334155; stroke-width: 2.1; fill: none; marker-end: url(#arrow); }
+      .soft { stroke: #64748b; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .pillSemantic { fill: #4f46e5; rx: 6; }
+      .pillProsody { fill: #059669; rx: 6; }
+      .pillVoice { fill: #d97706; rx: 6; }
+      .pillCodec { fill: #dc2626; rx: 6; }
     </style>
   </defs>
 
-  <rect width="1500" height="980" class="bg"/>
-  <text x="54" y="58" class="title">Audio Decoder Literature Map for EEG Voice Reconstruction</text>
-  <text x="56" y="86" class="subtitle">Functional view of CCF-A audio decoder papers: representation bridge, token generation, voice-profile control, waveform rendering, and content-acoustic disentanglement.</text>
+  <rect width="1680" height="1040" class="bg"/>
+  <text x="54" y="62" class="title">Audio Decoder and Audio Token Foundation Roadmap</text>
+  <text x="56" y="92" class="subtitle">Token-first view for V2/V3: audio waveform is decomposed into semantic, prosody, voice, and codec tokens before EEG-token alignment or waveform decoding.</text>
 
-  <rect x="58" y="180" width="160" height="96" class="input"/>
-  <text x="138" y="218" text-anchor="middle" class="inputText">EEG</text>
-  <text x="138" y="244" text-anchor="middle" class="inputText">discrete tokens</text>
-  <text x="138" y="266" text-anchor="middle" class="note" fill="#d1d5db">from EEG tokenizer</text>
+  <rect x="60" y="430" width="190" height="112" class="wave"/>
+  <text x="155" y="472" text-anchor="middle" class="label" style="font-size:18px">Audio waveform</text>
+  <text x="155" y="500" text-anchor="middle" class="label">speech / voice / sound</text>
+  <text x="155" y="525" text-anchor="middle" class="small" fill="#d1d5db">raw waveform input</text>
 
-  <rect x="1260" y="180" width="180" height="96" class="output"/>
-  <text x="1350" y="218" text-anchor="middle" class="inputText">Voice audio</text>
-  <text x="1350" y="244" text-anchor="middle" class="inputText">output</text>
-  <text x="1350" y="266" text-anchor="middle" class="note" fill="#d1fae5">content + voice image</text>
+  <path d="M250 486 L324 486" class="line"/>
 
-  <path d="M218 228 L292 228" class="line"/>
-  <path d="M542 228 L616 228" class="line"/>
-  <path d="M866 228 L940 228" class="line"/>
-  <path d="M1190 228 L1260 228" class="line"/>
+  <rect x="324" y="140" width="330" height="160" class="semantic"/>
+  <rect x="346" y="164" width="88" height="24" class="pillSemantic"/>
+  <text x="390" y="181" text-anchor="middle" class="label">semantic</text>
+  <text x="348" y="214" class="section">SSL semantic tokenizer</text>
+  <text x="348" y="244" class="paper">HuBERT / wav2vec 2.0 / WavLM / Whisper</text>
+  <text x="348" y="271" class="body">phoneme, syllable, word-like speech units</text>
 
-  <rect x="292" y="132" width="250" height="192" class="box bridge"/>
-  <rect x="312" y="154" width="28" height="22" rx="6" class="pillA"/>
-  <text x="326" y="170" text-anchor="middle" class="label">A</text>
-  <text x="352" y="171" class="stageTitle">Representation Bridge</text>
-  <text x="312" y="199" class="stageSub">Map EEG tokens into audio space</text>
-  <text x="318" y="232" class="paper">SpeechT5</text>
-  <text x="318" y="250" class="detail">shared speech-text interface</text>
-  <text x="318" y="279" class="paper">X-Codec</text>
-  <text x="318" y="297" class="detail">semantic-enhanced codec</text>
+  <rect x="324" y="330" width="330" height="146" class="prosody"/>
+  <rect x="346" y="354" width="82" height="24" class="pillProsody"/>
+  <text x="387" y="371" text-anchor="middle" class="label">prosody</text>
+  <text x="348" y="404" class="section">Prosody tokenizer</text>
+  <text x="348" y="433" class="paper">F0 / energy / rhythm / envelope / voicing</text>
+  <text x="348" y="459" class="body">pitch, intensity, speaking rate, stress</text>
 
-  <rect x="616" y="132" width="250" height="192" class="box seq"/>
-  <rect x="636" y="154" width="28" height="22" rx="6" class="pillB"/>
-  <text x="650" y="170" text-anchor="middle" class="label">B</text>
-  <text x="676" y="171" class="stageTitle">TokenSeq Generator</text>
-  <text x="636" y="199" class="stageSub">Generate codec / unit token sequence</text>
-  <text x="642" y="232" class="paper">VoiceCraft / VoiceCraft-X</text>
-  <text x="642" y="250" class="detail">codec-token infilling and cloning</text>
-  <text x="642" y="279" class="paper">StreamSpeech / UniAudio</text>
-  <text x="642" y="297" class="detail">unit prediction and audio token LM</text>
+  <rect x="324" y="506" width="330" height="146" class="voice"/>
+  <rect x="346" y="530" width="62" height="24" class="pillVoice"/>
+  <text x="377" y="547" text-anchor="middle" class="label">voice</text>
+  <text x="348" y="580" class="section">Voice tokenizer</text>
+  <text x="348" y="609" class="paper">speaker / timbre / style embedding</text>
+  <text x="348" y="635" class="body">speaker identity and vocal quality</text>
 
-  <rect x="940" y="132" width="250" height="192" class="box voice"/>
-  <rect x="960" y="154" width="28" height="22" rx="6" class="pillC"/>
-  <text x="974" y="170" text-anchor="middle" class="label">C</text>
-  <text x="1000" y="171" class="stageTitle">Voice-Profile Control</text>
-  <text x="960" y="199" class="stageSub">Control timbre,pitch,speaker,prosody</text>
-  <text x="966" y="232" class="paper">StyleTTS 2</text>
-  <text x="966" y="250" class="detail">style latent and diffusion</text>
-  <text x="966" y="279" class="paper">P-Flow / CoMoSpeech</text>
-  <text x="966" y="297" class="detail">prompt conditioning and fast synthesis</text>
+  <rect x="324" y="682" width="330" height="168" class="codec"/>
+  <rect x="346" y="706" width="64" height="24" class="pillCodec"/>
+  <text x="378" y="723" text-anchor="middle" class="label">codec</text>
+  <text x="348" y="756" class="section">Codec tokenizer</text>
+  <text x="348" y="785" class="paper">SoundStream / EnCodec / RVQGAN</text>
+  <text x="348" y="811" class="paper">FACodec / X-Codec / ESC</text>
+  <text x="348" y="837" class="body">coarse acoustic code plus residual detail</text>
 
-  <path d="M1065 324 C1065 385, 1055 422, 1042 468" class="softLine"/>
-  <path d="M742 324 C742 385, 750 422, 772 468" class="softLine"/>
-  <path d="M417 324 C417 430, 526 520, 640 555" class="softLine"/>
+  <path d="M250 486 C284 486, 290 220, 324 220" class="soft"/>
+  <path d="M250 486 C286 486, 292 403, 324 403" class="soft"/>
+  <path d="M250 486 C286 486, 292 579, 324 579" class="soft"/>
+  <path d="M250 486 C284 486, 290 766, 324 766" class="soft"/>
 
-  <rect x="384" y="458" width="320" height="214" class="constraint"/>
-  <rect x="408" y="482" width="28" height="22" rx="6" class="pillE"/>
-  <text x="422" y="498" text-anchor="middle" class="label">E</text>
-  <text x="448" y="499" class="stageTitle">Cont-Acous Disentanglement</text>
-  <text x="408" y="528" class="stageSub">Separate "what is said" from "how it sounds"</text>
-  <text x="414" y="566" class="paper">DASpeech</text>
-  <text x="414" y="584" class="detail">linguistic decoder + acoustic decoder</text>
-  <text x="414" y="615" class="paper">NaturalSpeech 3</text>
-  <text x="414" y="633" class="detail">content / prosody / timbre / detail factors</text>
-  <text x="414" y="660" class="note">Constraint for branch design and loss separation</text>
+  <rect x="760" y="325" width="276" height="250" class="bundle"/>
+  <text x="898" y="362" text-anchor="middle" class="section">AudioTokenBundle</text>
+  <text x="792" y="402" class="body">content_units</text>
+  <text x="792" y="431" class="body">prosody_tokens</text>
+  <text x="792" y="460" class="body">voice_tokens</text>
+  <text x="792" y="489" class="body">codec_codes</text>
+  <text x="792" y="518" class="body">frame_times / masks</text>
+  <text x="792" y="548" class="small">single file-level interface for V2/V3</text>
 
-  <rect x="796" y="458" width="320" height="214" class="renderer"/>
-  <rect x="820" y="482" width="28" height="22" rx="6" class="pillD"/>
-  <text x="834" y="498" text-anchor="middle" class="label">D</text>
-  <text x="860" y="499" class="stageTitle">Waveform Renderer</text>
-  <text x="820" y="528" class="stageSub">Render tokens into high-fidelity waveform</text>
-  <text x="826" y="566" class="paper">RVQGAN</text>
-  <text x="826" y="584" class="detail">RVQ + GAN codec decoder</text>
-  <text x="826" y="615" class="paper">ESC</text>
-  <text x="826" y="633" class="detail">cross-scale RVQ Transformer</text>
-  <text x="826" y="660" class="note">Final neural codec or acoustic decoder endpoint</text>
+  <path d="M654 220 C700 220, 714 366, 760 376" class="line"/>
+  <path d="M654 403 L760 429" class="line"/>
+  <path d="M654 579 C706 579, 720 500, 760 489" class="line"/>
+  <path d="M654 766 C716 766, 730 542, 760 528" class="line"/>
 
-  <path d="M1116 324 C1190 390, 1206 475, 1116 565" class="softLine"/>
-  <path d="M704 565 L796 565" class="line"/>
-  <path d="M1116 565 C1190 510, 1240 395, 1328 276" class="line"/>
+  <rect x="1140" y="182" width="380" height="180" class="align"/>
+  <text x="1330" y="220" text-anchor="middle" class="section">EEG-token alignment target</text>
+  <text x="1172" y="260" class="paper">Primary alignment</text>
+  <text x="1172" y="288" class="body">semantic + prosody + voice tokens</text>
+  <text x="1172" y="322" class="paper">Avoid direct supervision</text>
+  <text x="1172" y="350" class="body">full residual codec codebook</text>
 
-  <rect x="112" y="760" width="1276" height="132" fill="#ffffff" stroke="#d1d5db" stroke-width="1.2" rx="14"/>
-  <text x="142" y="794" class="stageTitle">Reading the map</text>
-  <text x="142" y="826" class="detail">1. EEG side: train a stable discrete tokenizer and produce content-like, voice-like, and audio-token-aligned representations.</text>
-  <text x="142" y="855" class="detail">2. Decoder side: choose a bridge space first, then generate token sequences, condition voice profile, and render waveform.</text>
-  <text x="142" y="884" class="detail">3. Disentanglement is not an optional decoration: it defines separate losses for content, prosody, timbre, speaker identity, and acoustic detail.</text>
+  <rect x="1140" y="430" width="380" height="210" class="decoder"/>
+  <text x="1330" y="468" text-anchor="middle" class="section">Audio token LM / voice decoder</text>
+  <text x="1172" y="508" class="paper">AudioLM / SoundStorm</text>
+  <text x="1172" y="536" class="paper">VALL-E / VoiceCraft / MaskGCT</text>
+  <text x="1172" y="564" class="paper">Voicebox / AudioPaLM / Moshi</text>
+  <text x="1172" y="604" class="body">complete acoustic detail from high-level token conditions</text>
+
+  <rect x="1140" y="720" width="380" height="150" class="render"/>
+  <text x="1330" y="758" text-anchor="middle" class="section">Waveform renderer</text>
+  <text x="1172" y="800" class="paper">codec decoder / acoustic decoder</text>
+  <text x="1172" y="830" class="body">V3 endpoint, not V2 alignment metric</text>
+
+  <path d="M1036 426 C1080 380, 1090 280, 1140 272" class="line"/>
+  <path d="M1036 486 L1140 530" class="line"/>
+  <path d="M1330 640 L1330 720" class="line"/>
+
+  <path d="M1168 360 C1120 688, 888 868, 676 806" class="dash"/>
+  <text x="788" y="880" class="small">Only coarse or factorized codec groups are alignment candidates; residual codec layers stay decoder-side.</text>
+
+  <rect x="68" y="914" width="1544" height="76" class="box"/>
+  <text x="96" y="948" class="section">Roadmap reading</text>
+  <text x="96" y="977" class="body">V2 validates whether EEG tokens align with interpretable audio tokens. V3 hands those conditions to an audio foundation decoder that completes codec detail and renders waveform.</text>
 </svg>
