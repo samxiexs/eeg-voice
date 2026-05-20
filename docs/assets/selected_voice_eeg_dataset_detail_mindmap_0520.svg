@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1280" viewBox="0 0 1700 1280" role="img" aria-labelledby="title desc">
+  <title id="title">Selected EEG-Audio Dataset Detail Map</title>
+  <desc id="desc">A detailed map of 37 selected EEG-audio datasets organized by task family, model role, device variation, and local audio sample status.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#546371" />
+    </marker>
+    <style>
+      .bg { fill: #f7f9fc; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 34px; font-weight: 750; fill: #13202c; }
+      .subtitle { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 15px; fill: #556575; }
+      .panel { fill: #ffffff; stroke: #d5dee8; stroke-width: 1.2; rx: 18; }
+      .panel-green { fill: #f0faf4; stroke: #86c99c; stroke-width: 1.4; rx: 18; }
+      .panel-blue { fill: #eef7ff; stroke: #82b5df; stroke-width: 1.4; rx: 18; }
+      .panel-gold { fill: #fff8e7; stroke: #e2bd62; stroke-width: 1.4; rx: 18; }
+      .panel-purple { fill: #f5f2ff; stroke: #aa9ae3; stroke-width: 1.4; rx: 18; }
+      .panel-red { fill: #fff2f2; stroke: #d98c8c; stroke-width: 1.4; rx: 18; }
+      .section { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 18px; font-weight: 750; fill: #172331; }
+      .section-small { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 12px; fill: #5f6d7c; }
+      .axis { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 13px; font-weight: 700; fill: #273544; }
+      .axis-note { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 11px; fill: #647382; }
+      .ds { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 12.2px; font-weight: 650; fill: #172331; }
+      .ds-note { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 10.5px; fill: #5e6c79; }
+      .card { fill: #ffffff; stroke: #d7e0e9; stroke-width: 1; rx: 8; }
+      .dot-audio { fill: #267a48; stroke: #ffffff; stroke-width: 1; }
+      .dot-limited { fill: #ffffff; stroke: #9aa8b7; stroke-width: 1.6; }
+      .line { stroke: #8998a7; stroke-width: 1.15; fill: none; marker-end: url(#arrow); }
+      .divider { stroke: #d9e1ea; stroke-width: 1; }
+      .caption { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 12.5px; fill: #536271; }
+      .caption-bold { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; font-size: 12.5px; font-weight: 750; fill: #273544; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1700" height="1280" />
+  <text class="title" x="60" y="58">Selected EEG-Audio Dataset Detail Map</text>
+  <text class="subtitle" x="60" y="86">37 selected datasets mapped from task paradigm to EEG-token training role and local audio status</text>
+
+  <rect class="panel" x="55" y="112" width="1590" height="170" />
+  <text class="section" x="84" y="145">Model pathway supported by the dataset pool</text>
+  <text class="subtitle" x="84" y="170">EEG -> discrete token -> content / pitch / timbre / speaker / style alignment -> voice / speaker retrieval / voice-image foundation</text>
+
+  <rect class="panel-blue" x="100" y="205" width="245" height="50" />
+  <text class="axis" x="222" y="226" text-anchor="middle">Base auditory / content</text>
+  <text class="axis-note" x="222" y="244" text-anchor="middle">natural speech, word/phoneme timing</text>
+
+  <rect class="panel-green" x="405" y="205" width="245" height="50" />
+  <text class="axis" x="528" y="226" text-anchor="middle">Speaker / stream retrieval</text>
+  <text class="axis-note" x="528" y="244" text-anchor="middle">AAD, multi-talker, negative pools</text>
+
+  <rect class="panel-gold" x="710" y="205" width="245" height="50" />
+  <text class="axis" x="832" y="226" text-anchor="middle">Prosody / tone / style</text>
+  <text class="axis-note" x="832" y="244" text-anchor="middle">F0, intensity, emotion, intention</text>
+
+  <rect class="panel-purple" x="1015" y="205" width="245" height="50" />
+  <text class="axis" x="1138" y="226" text-anchor="middle">Speaking mode transfer</text>
+  <text class="axis-note" x="1138" y="244" text-anchor="middle">heard, imagined, inner, overt</text>
+
+  <rect class="panel-red" x="1320" y="205" width="245" height="50" />
+  <text class="axis" x="1442" y="226" text-anchor="middle">Device / domain robustness</text>
+  <text class="axis-note" x="1442" y="244" text-anchor="middle">montage, sampling rate, sensor form</text>
+
+  <rect class="panel-blue" x="55" y="315" width="390" height="480" />
+  <text class="section" x="85" y="350">English natural / decoding</text>
+  <text class="section-small" x="85" y="371">P0/P1/P2 main English chain; perception, attention, production</text>
+
+  <rect class="card" x="85" y="392" width="330" height="34" /><circle class="dot-audio" cx="101" cy="409" r="5" /><text class="ds" x="115" y="406">01 ds004408</text><text class="ds-note" x="115" y="420">continuous audiobook, word/phoneme timing</text>
+  <rect class="card" x="85" y="436" width="330" height="34" /><circle class="dot-audio" cx="101" cy="453" r="5" /><text class="ds" x="115" y="450">02 weissbart_natural_speech</text><text class="ds-note" x="115" y="464">surprisal and language-feature tracking</text>
+  <rect class="card" x="85" y="480" width="330" height="34" /><circle class="dot-audio" cx="101" cy="497" r="5" /><text class="ds" x="115" y="494">03 ds006434</text><text class="ds-note" x="115" y="508">ABR, cortical response, selective attention</text>
+  <rect class="card" x="85" y="524" width="330" height="34" /><circle class="dot-limited" cx="101" cy="541" r="5" /><text class="ds" x="115" y="538">04 ds007630_eeg_speech_brain_decoding</text><text class="ds-note" x="115" y="552">large perception/production set; access-limited audio</text>
+  <rect class="card" x="85" y="568" width="330" height="34" /><circle class="dot-audio" cx="101" cy="585" r="5" /><text class="ds" x="115" y="582">05 ds007602_eeg_speech_overt</text><text class="ds-note" x="115" y="596">overt speech; MIC-channel diagnostic audio</text>
+  <rect class="card" x="85" y="612" width="330" height="34" /><circle class="dot-limited" cx="101" cy="629" r="5" /><text class="ds" x="115" y="626">06 etard_continuous_speech_7086209</text><text class="ds-note" x="115" y="640">competing speech; no standalone wav in sample</text>
+  <rect class="card" x="85" y="656" width="330" height="34" /><circle class="dot-limited" cx="101" cy="673" r="5" /><text class="ds" x="115" y="670">07 ds007591</text><text class="ds-note" x="115" y="684">minimally overt; EEG/EMG contribution control</text>
+  <rect class="card" x="85" y="700" width="330" height="34" /><circle class="dot-audio" cx="101" cy="717" r="5" /><text class="ds" x="115" y="714">08 kara_one</text><text class="ds-note" x="115" y="728">imagined and vocalized phonological prompts</text>
+  <rect class="card" x="85" y="744" width="330" height="34" /><circle class="dot-limited" cx="101" cy="761" r="5" /><text class="ds" x="115" y="758">09 sparrkulee_eegdash</text><text class="ds-note" x="115" y="772">large natural speech response; no public playable wav</text>
+
+  <rect class="panel-green" x="465" y="315" width="390" height="572" />
+  <text class="section" x="495" y="350">Mandarin / Cantonese speech</text>
+  <text class="section-small" x="495" y="371">Multi-talker AAD, switch attention, tone and natural speech prosody</text>
+
+  <rect class="card" x="495" y="392" width="330" height="34" /><circle class="dot-audio" cx="511" cy="409" r="5" /><text class="ds" x="525" y="406">10 ds005345</text><text class="ds-note" x="525" y="420">Mandarin multi-talker, single/mixed streams</text>
+  <rect class="card" x="495" y="436" width="330" height="34" /><circle class="dot-audio" cx="511" cy="453" r="5" /><text class="ds" x="525" y="450">11 esaa_7078451</text><text class="ds-note" x="525" y="464">Mandarin AAD; speaker and locus attention</text>
+  <rect class="card" x="495" y="480" width="330" height="34" /><circle class="dot-limited" cx="511" cy="497" r="5" /><text class="ds" x="525" y="494">12 nju_aad_7253438</text><text class="ds-note" x="525" y="508">Mandarin AAD extension; no playable wav</text>
+  <rect class="card" x="495" y="524" width="330" height="34" /><circle class="dot-audio" cx="511" cy="541" r="5" /><text class="ds" x="525" y="538">13 aasd_17413336</text><text class="ds-note" x="525" y="552">spontaneous attention switch</text>
+  <rect class="card" x="495" y="568" width="330" height="34" /><circle class="dot-audio" cx="511" cy="585" r="5" /><text class="ds" x="525" y="582">14 ms_aasd_17149387</text><text class="ds-note" x="525" y="596">unspatialized mixed speech switch</text>
+  <rect class="card" x="495" y="612" width="330" height="34" /><circle class="dot-limited" cx="511" cy="629" r="5" /><text class="ds" x="525" y="626">15 four_talker_aad_10803261</text><text class="ds-note" x="525" y="640">four-talker scalp/ear EEG</text>
+  <rect class="card" x="495" y="656" width="330" height="34" /><circle class="dot-limited" cx="511" cy="673" r="5" /><text class="ds" x="525" y="670">16 four_direction_aad_10803229</text><text class="ds-note" x="525" y="684">four-direction spatial attention</text>
+  <rect class="card" x="495" y="700" width="330" height="34" /><circle class="dot-limited" cx="511" cy="717" r="5" /><text class="ds" x="525" y="714">17 non_block_aad_14887886</text><text class="ds-note" x="525" y="728">non-block dynamic AAD</text>
+  <rect class="card" x="495" y="744" width="330" height="34" /><circle class="dot-limited" cx="511" cy="761" r="5" /><text class="ds" x="525" y="758">18 asa_lin2024_11541114</text><text class="ds-note" x="525" y="772">multi-angle spatial attention</text>
+  <rect class="card" x="495" y="788" width="330" height="34" /><circle class="dot-audio" cx="511" cy="805" r="5" /><text class="ds" x="525" y="802">19 ds004718</text><text class="ds-note" x="525" y="816">Cantonese natural speech, F0 and intensity</text>
+  <rect class="card" x="495" y="832" width="330" height="34" /><circle class="dot-limited" cx="511" cy="849" r="5" /><text class="ds" x="525" y="846">20 cantonese_tone_syllable_7750292</text><text class="ds-note" x="525" y="860">tone/syllable ERP probe</text>
+
+  <rect class="panel-purple" x="875" y="315" width="390" height="440" />
+  <text class="section" x="905" y="350">Controlled / inner / semantic speech</text>
+  <text class="section-small" x="905" y="371">Phoneme, pinyin, imagined speech, mode transfer and semantic bridge</text>
+
+  <rect class="card" x="905" y="392" width="330" height="34" /><circle class="dot-audio" cx="921" cy="409" r="5" /><text class="ds" x="935" y="406">21 ds006104</text><text class="ds-note" x="935" y="420">phoneme, coarticulation, controlled stimuli</text>
+  <rect class="card" x="905" y="436" width="330" height="34" /><circle class="dot-limited" cx="921" cy="453" r="5" /><text class="ds" x="935" y="450">22 ds006465_3m_cpseed</text><text class="ds-note" x="935" y="464">Mandarin pinyin, overt/mouthed/imagined</text>
+  <rect class="card" x="905" y="480" width="330" height="34" /><circle class="dot-limited" cx="921" cy="497" r="5" /><text class="ds" x="935" y="494">23 ds005170_chisco</text><text class="ds-note" x="935" y="508">Chinese sentence-level imagined speech</text>
+  <rect class="card" x="905" y="524" width="330" height="34" /><circle class="dot-audio" cx="921" cy="541" r="5" /><text class="ds" x="935" y="538">24 cire_2025</text><text class="ds-note" x="935" y="552">prosodic emotion and intention</text>
+  <rect class="card" x="905" y="568" width="330" height="34" /><circle class="dot-limited" cx="921" cy="585" r="5" /><text class="ds" x="935" y="582">25 ds003626_inner_speech</text><text class="ds-note" x="935" y="596">inner/pronounced/visualized commands</text>
+  <rect class="card" x="905" y="612" width="330" height="34" /><circle class="dot-audio" cx="921" cy="629" r="5" /><text class="ds" x="935" y="626">26 feis_3554128</text><text class="ds-note" x="935" y="640">hearing/imagined/speaking, 14-channel EEG</text>
+  <rect class="card" x="905" y="656" width="330" height="34" /><circle class="dot-audio" cx="921" cy="673" r="5" /><text class="ds" x="935" y="670">27 ugr_mindvoice</text><text class="ds-note" x="935" y="684">overt/covert Spanish speech and audio</text>
+  <rect class="card" x="905" y="700" width="330" height="34" /><circle class="dot-audio" cx="921" cy="717" r="5" /><text class="ds" x="935" y="714">28 ds004306_semantic_imagination</text><text class="ds-note" x="935" y="728">semantic perception and imagination</text>
+
+  <rect class="panel-gold" x="1285" y="315" width="360" height="480" />
+  <text class="section" x="1315" y="350">AAD expansion / music proxy</text>
+  <text class="section-small" x="1315" y="371">Retrieval robustness, device transfer, pitch/timbre boundary</text>
+
+  <rect class="card" x="1315" y="392" width="300" height="34" /><circle class="dot-audio" cx="1331" cy="409" r="5" /><text class="ds" x="1345" y="406">29 kul_aad_4004271</text><text class="ds-note" x="1345" y="420">AAD benchmark, split sanity check</text>
+  <rect class="card" x="1315" y="436" width="300" height="34" /><circle class="dot-audio" cx="1331" cy="453" r="5" /><text class="ds" x="1345" y="450">30 dtu_aad_1199011</text><text class="ds-note" x="1345" y="464">reverberant competing speech</text>
+  <rect class="card" x="1315" y="480" width="300" height="34" /><circle class="dot-audio" cx="1331" cy="497" r="5" /><text class="ds" x="1345" y="494">31 eeg_aad_255ch_4518754</text><text class="ds-note" x="1345" y="508">high-density sensor ablation</text>
+  <rect class="card" x="1315" y="524" width="300" height="34" /><circle class="dot-limited" cx="1331" cy="541" r="5" /><text class="ds" x="1345" y="538">32 fuglsang2020_3618205</text><text class="ds-note" x="1345" y="552">population shift, hearing-impaired AAD</text>
+  <rect class="card" x="1315" y="568" width="300" height="34" /><circle class="dot-limited" cx="1331" cy="585" r="5" /><text class="ds" x="1345" y="582">33 rotaru2024_11058711</text><text class="ds-note" x="1345" y="596">gaze/spatial shortcut control</text>
+  <rect class="card" x="1315" y="612" width="300" height="34" /><circle class="dot-audio" cx="1331" cy="629" r="5" /><text class="ds" x="1345" y="626">34 geirnaert2025_16536441</text><text class="ds-note" x="1345" y="640">scalp/around-ear/in-ear AAD</text>
+  <rect class="card" x="1315" y="656" width="300" height="34" /><circle class="dot-audio" cx="1331" cy="673" r="5" /><text class="ds" x="1345" y="670">35 openmiir</text><text class="ds-note" x="1345" y="684">music perception and imagination</text>
+  <rect class="card" x="1315" y="700" width="300" height="34" /><circle class="dot-audio" cx="1331" cy="717" r="5" /><text class="ds" x="1345" y="714">36 musin_g_ds003774</text><text class="ds-note" x="1345" y="728">natural music listening</text>
+  <rect class="card" x="1315" y="744" width="300" height="34" /><circle class="dot-audio" cx="1331" cy="761" r="5" /><text class="ds" x="1345" y="758">37 mad_eeg_4537751</text><text class="ds-note" x="1345" y="772">target-instrument auditory attention</text>
+
+  <rect class="panel" x="55" y="930" width="1590" height="215" />
+  <text class="section" x="85" y="965">Training interpretation</text>
+  <line class="divider" x1="85" y1="982" x2="1615" y2="982" />
+  <text class="caption-bold" x="85" y="1016">P0/P1 main training:</text>
+  <text class="caption" x="235" y="1016">natural speech, Mandarin/Cantonese AAD, speaker-stream retrieval, and device-robust auditory encoding.</text>
+  <text class="caption-bold" x="85" y="1052">P2 attribute and mode probes:</text>
+  <text class="caption" x="285" y="1052">phoneme, pinyin, tone, prosody, intention, imagined/inner/overt speech, and semantic imagination.</text>
+  <text class="caption-bold" x="85" y="1088">P3 auditory boundary:</text>
+  <text class="caption" x="240" y="1088">music perception, target-source attention, timbre/pitch proxy, and auditory imagery ablation.</text>
+  <text class="caption-bold" x="85" y="1124">Device condition:</text>
+  <text class="caption" x="210" y="1124">14-255 channels, 128-8192 Hz, scalp/ear/in-ear formats; montage and dataset adapters are part of the model, not preprocessing detail.</text>
+
+  <circle class="dot-audio" cx="1240" cy="1014" r="6" />
+  <text class="caption" x="1255" y="1019">local complete audio sample</text>
+  <circle class="dot-limited" cx="1240" cy="1050" r="6" />
+  <text class="caption" x="1255" y="1055">limited local audio sample</text>
+  <text class="caption" x="1240" y="1091">Audio folders follow this order under:</text>
+  <text class="caption-bold" x="1240" y="1112">_unified_audio/by_dataset_ordered_37/</text>
+
+  <text class="subtitle" x="60" y="1218">Selected datasets support tokenizer pretraining, attribute alignment, retrieval evaluation, speaking-mode transfer, and device-domain robustness.</text>
+</svg>

@@ -86,6 +86,12 @@ EEG -> discrete token
 
 ---
 
+## 数据集详细说明
+
+![Selected EEG-Audio dataset detail map](assets/selected_voice_eeg_dataset_detail_mindmap_0520.svg)
+
+这张图按照下方 37 个数据集的叙述顺序组织。四个数据族对应 V1/V2 的主要证据来源：英文自然语音与 production 数据支撑 base auditory 和 content tokenizer，普通话/粤语 AAD 与自然语音数据支撑 speaker-stream retrieval 和 tone/prosody，对照语音与 inner/imagined/overt speech 数据支撑 phoneme、mode 和 semantic transfer，AAD expansion 与 music proxy 则用于设备、场景和非语音 auditory boundary。
+
 ## 1. `ds004408` — EEG responses to continuous naturalistic speech
 
 - 来源：OpenNeuro / EEGDash，DOI `10.18112/openneuro.ds004408.v1.0.8`。
