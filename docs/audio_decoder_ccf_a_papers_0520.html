@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audio_decoder_ccf_a_papers_0520</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 1080px; margin: 40px auto; padding: 0 24px; color: #222; line-height: 1.72; }
+  h1 { border-bottom: 2px solid #333; padding-bottom: 8px; line-height: 1.25; }
+  h2 { border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 2.1em; }
+  h3 { margin-top: 1.7em; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.88em; }
+  th { background: #f0f0f0; text-align: left; padding: 8px 10px; border: 1px solid #ccc; }
+  td { padding: 7px 10px; border: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafafa; }
+  code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; font-size: 0.88em; }
+  pre { background: #f4f4f4; padding: 14px 18px; border-radius: 6px; overflow-x: auto; font-size: 0.86em; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  a { color: #0066cc; }
+  img { max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; background: #fff; }
+  .mermaid { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 18px; margin: 18px 0; overflow-x: auto; }
+</style>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "default", securityLevel: "loose" });
+</script>
+</head>
+<body>
+<h1 id="audio-decoder-and-audio-token-foundation-roadmap-0520">Audio Decoder and Audio Token Foundation Roadmap（0520）</h1>
+<h2 id="1-研究视角">1. 研究视角</h2>
+<p>这份文档只讨论 audio 侧。EEG 和 voice token 已经在其他文档中展开，这里保留它们作为接口背景：audio waveform 先被转成一组可解释的离散或半离散 token，然后这些 token 才成为 EEG token 的对齐对象。真正的 waveform decoder 放在更后面，它并不是这条路线的起点。</p>
+<pre><code class="language-text">audio waveform
+-&gt; audio tokenizer / codec encoder
+-&gt; semantic / prosody / voice / codec tokens
+-&gt; EEG-token alignment target
+-&gt; audio token LM / voice decoder foundation model
+-&gt; waveform renderer</code></pre>
+<p>这个视角把问题从“选哪个 decoder”改成“先选什么 audio token 空间”。严格按 CCF-A 会议筛选会漏掉 AudioLM、VALL-E、AudioPaLM、Moshi、SoundStream、EnCodec 这类事实上的基础组件；但如果只看产业或 arXiv 系统，又容易忽略 Voicebox、NaturalSpeech 3、UniAudio、RVQGAN、DASpeech、SEAMLESSM4T 这些在结构和评估上更完整的论文。因此文档同时保留 venue/status 和功能位置，不把两者混为一谈。</p>
+<h2 id="2-四类-audio-token">2. 四类 audio token</h2>
+<p><img src="assets/audio_decoder_mindmap_0520.svg" alt="Audio token foundation roadmap"></p>
+<pre class="mermaid">flowchart LR
+  A[&quot;Audio waveform&quot;] --&gt; B[&quot;SSL semantic tokenizer&lt;br/&gt;HuBERT / wav2vec 2.0 / WavLM / Whisper&quot;]
+  A --&gt; C[&quot;Prosody tokenizer&lt;br/&gt;F0 / energy / rhythm / envelope&quot;]
+  A --&gt; D[&quot;Voice tokenizer&lt;br/&gt;speaker / timbre / style embedding&quot;]
+  A --&gt; E[&quot;Codec tokenizer&lt;br/&gt;SoundStream / EnCodec / RVQGAN / FACodec / X-Codec&quot;]
+
+  B --&gt; F[&quot;AudioTokenBundle&quot;]
+  C --&gt; F
+  D --&gt; F
+  E --&gt; F
+
+  F --&gt; G[&quot;EEG-token alignment target&lt;br/&gt;semantic + prosody + voice first&quot;]
+  F --&gt; H[&quot;Audio token LM / voice decoder foundation&lt;br/&gt;AudioLM / SoundStorm / VALL-E / VoiceCraft / MaskGCT / Moshi&quot;]
+  H --&gt; I[&quot;Waveform renderer&lt;br/&gt;codec decoder / acoustic decoder&quot;]</pre>
+<p>audio waveform 在这里被拆成四个层面。semantic token 描述“说了什么”，prosody token 描述音高、能量、节奏和语调，voice token 描述说话人、音色和风格，codec token 则服务于波形重建。前三类更接近非侵入式 EEG 可能稳定捕获的声音结构，codec token 更接近 audio decoder 的工程接口。</p>
+<p>这个区分很重要。完整 codec residual token，也就是 full codec residual token，携带大量相位、细粒度谱纹理、录音条件和残差细节。它们对高保真 waveform 很有用，但很难被 EEG 直接稳定恢复。V2 更合理的目标是让 EEG token 对齐 semantic、prosody 和 voice token；V3 再把这些高层条件交给 audio token LM 或 codec decoder 补齐声学细节。</p>
+<table>
+<thead><tr><th>Audio token 类别</th><th>主要来源</th><th>表达内容</th><th>和 EEG token 的关系</th></tr></thead>
+<tbody>
+<tr><td>semantic / content token</td><td>HuBERT, wav2vec 2.0, WavLM, Whisper, SpeechTokenizer</td><td>phoneme、syllable、word-like unit、speech content</td><td>content head、CTC/CE、contrastive semantic alignment</td></tr>
+<tr><td>prosody token</td><td>F0, energy, duration, rhythm, envelope, voicing</td><td>pitch、intensity、speaking rate、stress、intonation</td><td>prosody head、F0/energy bin、temporal correlation</td></tr>
+<tr><td>voice token</td><td>ECAPA, WavLM speaker embedding, FACodec timbre code, prompt encoder</td><td>speaker identity、timbre、style、vocal quality</td><td>speaker/voice retrieval、style/timbre contrastive loss</td></tr>
+<tr><td>codec token</td><td>SoundStream, EnCodec, RVQGAN, FACodec, X-Codec, ESC</td><td>waveform reconstruction code、acoustic detail、residual detail</td><td>V3 decoder input；V2 只取 coarse 或 factorized subset</td></tr>
+</tbody></table>
+<h2 id="3-audiotokenbundle">3. AudioTokenBundle</h2>
+<p>V2 可以把每段音频预处理成一个统一的 <code>AudioTokenBundle</code>。这个对象不是某个单一模型的输出，而是一个文件级接口，用来把不同 audio foundation model 的结果整理到同一时间轴上。</p>
+<pre><code class="language-text">AudioTokenBundle
+  waveform_id
+  sample_rate
+  frame_times
+  content_units        # HuBERT / wav2vec / Whisper / SpeechTokenizer semantic units
+  prosody_tokens       # F0, energy, rhythm, envelope, voicing
+  voice_tokens         # speaker, timbre, style, prompt-level voice identity
+  codec_codes          # SoundStream / EnCodec / RVQGAN / FACodec / X-Codec codes
+  codec_group_names
+  valid_mask
+  voiced_mask</code></pre>
+<p>semantic token 更像内容标签，prosody token 更像时间连续的声音动态，voice token 更像说话人和音色条件，codec token 则承担 decoder 侧的物理重建。这样组织之后，EEG alignment 可以先关注前面三类，codec code 只作为后续 decoder completion 的材料。</p>
+<h2 id="4-audio-tokenizer-foundation">4. Audio Tokenizer Foundation</h2>
+<p>这一组文献构成 audio token 的底层坐标系。它们并不都生成声音，但决定了“音频被离散化成什么”。</p>
+<table>
+<thead><tr><th>Paper / system</th><th>Status</th><th>Year</th><th>主要位置</th><th>在本项目中的读法</th></tr></thead>
+<tbody>
+<tr><td>wav2vec 2.0</td><td>NeurIPS</td><td>2020</td><td>speech SSL representation</td><td>raw speech 到 contextual representation 的基础路线，量化训练思想可作为 semantic unit 参照</td></tr>
+<tr><td>HuBERT</td><td>IEEE/ACM TASLP</td><td>2021</td><td>hidden-unit tokenizer</td><td>hidden-unit prediction 天然适合作为离散 content target</td></tr>
+<tr><td>WavLM</td><td>IEEE JSTSP</td><td>2022</td><td>full-stack speech representation</td><td>content、speaker、emotion、separation 等任务都可利用，适合同时给出 content 和 voice feature</td></tr>
+<tr><td>BEATs</td><td>ICML</td><td>2023</td><td>general audio acoustic tokenizer</td><td>非语音 auditory proxy 的 token 参照，补足 speech-only tokenizer 的范围</td></tr>
+<tr><td>Whisper</td><td>ICML</td><td>2023</td><td>robust weakly supervised speech encoder</td><td>跨录音质量、跨语言、跨数据集时的 content/language sanity check</td></tr>
+<tr><td>SpeechT5</td><td>ACL</td><td>2022</td><td>speech-text shared interface</td><td>speech/text 共享空间的参照，不替代 neural codec token</td></tr>
+</tbody></table>
+<p>HuBERT 和 wav2vec 2.0 是最直接的 content token 起点。它们的输出不追求波形重建，而是保留 speech content 中可被下游任务利用的结构。Whisper 的地位稍微不同，它更像一个鲁棒的 speech encoder 和 language-aware reference；当数据集中的音频质量、语种和转录条件不统一时，Whisper 的特征可以作为内容侧的稳定参照。WavLM 则更靠近 voice/speaker 侧，因为它在多种 speech processing task 上都有较好的迁移性。</p>
+<p>BEATs 值得单独保留。当前项目虽然以 speech/voice 为主，但数据池里有 OpenMIIR、MUSIN-G、MAD-EEG 等 auditory proxy。BEATs 的 acoustic tokenizer 思想为这些非语音声音提供了一条可比的 token 路线。</p>
+<h2 id="5-neural-codec-and-acoustic-token-layer">5. Neural Codec and Acoustic Token Layer</h2>
+<p>这一层把 waveform 压缩成可被 decoder 还原的 acoustic code。它们是 V3 waveform decoder 的基础，但不等于 V2 的直接监督目标。</p>
+<table>
+<thead><tr><th>Paper / system</th><th>Status</th><th>Year</th><th>主要位置</th><th>在本项目中的读法</th></tr></thead>
+<tbody>
+<tr><td>SoundStream</td><td>IEEE/ACM TASLP</td><td>2022</td><td>end-to-end neural audio codec</td><td>encoder、RVQ、decoder 的完整 codec 原型，AudioLM / SoundStorm 路线的重要基础</td></tr>
+<tr><td>EnCodec</td><td>journal / industry reference</td><td>2023</td><td>neural codec backend</td><td>VALL-E、VoiceCraft 类 neural codec LM 常见 backend，适合做 V3 renderer</td></tr>
+<tr><td>SpeechTokenizer</td><td>arXiv reference</td><td>2023</td><td>unified speech tokenizer</td><td>把 semantic token 和 acoustic token 放进层级 RVQ，和 EEG grouped RVQ 思路接近</td></tr>
+<tr><td>X-Codec</td><td>AAAI</td><td>2025</td><td>semantic-enhanced neural codec</td><td>把 HuBERT/WavLM 语义信息融入 codec quantization，降低 semantic 和 acoustic 之间的断裂</td></tr>
+<tr><td>NaturalSpeech 3 / FACodec</td><td>ICML</td><td>2024</td><td>factorized speech codec</td><td>content、prosody、timbre、acoustic detail 四路拆分，最贴近当前 alignment 目标</td></tr>
+<tr><td>RVQGAN</td><td>NeurIPS</td><td>2023</td><td>high-fidelity audio codec</td><td>高保真 token-to-waveform renderer 参考</td></tr>
+<tr><td>ESC</td><td>EMNLP</td><td>2024</td><td>efficient speech codec</td><td>低比特率高保真重建，说明有限 token 下仍可补齐声学细节</td></tr>
+</tbody></table>
+<p>SoundStream 和 EnCodec 定义了现代 neural codec 的基本工程形态。它们的 codebook 可以驱动高质量重建，但 full residual codebook 不宜直接作为 EEG 的目标。SpeechTokenizer、X-Codec 和 NaturalSpeech 3 更接近当前项目的需求，因为它们在 codec 内部引入了语义或因子化结构。尤其是 FACodec，把 content、prosody、timbre 和 acoustic detail 拆开，几乎直接对应 EEG token 的 content/prosody/voice/residual 分组。</p>
+<p>RVQGAN 和 ESC 更偏 renderer。它们说明 decoder 端如何从离散 code 恢复高质量 waveform，也说明低比特率场景下可以依赖 decoder 结构补齐细节，而不是把所有细节压给 EEG。</p>
+<h2 id="6-audio-token-lm-and-voice-decoder-foundation-models">6. Audio Token LM and Voice Decoder Foundation Models</h2>
+<p>这一组文献把 audio generation 写成 token generation、token infilling 或 prompt-conditioned voice generation。它们是 V3 真正进入 waveform decoder 时的核心参考。</p>
+<table>
+<thead><tr><th>Paper / system</th><th>Status</th><th>Year</th><th>主要位置</th><th>在本项目中的读法</th></tr></thead>
+<tbody>
+<tr><td>AudioLM</td><td>arXiv / Google</td><td>2022</td><td>semantic + acoustic token LM</td><td>把 audio generation 改写成 semantic token 到 acoustic token 的语言建模</td></tr>
+<tr><td>SoundStorm</td><td>arXiv / Google</td><td>2023</td><td>parallel audio token generation</td><td>非自回归或并行 token generation，适合长音频和低延迟场景</td></tr>
+<tr><td>VALL-E / VALL-E 2</td><td>arXiv / Microsoft</td><td>2023/2024</td><td>neural codec LM zero-shot TTS</td><td><code>content token + acoustic prompt</code> 到 codec token 的典型路线</td></tr>
+<tr><td>Voicebox</td><td>NeurIPS</td><td>2023</td><td>universal speech generation</td><td>speech infilling、editing、generation 和 multilingual transfer 的 foundation generator</td></tr>
+<tr><td>VoiceCraft / VoiceCraft-X</td><td>ACL / EMNLP</td><td>2024/2025</td><td>codec token infilling and voice cloning</td><td>适合承接不完整上游 token，和 EEG token 的不完备性匹配</td></tr>
+<tr><td>AudioPaLM</td><td>arXiv / Google</td><td>2023</td><td>listen-and-speak speech-language model</td><td>audio token 进入更大 language-model controller 的参考</td></tr>
+<tr><td>Moshi + Mimi</td><td>arXiv / Kyutai</td><td>2024</td><td>real-time speech-text foundation model</td><td>streaming codec token 和实时 spoken dialogue decoder</td></tr>
+<tr><td>MaskGCT</td><td>arXiv reference</td><td>2024</td><td>masked generative codec transformer</td><td>两阶段 semantic token 到 acoustic token 的清晰结构</td></tr>
+<tr><td>E2 TTS / F5-TTS / Mega-TTS 2</td><td>arXiv / ACL-adjacent</td><td>2023-2025</td><td>zero-shot / flow-matching TTS</td><td>prompt voice、flow decoder、speaker similarity 的 decoder family 对照</td></tr>
+<tr><td>UniAudio / UniAudio 1.5</td><td>ICML / ACM MM</td><td>2024</td><td>universal audio generation</td><td>speech、sound、music、singing 的统一 audio token generation</td></tr>
+<tr><td>StreamSpeech</td><td>ACL</td><td>2024</td><td>streaming speech-to-speech token generation</td><td>online token path 和实时 unit decoder 的结构参照</td></tr>
+</tbody></table>
+<p>AudioLM 是这条线的早期核心，因为它清楚地区分 semantic token 和 acoustic token。VALL-E 把这个想法推进到 zero-shot TTS，把 text/content condition 和 acoustic prompt 结合起来生成 neural codec code。VoiceCraft 更强调 codec token infilling，这一点和 EEG 场景很契合：EEG 侧很难给出完整声学细节，但可以提供内容、韵律或声音身份的部分条件。</p>
+<p>Voicebox 更像 foundation generator，覆盖 speech generation、editing 和 multilingual transfer。AudioPaLM、Moshi 和 UniAudio 则把 audio token 放进更大的 multimodal 或 speech-language system 里。它们不一定是第一版 decoder 的实现目标，但很适合作为 V3/V4 的系统边界参照。</p>
+<p>MaskGCT 的结构尤其值得保留。它先生成 semantic token，再在 semantic token 条件下生成 acoustic token。这种两阶段设计与当前项目的自然分工一致：EEG token 先提供高层声音结构，audio foundation decoder 再补全声学细节。</p>
+<h2 id="7-voice-control-and-acoustic-realization">7. Voice Control and Acoustic Realization</h2>
+<p>StyleTTS 2、P-Flow、CoMoSpeech 和 DASpeech 在文档中被放在声音实现层，而不是 audio token extraction 的起点。它们描述的是 token 或 prompt 已经存在之后，模型如何控制音色、风格、韵律和声学实现。</p>
+<table>
+<thead><tr><th>Paper / system</th><th>Status</th><th>Year</th><th>主要位置</th><th>在本项目中的读法</th></tr></thead>
+<tbody>
+<tr><td>StyleTTS 2</td><td>NeurIPS</td><td>2023</td><td>style diffusion and voice control</td><td>timbre、style、prosody latent 的生成式建模</td></tr>
+<tr><td>P-Flow</td><td>NeurIPS</td><td>2023</td><td>prompt-conditioned flow decoder</td><td>speaker prompt 进入 fast zero-shot TTS 的路线</td></tr>
+<tr><td>CoMoSpeech</td><td>ACM MM</td><td>2023</td><td>consistency-based fast synthesis</td><td>少步生成和低延迟 renderer 候选</td></tr>
+<tr><td>DASpeech</td><td>NeurIPS</td><td>2023</td><td>content-acoustic two-stage decoder</td><td>content path 和 acoustic path 分离的结构参照</td></tr>
+</tbody></table>
+<p>这组文献不直接决定 audio token 的定义，但决定 token 如何被使用。DASpeech 的两阶段结构尤其有用，因为它把 linguistic decoder 和 acoustic decoder 分开，和 EEG token 的 content/voice/prosody 分工保持一致。</p>
+<h2 id="8-nature-and-high-impact-boundary-references">8. Nature and High-Impact Boundary References</h2>
+<p>SEAMLESSM4T / <code>Joint speech and text machine translation for up to 100 languages</code> 是目前最贴近 audio foundation system 的 Nature 级参考。它不是为 EEG reconstruction 设计的，但它把 speech-to-speech、speech-to-text、text-to-speech、text-to-text 和 ASR 放进同一个系统，并提供了大规模 multilingual speech evaluation 的范式。对 V3/V4 来说，它的意义在系统边界和评价协议，而不是某个单独模块。</p>
+<p><code>A neural speech decoding framework leveraging deep learning and speech synthesis</code> 发表在 Nature Machine Intelligence。它不属于 audio foundation 主线，但可以作为边界参考：在神经信号数据有限时，先训练 speech auto-encoder / synthesizer，再把 neural decoder 对齐到可解释 speech parameters，是一种现实的折中结构。</p>
+<p>目前没有强行加入 Science 论文的必要。与其为了期刊标签放入弱相关文章，不如保留 SEAMLESSM4T 这类真正贴近 speech-to-speech decoder 的高影响工作。</p>
+<h2 id="9-v2-v3-路线">9. V2 / V3 路线</h2>
+<p>V2 的中心是 audio token alignment，而不是 waveform generation。音频先被离线或半离线地转成 <code>AudioTokenBundle</code>，EEG token 再分别对齐其中可解释的部分。</p>
+<pre><code class="language-text">EEG token q0-q1  &lt;-&gt; audio envelope / onset / broad auditory response
+EEG token q2-q3  &lt;-&gt; HuBERT / wav2vec / Whisper / SpeechTokenizer semantic units
+EEG token q4     &lt;-&gt; F0 / energy / rhythm / prosody token
+EEG token q5-q6  &lt;-&gt; speaker / timbre / style / voice embedding
+EEG token q7     &lt;-&gt; no audio alignment; residual nuisance only</code></pre>
+<p>这一阶段的实验可以自然落在 semantic unit prediction、F0/energy bin prediction、speaker retrieval、voice embedding contrastive alignment 和 coarse codec token sanity check 上。waveform quality 暂时不作为主指标，因为它更容易反映 decoder 的能力，而不一定反映 EEG token 的质量。</p>
+<p>V3 再进入 audio token completion 和 waveform decoding：</p>
+<pre><code class="language-text">EEG tokens
+-&gt; predicted semantic / prosody / voice tokens
+-&gt; audio token LM or voice decoder foundation model
+-&gt; codec / acoustic tokens
+-&gt; waveform renderer</code></pre>
+<p>在这个阶段，AudioLM、SoundStorm、VALL-E、VoiceCraft、MaskGCT、Moshi 和 Voicebox 才成为核心候选。EEG 侧提供高层条件，audio foundation decoder 负责补全 codec detail 和最终 waveform。</p>
+<h2 id="10-优先级">10. 优先级</h2>
+<table>
+<thead><tr><th>优先级</th><th>论文 / 系统</th><th>主作用</th><th>读法</th></tr></thead>
+<tbody>
+<tr><td>P0</td><td>HuBERT</td><td>semantic content token</td><td>最直接的离散 content target</td></tr>
+<tr><td>P0</td><td>wav2vec 2.0</td><td>speech SSL representation</td><td>speech semantic alignment 基础</td></tr>
+<tr><td>P0</td><td>Whisper</td><td>robust speech content encoder</td><td>跨数据集音频质量不稳时更可靠</td></tr>
+<tr><td>P0</td><td>SoundStream</td><td>neural codec foundation</td><td>codec token / waveform renderer 基础</td></tr>
+<tr><td>P0</td><td>EnCodec</td><td>neural codec backend</td><td>VoiceCraft / VALL-E 类路线的常用 backend</td></tr>
+<tr><td>P0</td><td>NaturalSpeech 3 / FACodec</td><td>factorized codec</td><td>content / prosody / timbre / detail 拆分最贴近本项目</td></tr>
+<tr><td>P0</td><td>X-Codec</td><td>semantic-enhanced codec</td><td>semantic token 和 acoustic code 的桥</td></tr>
+<tr><td>P0</td><td>AudioLM</td><td>audio token LM</td><td>semantic + acoustic token generation 主线</td></tr>
+<tr><td>P0</td><td>SoundStorm</td><td>parallel token generation</td><td>长音频和在线 decoder 更实际</td></tr>
+<tr><td>P0</td><td>VALL-E</td><td>prompt-based neural codec LM</td><td>content + voice prompt 到 codec token</td></tr>
+<tr><td>P0</td><td>Voicebox</td><td>speech generation foundation</td><td>CCF-A foundation voice generation 代表</td></tr>
+<tr><td>P0</td><td>SEAMLESSM4T</td><td>speech-to-speech foundation system</td><td>Nature 级系统边界和 evaluation 参考</td></tr>
+<tr><td>P1</td><td>SpeechTokenizer</td><td>unified speech tokenizer</td><td>层级 RVQ 与 semantic/acoustic 分层</td></tr>
+<tr><td>P1</td><td>VoiceCraft</td><td>codec token infilling</td><td>不完整上游 token 的补全路线</td></tr>
+<tr><td>P1</td><td>MaskGCT</td><td>semantic-to-acoustic token decoder</td><td>两阶段 token generation 清晰</td></tr>
+<tr><td>P1</td><td>WavLM</td><td>full-stack speech representation</td><td>speaker / content 双用途</td></tr>
+<tr><td>P1</td><td>BEATs</td><td>general audio tokenizer</td><td>auditory proxy 和非语音声音</td></tr>
+<tr><td>P1</td><td>Moshi + Mimi</td><td>real-time speech foundation</td><td>streaming codec token 和实时链路</td></tr>
+<tr><td>P2</td><td>StyleTTS 2 / P-Flow / CoMoSpeech</td><td>voice control / fast renderer</td><td>V3 voice realization 候选</td></tr>
+<tr><td>P2</td><td>E2 TTS / F5-TTS / Mega-TTS 2</td><td>flow / prompt TTS</td><td>decoder family 对照</td></tr>
+<tr><td>P2</td><td>DASpeech / StreamSpeech / UniAudio</td><td>two-stage / streaming / universal audio generation</td><td>结构补充和 ablation</td></tr>
+</tbody></table>
+<h2 id="11-文献总表">11. 文献总表</h2>
+<table>
+<thead><tr><th>Paper / system</th><th>Status</th><th>Year</th><th>Primary role</th><th>Token type</th><th>直接用途</th><th>Link</th></tr></thead>
+<tbody>
+<tr><td>wav2vec 2.0</td><td>NeurIPS</td><td>2020</td><td>semantic representation</td><td>semantic</td><td>content alignment baseline</td><td><a href="https://proceedings.neurips.cc/paper/2020/hash/92d1e1eb1cd6f9fba3227870bb6d7f07-Abstract.html">NeurIPS</a></td></tr>
+<tr><td>HuBERT</td><td>IEEE/ACM TASLP</td><td>2021</td><td>hidden-unit tokenizer</td><td>semantic</td><td>discrete content units</td><td><a href="https://arxiv.org/abs/2106.07447">arXiv</a></td></tr>
+<tr><td>WavLM</td><td>IEEE JSTSP</td><td>2022</td><td>full-stack speech SSL</td><td>semantic / voice</td><td>content + speaker features</td><td><a href="https://arxiv.org/abs/2110.13900">arXiv</a></td></tr>
+<tr><td>BEATs</td><td>ICML</td><td>2023</td><td>acoustic tokenizer</td><td>semantic / audio</td><td>auditory proxy token</td><td><a href="https://www.microsoft.com/en-us/research/publication/beats-audio-pre-training-with-acoustic-tokenizers/">Microsoft</a></td></tr>
+<tr><td>Whisper</td><td>ICML</td><td>2023</td><td>robust speech encoder</td><td>semantic</td><td>content/language target</td><td><a href="https://proceedings.mlr.press/v202/radford23a.html">PMLR</a></td></tr>
+<tr><td>SpeechT5</td><td>ACL</td><td>2022</td><td>speech-text bridge</td><td>semantic</td><td>shared speech/text space</td><td><a href="https://aclanthology.org/2022.acl-long.393/">ACL</a></td></tr>
+<tr><td>SoundStream</td><td>IEEE/ACM TASLP</td><td>2022</td><td>neural codec</td><td>codec</td><td>codec token foundation</td><td><a href="https://arxiv.org/abs/2107.03312">arXiv</a></td></tr>
+<tr><td>EnCodec</td><td>journal / industry reference</td><td>2023</td><td>neural codec backend</td><td>codec</td><td>V3 renderer backend</td><td><a href="https://openreview.net/forum?id=ivCd8z8zR2">OpenReview</a></td></tr>
+<tr><td>SpeechTokenizer</td><td>arXiv reference</td><td>2023</td><td>unified speech tokenizer</td><td>semantic / codec</td><td>layered semantic-acoustic token</td><td><a href="https://arxiv.org/abs/2308.16692">arXiv</a></td></tr>
+<tr><td>X-Codec</td><td>AAAI</td><td>2025</td><td>semantic-enhanced codec</td><td>semantic / codec</td><td>semantic-to-codec bridge</td><td><a href="https://arxiv.org/abs/2408.17175">arXiv</a></td></tr>
+<tr><td>NaturalSpeech 3 / FACodec</td><td>ICML</td><td>2024</td><td>factorized codec</td><td>semantic / prosody / voice / codec</td><td>factorized alignment target</td><td><a href="https://proceedings.mlr.press/v235/ju24b.html">PMLR</a></td></tr>
+<tr><td>RVQGAN</td><td>NeurIPS</td><td>2023</td><td>high-fidelity codec</td><td>codec</td><td>waveform renderer</td><td><a href="https://proceedings.neurips.cc/paper_files/paper/2023/hash/58d0e78cf042af5876e12661087bea12-Abstract.html">NeurIPS</a></td></tr>
+<tr><td>ESC</td><td>EMNLP</td><td>2024</td><td>efficient speech codec</td><td>codec</td><td>low-bitrate renderer</td><td><a href="https://aclanthology.org/2024.emnlp-main.562/">ACL</a></td></tr>
+<tr><td>AudioLM</td><td>arXiv / Google</td><td>2022</td><td>audio token LM</td><td>semantic / codec</td><td>semantic-to-acoustic generation</td><td><a href="https://arxiv.org/abs/2209.03143">arXiv</a></td></tr>
+<tr><td>SoundStorm</td><td>arXiv / Google</td><td>2023</td><td>parallel token LM</td><td>codec</td><td>fast audio token completion</td><td><a href="https://arxiv.org/abs/2305.09636">arXiv</a></td></tr>
+<tr><td>VALL-E</td><td>arXiv / Microsoft</td><td>2023</td><td>neural codec LM</td><td>codec / voice</td><td>prompt-based voice decoder</td><td><a href="https://arxiv.org/abs/2301.02111">arXiv</a></td></tr>
+<tr><td>VALL-E 2</td><td>arXiv / Microsoft</td><td>2024</td><td>neural codec LM</td><td>codec / voice</td><td>stronger zero-shot TTS reference</td><td><a href="https://arxiv.org/abs/2406.05370">arXiv</a></td></tr>
+<tr><td>Voicebox</td><td>NeurIPS</td><td>2023</td><td>universal speech generation</td><td>voice / codec</td><td>foundation voice generator</td><td><a href="https://papers.nips.cc/paper_files/paper/2023/hash/2d8911db9ecedf866015091b28946e15-Abstract-Conference.html">NeurIPS</a></td></tr>
+<tr><td>VoiceCraft</td><td>ACL</td><td>2024</td><td>codec token infilling</td><td>codec / voice</td><td>incomplete token completion</td><td><a href="https://aclanthology.org/2024.acl-long.673/">ACL</a></td></tr>
+<tr><td>VoiceCraft-X</td><td>EMNLP</td><td>2025</td><td>multilingual voice cloning</td><td>codec / voice</td><td>multilingual prompt decoder</td><td><a href="https://aclanthology.org/2025.emnlp-main.137/">ACL</a></td></tr>
+<tr><td>AudioPaLM</td><td>arXiv / Google</td><td>2023</td><td>speech-language foundation</td><td>semantic / codec</td><td>listen-and-speak controller</td><td><a href="https://arxiv.org/abs/2306.12925">arXiv</a></td></tr>
+<tr><td>Moshi + Mimi</td><td>arXiv / Kyutai</td><td>2024</td><td>real-time speech foundation</td><td>codec / voice</td><td>streaming decoder reference</td><td><a href="https://arxiv.org/abs/2410.00037">arXiv</a></td></tr>
+<tr><td>MaskGCT</td><td>arXiv reference</td><td>2024</td><td>masked codec transformer</td><td>semantic / codec</td><td>semantic-to-acoustic decoder</td><td><a href="https://arxiv.org/abs/2409.00750">arXiv</a></td></tr>
+<tr><td>E2 TTS</td><td>arXiv / Microsoft</td><td>2024</td><td>flow TTS</td><td>voice / acoustic</td><td>decoder family comparison</td><td><a href="https://arxiv.org/abs/2406.18009">arXiv</a></td></tr>
+<tr><td>F5-TTS</td><td>ACL / arXiv</td><td>2025</td><td>flow TTS</td><td>voice / acoustic</td><td>open voice decoder reference</td><td><a href="https://arxiv.org/abs/2410.06885">arXiv</a></td></tr>
+<tr><td>Mega-TTS 2</td><td>arXiv reference</td><td>2023</td><td>zero-shot TTS prompt model</td><td>voice / prosody</td><td>prompt and timbre control</td><td><a href="https://arxiv.org/abs/2307.07218">arXiv</a></td></tr>
+<tr><td>UniAudio</td><td>ICML</td><td>2024</td><td>universal audio generation</td><td>codec / audio</td><td>multi-audio generation reference</td><td><a href="https://proceedings.mlr.press/v235/yang24x.html">PMLR</a></td></tr>
+<tr><td>UniAudio 1.5</td><td>ACM MM</td><td>2024</td><td>LLM-driven codec decoder</td><td>codec</td><td>few-shot audio task learner</td><td><a href="https://dl.acm.org/doi/10.1145/3664647.3681078">ACM DL</a></td></tr>
+<tr><td>StreamSpeech</td><td>ACL</td><td>2024</td><td>streaming S2ST decoder</td><td>semantic / unit</td><td>online token path reference</td><td><a href="https://aclanthology.org/2024.acl-long.485/">ACL</a></td></tr>
+<tr><td>StyleTTS 2</td><td>NeurIPS</td><td>2023</td><td>style diffusion</td><td>voice / prosody</td><td>voice control module</td><td><a href="https://proceedings.neurips.cc/paper_files/paper/2023/hash/3eaad2a0b62b5ed7a2e66c2188bb1449-Abstract-Conference.html">NeurIPS</a></td></tr>
+<tr><td>P-Flow</td><td>NeurIPS</td><td>2023</td><td>prompt-conditioned flow</td><td>voice / acoustic</td><td>fast zero-shot realization</td><td><a href="https://proceedings.neurips.cc/paper_files/paper/2023/hash/eb0965da1d2cb3fbbbb8dbbad5fa0bfc-Abstract-Conference.html">NeurIPS</a></td></tr>
+<tr><td>CoMoSpeech</td><td>ACM MM</td><td>2023</td><td>consistency synthesis</td><td>voice / acoustic</td><td>low-step renderer</td><td><a href="https://comospeech.github.io/">Project</a></td></tr>
+<tr><td>DASpeech</td><td>NeurIPS</td><td>2023</td><td>content-acoustic decoder</td><td>semantic / acoustic</td><td>two-stage decoder design</td><td><a href="https://proceedings.neurips.cc/paper_files/paper/2023/hash/e5b1c0d4866f72393c522c8a00eed4eb-Abstract-Conference.html">NeurIPS</a></td></tr>
+<tr><td>SEAMLESSM4T / Joint speech and text machine translation</td><td>Nature</td><td>2025</td><td>speech-to-speech foundation system</td><td>semantic / speech</td><td>system boundary and evaluation</td><td><a href="https://www.nature.com/articles/s41586-024-08359-z">Nature</a></td></tr>
+<tr><td>Neural speech decoding with speech synthesis</td><td>Nature Machine Intelligence</td><td>2024</td><td>neural decoding boundary reference</td><td>speech parameters</td><td>synthesizer-assisted decoding reference</td><td><a href="https://www.nature.com/articles/s42256-024-00824-8">Nature</a></td></tr>
+</tbody></table>
+<h2 id="12-结论">12. 结论</h2>
+<p>audio decoder 的第一步不是直接追求 waveform，而是先建立一套稳定的 audio token target。semantic、prosody 和 voice token 描述 EEG 更可能恢复的高层声音结构；codec token 描述 decoder 端补齐波形所需的声学细节。把这两部分分开，V2 的 alignment 结果才容易解释，V3 的 waveform decoder 也有清晰的输入边界。</p>
+<p>这条路线可以概括为：</p>
+<pre><code class="language-text">audio 先被拆成可解释 token，
+EEG token 对齐 semantic / prosody / voice，
+audio foundation decoder 再补全 codec detail 并渲染 waveform。</code></pre>
+</body>
+</html>
