@@ -157,6 +157,9 @@ EEGVoiceTokenV1
 | [`docs/multi_dataset_voice_eeg_catalog_0518.md`](docs/multi_dataset_voice_eeg_catalog_0518.md) | Selected EEG-voice dataset catalog and availability interpretation |
 | [`docs/model_v1_design_0518.md`](docs/model_v1_design_0518.md) | Full V1 model design, data-to-loss mapping, RVQ policy, and future interfaces |
 | [`docs/model_v1_development_status_0518.md`](docs/model_v1_development_status_0518.md) | Current implementation status and next engineering steps |
+| [`docs/voice_image_eeg_self_collection_protocol_0520.md`](docs/voice_image_eeg_self_collection_protocol_0520.md) | Literature-supported self-collection protocol for controlled voice-image EEG and clinical AVH validation |
+| [`docs/voice_image_protocol_consistency_review_0520.md`](docs/voice_image_protocol_consistency_review_0520.md) | Internal consistency, BIDS, statistics, and execution risk review for the self-collection protocol |
+| [`docs/voice_image_pilot_feasibility_review_0520.md`](docs/voice_image_pilot_feasibility_review_0520.md) | Three-month healthy pilot go/no-go assessment under constrained staff and recording resources |
 
 ## Current Engineering Gaps
 

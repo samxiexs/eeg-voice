@@ -1,5 +1,7 @@
 # Voice Image EEG Dataset 简化实验方案
 
+> 更新说明：本文保留为早期简化草案。正式自采实验需求、文献证据链、临床 AVH 边界、BIDS 字段、统计方案和发表标准见 [`voice_image_eeg_self_collection_protocol_0520.md`](voice_image_eeg_self_collection_protocol_0520.md)。
+
 ## 1. 研究目标
 
 Voice Image EEG Dataset 用于建立语音声音形象的 EEG 表征、检索与重构数据基础。研究对象为具备正常听力和正常语言理解能力的成人受试者。核心目标不是疾病分型，也不是单纯 `EEG -> text`，而是学习：
