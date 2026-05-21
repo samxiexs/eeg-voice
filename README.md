@@ -158,8 +158,13 @@ EEGVoiceTokenV1
 | [`docs/model_v1_design_0518.md`](docs/model_v1_design_0518.md) | Full V1 model design, data-to-loss mapping, RVQ policy, and future interfaces |
 | [`docs/model_v1_development_status_0518.md`](docs/model_v1_development_status_0518.md) | Current implementation status and next engineering steps |
 | [`docs/voice_image_eeg_self_collection_protocol_0520.md`](docs/voice_image_eeg_self_collection_protocol_0520.md) | Literature-supported self-collection protocol for controlled voice-image EEG and clinical AVH validation |
+| [`docs/voice_bank_design_0521.md`](docs/voice_bank_design_0521.md) | Standalone voice bank design and execution specification for controlled EEG-voice stimuli, AudioTokenBundle extraction, subject manifolds, and AVH prototype matching |
+| [`docs/voice_image_experiment_design_optimized_0521.md`](docs/voice_image_experiment_design_optimized_0521.md) | Second-pass optimized healthy and clinical AVH voice-image EEG experiment design with reproducibility templates, Mermaid workflows, and pilot checklist |
+| [`docs/voice_image_eeg_voice_model_design_0521.md`](docs/voice_image_eeg_voice_model_design_0521.md) | V1-compatible model design for token-wise EEG-to-AudioTokenBundle alignment, subject voice manifolds, and AVH prototype retrieval |
 | [`docs/voice_image_protocol_consistency_review_0520.md`](docs/voice_image_protocol_consistency_review_0520.md) | Internal consistency, BIDS, statistics, and execution risk review for the self-collection protocol |
 | [`docs/voice_image_pilot_feasibility_review_0520.md`](docs/voice_image_pilot_feasibility_review_0520.md) | Three-month healthy pilot go/no-go assessment under constrained staff and recording resources |
+| [`docs/talk_eeg_audio_dataset_0521.md`](docs/talk_eeg_audio_dataset_0521.md) | Markdown speaker script for the EEG-Audio Dataset presentation |
+| [`docs/talk_audio_decoder_methods_paper_0521.md`](docs/talk_audio_decoder_methods_paper_0521.md) | Markdown speaker script for the Audio Decoder Methods/Paper presentation |
 
 ## Current Engineering Gaps
 
