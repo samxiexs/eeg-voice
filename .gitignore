@@ -103,6 +103,14 @@ outputs/probe_artifacts/
 # Reference PDFs can be large; force-add explicitly if a PDF must be versioned
 *.pdf
 
+# Local document deliverables in docs; keep Markdown sources trackable
+docs/*.ppt
+docs/*.pptx
+docs/*.doc
+docs/*.docx
+docs/*.xls
+docs/*.xlsx
+
 # Local cloned/reference model repositories
 docs/models-ref/
 paper-ref/audio-decoder/
