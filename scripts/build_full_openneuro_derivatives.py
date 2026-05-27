@@ -23,6 +23,11 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover
+    tqdm = None
+
 
 DEFAULT_DS006104 = Path("data/raw/openneuro/ds006104_datalad")
 DEFAULT_DS005345 = Path("data/raw/openneuro/ds005345_datalad")
@@ -90,6 +95,23 @@ def iter_files(root: Path, suffix: str) -> Iterable[Path]:
     for path in sorted(root.rglob(f"*{suffix}")):
         if ".git" in path.parts or not path.is_file() or path.stat().st_size == 0:
             continue
+        yield path
+
+
+def progress_paths(paths: Iterable[Path], desc: str, root: Path) -> Iterable[Path]:
+    items = list(paths)
+    print(f"{desc}: found {len(items)} files under {root}", flush=True)
+    if not items:
+        return
+    if tqdm is not None:
+        with tqdm(items, desc=desc, unit="file", dynamic_ncols=True) as bar:
+            for path in bar:
+                bar.set_postfix_str(relabel(path, root)[-80:])
+                yield path
+        return
+    total = len(items)
+    for index, path in enumerate(items, start=1):
+        print(f"[{index}/{total}] {desc}: {relabel(path, root)}", flush=True)
         yield path
 
 
@@ -214,7 +236,7 @@ def process_ds006104(
     h_freq: float | None,
 ) -> list[RecordingArtifact]:
     artifacts: list[RecordingArtifact] = []
-    for eeg_path in iter_files(root, ".edf"):
+    for eeg_path in progress_paths(iter_files(root, ".edf"), "ds006104 EEG", root):
         fields = parse_bids_name(eeg_path)
         base = eeg_path.name.replace("_eeg.edf", "").replace(".edf", "")
         rec_dir = out_dir / "ds006104" / fields["subject"] / fields["session"]
@@ -286,9 +308,8 @@ def process_ds005345(
     audio_artifacts: list[AudioArtifact] = []
     ds_out = out_dir / "ds005345"
 
-    for wav_path in sorted((root / "stimuli").glob("*.wav")):
-        if not wav_path.is_file() or wav_path.stat().st_size == 0:
-            continue
+    wav_paths = [path for path in sorted((root / "stimuli").glob("*.wav")) if path.is_file() and path.stat().st_size > 0]
+    for wav_path in progress_paths(wav_paths, "ds005345 audio", root):
         stream = wav_path.stem
         audio_dir = ds_out / "audio"
         audio_dir.mkdir(parents=True, exist_ok=True)
@@ -310,10 +331,11 @@ def process_ds005345(
         )
 
     annotation_out = ds_out / "annotation"
-    for csv_path in sorted((root / "annotation").glob("*.csv")):
+    csv_paths = [path for path in sorted((root / "annotation").glob("*.csv")) if path.is_file() and path.stat().st_size > 0]
+    for csv_path in progress_paths(csv_paths, "ds005345 annotations", root):
         copy_if_available(csv_path, annotation_out / csv_path.name)
 
-    for eeg_path in iter_files(root / "derivatives", ".fif"):
+    for eeg_path in progress_paths(iter_files(root / "derivatives", ".fif"), "ds005345 EEG", root):
         fields = parse_bids_name(eeg_path)
         base = eeg_path.name.replace("_eeg_preprocessed.fif", "").replace(".fif", "")
         rec_dir = ds_out / fields["subject"] / fields["run"]
@@ -388,6 +410,12 @@ def main() -> None:
 
     selected = {x.strip() for x in args.datasets.split(",") if x.strip()}
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    print(
+        "Building OpenNeuro derivatives with "
+        f"datasets={','.join(sorted(selected))}, resample_hz={args.resample_hz}, "
+        f"l_freq={args.l_freq}, h_freq={args.h_freq}, out_dir={args.out_dir}",
+        flush=True,
+    )
 
     recordings: list[RecordingArtifact] = []
     audio: list[AudioArtifact] = []
