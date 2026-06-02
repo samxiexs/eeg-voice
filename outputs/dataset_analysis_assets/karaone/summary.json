@@ -1,0 +1,156 @@
+{
+  "dataset_name": "KaraOne",
+  "summary": {
+    "dataset_name": "KaraOne",
+    "root": "/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/data/KaraOne",
+    "downloaded_archive_count": 14,
+    "archive_rows": [
+      [
+        "MM05",
+        2.04
+      ],
+      [
+        "MM08",
+        2.24
+      ],
+      [
+        "MM09",
+        1.57
+      ],
+      [
+        "MM10",
+        1.67
+      ],
+      [
+        "MM11",
+        1.83
+      ],
+      [
+        "MM12",
+        2.11
+      ],
+      [
+        "MM14",
+        2.08
+      ],
+      [
+        "MM15",
+        1.18
+      ],
+      [
+        "MM16",
+        1.21
+      ],
+      [
+        "MM18",
+        1.22
+      ],
+      [
+        "MM19",
+        1.34
+      ],
+      [
+        "MM20",
+        1.26
+      ],
+      [
+        "MM21",
+        1.18
+      ],
+      [
+        "P02",
+        2.19
+      ]
+    ],
+    "representative_subject": "MM05",
+    "representative_trial_count": 165,
+    "representative_unique_labels": [
+      "/diy/",
+      "/iy/",
+      "/m/",
+      "/n/",
+      "/piy/",
+      "/tiy/",
+      "/uw/",
+      "gnaw",
+      "knew",
+      "pat",
+      "pot"
+    ],
+    "representative_label_counter": {
+      "/uw/": 15,
+      "/tiy/": 15,
+      "/iy/": 15,
+      "/m/": 15,
+      "/n/": 15,
+      "/piy/": 15,
+      "/diy/": 15,
+      "gnaw": 15,
+      "pat": 15,
+      "knew": 15,
+      "pot": 15
+    },
+    "raw_channel_count_cnt": 69,
+    "raw_duration_sec": 2477.4,
+    "sampling_rate_hz": 1000.0,
+    "thinking_interval_count": 165,
+    "clearing_interval_count": 165,
+    "speaking_interval_count": 330,
+    "stimulus_like_interval_count": 165,
+    "overt_like_interval_count": 165,
+    "thinking_duration_mean_sec": 4.949630303030303,
+    "clearing_duration_mean_sec": 4.978442424242425,
+    "stimulus_like_duration_mean_sec": 2.0081212121212118,
+    "overt_like_duration_mean_sec": 2.3540242424242424,
+    "audio_file_count": 165,
+    "audio_duration_mean_sec": 1.3754181818181817,
+    "audio_duration_range_sec": [
+      0.96,
+      2.016
+    ],
+    "prompt_text_preview": [
+      "/uw/ ooh",
+      "/tiy/ tee",
+      "/tiy/ tee",
+      "/uw/ ooh",
+      "/iy/ ee",
+      "/m/ mmm",
+      "/n/ nnn",
+      "/iy/ ee",
+      "/n/ nnn",
+      "/piy/ pea"
+    ],
+    "prompt_short_preview": [
+      "/uw/",
+      "/tiy/",
+      "/tiy/",
+      "/uw/",
+      "/iy/",
+      "/m/",
+      "/n/",
+      "/iy/",
+      "/n/",
+      "/piy/"
+    ],
+    "trigger_unique_values": [
+      0.06553502048486844
+    ],
+    "data_quality_notes": [
+      "epoch_inds.mat 是真正可用于 trial 对齐的关键信息源；MNE 读出的 Trigger 通道基本为常数，不能直接拿来做事件恢复。",
+      "单受试者同时具备原始 EEG、预处理特征、overt audio、face animation units，模态丰富度明显强于 FEIS。",
+      "speaking_inds 数量是 330，而 labels 只有 165；数据自身显示每个 trial 对应两个 speaking-like 片段，较短者接近刺激呈现，较长者更像 overt speaking。"
+    ],
+    "research_fit": {
+      "phoneme_classification": "Yes - strong fit at phonological/syllabic prompt level",
+      "word_classification": "Moderate - includes four words but vocabulary is small",
+      "speech_decoding": "Yes - better than FEIS because EEG/audio/face are aligned per trial",
+      "speech_reconstruction": "Moderate foundation only"
+    }
+  },
+  "assets": {
+    "archive_sizes": "outputs/dataset_analysis_assets/karaone/karaone_archive_sizes.png",
+    "waveform": "outputs/dataset_analysis_assets/karaone/karaone_mm05_waveform.png",
+    "labels": "outputs/dataset_analysis_assets/karaone/karaone_mm05_labels.png",
+    "audio_durations": "outputs/dataset_analysis_assets/karaone/karaone_mm05_audio_durations.png"
+  }
+}

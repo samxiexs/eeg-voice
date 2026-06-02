@@ -1,0 +1,233 @@
+{
+  "dataset_name": "FEIS",
+  "summary": {
+    "dataset_name": "FEIS",
+    "root": "/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/data/FEIS",
+    "subject_folder_count": 23,
+    "numbered_subject_count": 21,
+    "chinese_subject_count": 2,
+    "trial_count_distribution": {
+      "01": 160,
+      "02": 160,
+      "03": 160,
+      "04": 160,
+      "05": 160,
+      "06": 160,
+      "07": 160,
+      "08": 160,
+      "09": 160,
+      "10": 160,
+      "11": 160,
+      "12": 112,
+      "13": 160,
+      "14": 160,
+      "15": 160,
+      "16": 160,
+      "17": 160,
+      "18": 160,
+      "19": 160,
+      "20": 160,
+      "21": 160,
+      "chinese-1": 60,
+      "chinese-2": 60
+    },
+    "irregular_subjects": [
+      "12",
+      "chinese-1",
+      "chinese-2"
+    ],
+    "representative_subject": "01",
+    "representative_trial_count": 160,
+    "representative_label_count": 16,
+    "representative_stage_counts": {
+      "articulators": 40960,
+      "resting": 204800,
+      "speaking": 204800,
+      "stimuli": 204800,
+      "thinking": 204800
+    },
+    "samples_per_trial": 1280,
+    "trial_duration_sec_per_phase": 5.0,
+    "channel_names": [
+      "F3",
+      "FC5",
+      "AF3",
+      "F7",
+      "T7",
+      "P7",
+      "O1",
+      "O2",
+      "P8",
+      "T8",
+      "F8",
+      "AF4",
+      "FC6",
+      "F4"
+    ],
+    "stage_order_in_full_eeg": [
+      "stimuli",
+      "articulators",
+      "thinking",
+      "speaking",
+      "resting"
+    ],
+    "overview_rows": [
+      [
+        "01",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "02",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "03",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "04",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "05",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "06",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "07",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "08",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "09",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "10",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "11",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "12",
+        112,
+        16,
+        "yes"
+      ],
+      [
+        "13",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "14",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "15",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "16",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "17",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "18",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "19",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "20",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "21",
+        160,
+        16,
+        "yes"
+      ],
+      [
+        "chinese-1",
+        60,
+        0,
+        "no"
+      ],
+      [
+        "chinese-2",
+        60,
+        0,
+        "no"
+      ]
+    ],
+    "data_quality_notes": [
+      "每个英文被试大多有 160 个 trial，但 subject 12 只有 112 个 trial，是当前下载包里最明显的不规则个体。",
+      "full_eeg.csv 的 Stage / Epoch / Label 列为每个时间点直接给出标签，对齐非常方便。",
+      "两个 chinese supplementary 文件夹使用了另一套列名（Channel 1-14, Event Id, Event Date, Event Duration），与英文主集 schema 不完全一致。",
+      "当前发布的是派生 CSV，而不是带 trigger 的原始 EEG 流；重新做更细粒度事件切分的自由度有限。"
+    ],
+    "research_fit": {
+      "phoneme_classification": "Yes - strong fit",
+      "word_classification": "Weak - labels are mostly phoneme/syllable-level rather than a word vocabulary",
+      "speech_decoding": "Moderate for imagined-vs-spoken/phoneme-level decoding, weak for rich linguistic decoding",
+      "speech_reconstruction": "Weak foundation only"
+    }
+  },
+  "assets": {
+    "trial_counts": "outputs/dataset_analysis_assets/feis/feis_trial_counts.png",
+    "waveform": "outputs/dataset_analysis_assets/feis/feis_subject01_waveform.png",
+    "labels": "outputs/dataset_analysis_assets/feis/feis_subject01_labels.png",
+    "channel_std": "outputs/dataset_analysis_assets/feis/feis_subject01_channel_std.png"
+  }
+}
