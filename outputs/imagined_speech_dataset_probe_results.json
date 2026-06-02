@@ -1,0 +1,2586 @@
+[
+  {
+    "dataset_id": "ds004408",
+    "title": "EEG responses to continuous naturalistic speech",
+    "source": "OpenNeuro",
+    "url": "https://openneuro.org/datasets/ds004408",
+    "priority": "core",
+    "fit": "Natural speech pretraining; word/phoneme TextGrid alignment",
+    "s3_first_page": {
+      "key_count_page": 1000,
+      "is_truncated": true,
+      "sample_small_files": [
+        {
+          "key": "ds004408/.datalad/config",
+          "size": 63
+        },
+        {
+          "key": "ds004408/.gitattributes",
+          "size": 385
+        },
+        {
+          "key": "ds004408/CHANGES",
+          "size": 369
+        },
+        {
+          "key": "ds004408/README",
+          "size": 1455
+        },
+        {
+          "key": "ds004408/dataset_description.json",
+          "size": 338
+        },
+        {
+          "key": "ds004408/participants.json",
+          "size": 756
+        },
+        {
+          "key": "ds004408/participants.tsv",
+          "size": 577
+        },
+        {
+          "key": "ds004408/stimuli/audio01.TextGrid",
+          "size": 180689
+        },
+        {
+          "key": "ds004408/stimuli/audio02.TextGrid",
+          "size": 166310
+        },
+        {
+          "key": "ds004408/stimuli/audio03.TextGrid",
+          "size": 178015
+        }
+      ]
+    },
+    "targets": [
+      {
+        "label": "dataset_description",
+        "kind": "json",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004408/dataset_description.json",
+        "bytes_read": 338,
+        "content_length_header": "338",
+        "content_range": null,
+        "artifact": {
+          "sha256": "b30eaa089cdc3613f7d369db24291acafef8d01c36fe20b50dfc6f109c5a430d",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004408/01_dataset_description.json",
+          "artifact_bytes": 338
+        },
+        "parsed": {
+          "Name": "EEG responses to continuous naturalistic speech\n",
+          "BIDSVersion": "1.7.0",
+          "DatasetType": "raw",
+          "Authors": [
+            "Giovanni M Di Liberto",
+            "Michael P Broderick",
+            "Ole Bialas",
+            "Edmund C Lalor"
+          ],
+          "License": "CC0",
+          "DatasetDOI": "doi:10.18112/openneuro.ds004408.v1.0.8"
+        }
+      },
+      {
+        "label": "participants",
+        "kind": "tsv",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004408/participants.tsv",
+        "bytes_read": 577,
+        "content_length_header": "577",
+        "content_range": null,
+        "artifact": {
+          "sha256": "e9cbeb89c8aaf3c26974ffc08d580ee48dc0ca159467a6377877f3b15324c448",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004408/02_participants.tsv",
+          "artifact_bytes": 577
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "﻿participant_id",
+            "age",
+            "sex",
+            "hand",
+            "weight",
+            "height"
+          ],
+          "preview_rows": [
+            [
+              "sub-001",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-002",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-003",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-004",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-005",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ]
+          ],
+          "line_count_in_sample": 20
+        }
+      },
+      {
+        "label": "audio01 TextGrid",
+        "kind": "textgrid",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004408/stimuli/audio01.TextGrid",
+        "bytes_read": 180689,
+        "content_length_header": "180689",
+        "content_range": null,
+        "artifact": {
+          "sha256": "52c82adfeac4ef79c66f3993aeea1cc69531d3948d2b22e802e598a56d2bd8b0",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004408/03_audio01_TextGrid.TextGrid",
+          "artifact_bytes": 180689
+        },
+        "parsed": {
+          "interval_labels": 2536,
+          "nonempty_labels": 2465,
+          "first_nonempty": [
+            "sil",
+            "HH",
+            "IY1",
+            "W",
+            "AH0",
+            "Z",
+            "AH0",
+            "N",
+            "OW1",
+            "L"
+          ],
+          "duration_sec_hint": 177.54
+        }
+      },
+      {
+        "label": "audio01 wav header",
+        "kind": "wav",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004408/stimuli/audio01.wav",
+        "bytes_read": 4096,
+        "content_length_header": "4096",
+        "content_range": "bytes 0-4095/31322156",
+        "artifact": {
+          "sha256": "1f69935146ae465bff3083cf14e5e86d4676a81707decc858a91b8ea89b14c55",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004408/04_audio01_wav_header.wav.header.bin",
+          "artifact_bytes": 4096
+        },
+        "parsed": {
+          "valid_wav": true,
+          "audio_format": 1,
+          "channels": 2,
+          "sample_rate": 44100,
+          "byte_rate": 176400,
+          "block_align": 4,
+          "bits_per_sample": 16,
+          "duration_sec_est": 177.563
+        }
+      },
+      {
+        "label": "run01 EEG sidecar",
+        "kind": "json",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004408/sub-001/eeg/sub-001_task-listening_run-01_eeg.json",
+        "bytes_read": 487,
+        "content_length_header": "487",
+        "content_range": null,
+        "artifact": {
+          "sha256": "11c36a4fab899034fc757499821b58d1ce6e484733e60c35426c832109680cb5",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004408/05_run01_EEG_sidecar.json",
+          "artifact_bytes": 487
+        },
+        "parsed": {
+          "TaskName": "listening",
+          "Manufacturer": "Brain Products",
+          "PowerLineFrequency": "n/a",
+          "SamplingFrequency": 512.0,
+          "SoftwareFilters": "n/a",
+          "RecordingDuration": 195.998046875,
+          "RecordingType": "continuous",
+          "EEGReference": "n/a",
+          "EEGGround": "n/a",
+          "EEGPlacementScheme": "n/a",
+          "EEGChannelCount": 128,
+          "EOGChannelCount": 0,
+          "ECGChannelCount": 0,
+          "EMGChannelCount": 0,
+          "MiscChannelCount": 0,
+          "TriggerChannelCount": 0
+        }
+      },
+      {
+        "label": "run01 channels",
+        "kind": "tsv",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004408/sub-001/eeg/sub-001_task-listening_run-01_channels.tsv",
+        "bytes_read": 5920,
+        "content_length_header": "5920",
+        "content_range": null,
+        "artifact": {
+          "sha256": "8b2d2fbb35291d81c12cf3145e96b5ce3a6bb56575d45721ec6c8c89513f6a22",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004408/06_run01_channels.tsv",
+          "artifact_bytes": 5920
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "name",
+            "type",
+            "units",
+            "description",
+            "sampling_frequency",
+            "status",
+            "status_description"
+          ],
+          "preview_rows": [
+            [
+              "A1",
+              "EEG",
+              "V",
+              "ElectroEncephaloGram",
+              "512.0",
+              "good",
+              "n/a"
+            ],
+            [
+              "A2",
+              "EEG",
+              "V",
+              "ElectroEncephaloGram",
+              "512.0",
+              "good",
+              "n/a"
+            ],
+            [
+              "A3",
+              "EEG",
+              "V",
+              "ElectroEncephaloGram",
+              "512.0",
+              "good",
+              "n/a"
+            ],
+            [
+              "A4",
+              "EEG",
+              "V",
+              "ElectroEncephaloGram",
+              "512.0",
+              "good",
+              "n/a"
+            ],
+            [
+              "A5",
+              "EEG",
+              "V",
+              "ElectroEncephaloGram",
+              "512.0",
+              "good",
+              "n/a"
+            ]
+          ],
+          "line_count_in_sample": 90
+        }
+      },
+      {
+        "label": "run01 BrainVision header",
+        "kind": "text",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004408/sub-001/eeg/sub-001_task-listening_run-01_eeg.vhdr",
+        "bytes_read": 2984,
+        "content_length_header": "2984",
+        "content_range": null,
+        "artifact": {
+          "sha256": "4152fe42d1576fa576b58bd1d4f89df0d50d168fb49aad747780dfbfda6458ce",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004408/07_run01_BrainVision_header.txt",
+          "artifact_bytes": 2984
+        },
+        "parsed": {
+          "lines": [
+            "Brain Vision Data Exchange Header File Version 1.0",
+            "; Written using pybv 0.7.5",
+            "",
+            "[Common Infos]",
+            "Codepage=UTF-8",
+            "DataFile=sub-001_task-listening_run-01_eeg.eeg",
+            "MarkerFile=sub-001_task-listening_run-01_eeg.vmrk",
+            "DataFormat=BINARY",
+            "; Data orientation: MULTIPLEXED=ch1,pt1, ch2,pt1 ...",
+            "DataOrientation=MULTIPLEXED",
+            "NumberOfChannels=128",
+            "; Sampling interval in microseconds"
+          ],
+          "char_count": 2856
+        }
+      },
+      {
+        "label": "run01 raw EEG bytes",
+        "kind": "binary",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004408/sub-001/eeg/sub-001_task-listening_run-01_eeg.eeg",
+        "bytes_read": 512,
+        "content_length_header": "512",
+        "content_range": "bytes 0-511/51380224",
+        "artifact": {
+          "sha256": "cfaa1e3b8b820b666e15bd99bd04290f1eb84469a89fe6a5a5661ae4482d5bf3",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004408/08_run01_raw_EEG_bytes.bin",
+          "artifact_bytes": 512
+        },
+        "parsed": {
+          "bytes_read": 512,
+          "content_range": "bytes 0-511/51380224",
+          "magic_hex": "78870f5132ad1c51e66b6dd05bead0cf",
+          "ascii_prefix": "x..Q2..Q.km.[...^.!..x.Q...O4.\"Q..UQ..EQLM=Q#53Q..}Q...Q...Q.i.Q"
+        }
+      }
+    ]
+  },
+  {
+    "dataset_id": "ds004940",
+    "title": "Auditory N400 active/passive sentence EEG",
+    "source": "OpenNeuro",
+    "url": "https://openneuro.org/datasets/ds004940",
+    "priority": "pretraining-response",
+    "fit": "Heard English sentence/word EEG with audio stimuli and response task; auxiliary only for imagined-speech work",
+    "s3_first_page": {
+      "key_count_page": 1000,
+      "is_truncated": true,
+      "sample_small_files": [
+        {
+          "key": "ds004940/.bidsignore",
+          "size": 141
+        },
+        {
+          "key": "ds004940/.datalad/config",
+          "size": 63
+        },
+        {
+          "key": "ds004940/.gitattributes",
+          "size": 427
+        },
+        {
+          "key": "ds004940/CHANGES",
+          "size": 120
+        },
+        {
+          "key": "ds004940/N400PvsA_stimuli_parameters.json",
+          "size": 2488
+        },
+        {
+          "key": "ds004940/N400PvsA_stimuli_parameters.tsv",
+          "size": 67451
+        },
+        {
+          "key": "ds004940/README",
+          "size": 34317
+        },
+        {
+          "key": "ds004940/code/ChRej_selection.m",
+          "size": 8804
+        },
+        {
+          "key": "ds004940/code/ERPs_PvsA.m",
+          "size": 11231
+        },
+        {
+          "key": "ds004940/code/Topo_PvsA.m",
+          "size": 6046
+        }
+      ]
+    },
+    "targets": [
+      {
+        "label": "dataset_description",
+        "kind": "json",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004940/dataset_description.json",
+        "bytes_read": 20752,
+        "content_length_header": "20752",
+        "content_range": null,
+        "artifact": {
+          "sha256": "18d6520266ae05298ed95e9f4ef9fce8f236b8b507f25236a88d37a992b009e8",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004940/01_dataset_description.json",
+          "artifact_bytes": 20752
+        },
+        "parsed": {
+          "Name": "Neurophysiological measures of covert semantic processing in neurotypical adolescents actively ignoring spoken sentence inputs: A high-density event-related potential (ERP) study.",
+          "BIDSVersion": "1.7.0",
+          "DatasetType": "raw",
+          "Authors": [
+            "Kathryn Toffolo",
+            "Edward G. Freedman",
+            "John J. Foxe"
+          ],
+          "Acknowledgements": "The authors acknowledge the support of the autism team at the Frederick J. and Marion A. Schindler Cognitive Neurophysiology Lab, which includes Erin Bojanek, Emily Isenstein, Emily Knight, Paige Nicklas, and Zachary Christensen. We are especially grateful to the participants in this study who graciously gave their time to allow for the successful completion of this work.",
+          "HowtoAcknowledge": [
+            "Citation of this paper and dataset"
+          ],
+          "Funding": [
+            "The Ernest J. Del Monte Institute for Neuroscience Pilot Program via a grant from the Harry T. Mangurian, Jr. Foundation",
+            "Frederick J. and Marion A. Schindler Foundation (GF621727)"
+          ],
+          "EthicsApprovals": [
+            "The Research Subjects Review Board of the University of Rochester approved all the experimental procedures (STUDY00002036). Each participant provided written informed consent in accordance with the tenets laid out in the Declaration of Helsinki."
+          ],
+          "References": [
+            "Ainsworth-Darnell, K., Shulman, H.G., Boland, J.E., 1998. Dissociating Brain Responses to Syntactic and Semantic Anomalies: Evidence from Event-Related Potentials. J. Mem. Lang. 38, 112–130. https://doi.org/10.1006/jmla.1997.2537",
+            "Bastuji, H., Perrin, F., Garcia-Larrea, L., 2002. Semantic analysis of auditory input during sleep: Studies with event related potentials. Int. J. Psychophysiol. 46, 243–255. https://doi.org/10.1016/S0167-8760(02)00116-2",
+            "Bentin, S., Kutas, M., Hillyard, S.A., 1995. Semantic processing and memory for attended and unattended words in dichotic listening: Behavioral and electrophysiological evidence. J. Exp. Psychol. Hum. Percept. Perform. 21, 54–67. https://doi.org/https://doi.org/10.1037/0096-1523.21.1.54",
+            "Block, C.K., Baldwin, C.L., 2010. Cloze probability and completion norms for 498 sentences: Behavioral and neural validation using event-related potentials. Behav. Res. Methods 42, 665–670. https://doi.org/10.3758/BRM.42.3.665",
+            "Braeutigam, S., Swithenby, S.J., Bailey, A.J., 2008. Contextual integration the unusual way: A magnetoencephalographic study of responses to semantic violation in individuals with autism spectrum disorders. Eur. J. Neurosci. 27, 1026–1036. https://doi.org/10.1111/j.1460-9568.2008.06064.x",
+            "Brima, T., Beker, S., Prinsloo, K.D., Butler, J.S., Djukic, A., Freedman, E.G., Molholm, S., Foxe, J.J., 2024a. Probing a neural unreliability account of auditory sensory processing atypicalities in Rett Syndrome. medRxiv 0–37. https://doi.org/10.1101/2024.01.25.24301723",
+            "Brima, T., Freedman, E.G., Prinsloo, K.D., Augustine, E.F., Adams, H.R., Wang, K.H., Mink, J.W., Shaw, L.H., Mantel, E.P., Foxe, J.J., 2024b. Assessing the integrity of auditory sensory memory processing in CLN3 disease (Juvenile Neuronal Ceroid Lipofuscinosis (Batten disease)): an auditory evoked potential study of the duration-evoked mismatch negativity (MMN). J. Neurodev. Disord. 16, 1–17. https://doi.org/10.1186/s11689-023-09515-8",
+            "Brima, T., Molholm, S., Molloy, C.J., Sysoeva, O. V., Nicholas, E., Djukic, A., Freedman, E.G., Foxe, J.J., 2019. Auditory sensory memory span for duration is severely curtailed in females with Rett syndrome. Transl. Psychiatry 9. https://doi.org/10.1038/s41398-019-0463-0",
+            "Brouwer, H., Crocker, M.W., Venhuizen, N.J., Hoeks, J.C.J., 2017. A Neurocomputational Model of the N400 and the P600 in Language Processing. Cogn. Sci. 41, 1318–1352. https://doi.org/10.1111/cogs.12461",
+            "Brouwer, H., Hoeks, J.C.J., 2013. A time and place for language comprehension: Mapping the N400 and the P600 to a minimal cortical network. Front. Hum. Neurosci. 7, 1–12. https://doi.org/10.3389/fnhum.2013.00758",
+            "Brown, Colin, Hagoort, P., 1993. The processing nature of the N400: Evidence from masked priming. J. Cogn. Neurosci. 5, 34–44. https://doi.org/10.1162/jocn.1993.5.1.34",
+            "Brown, C., Hagoort, P., 1993. The processing nature of the N400: Evidence from masked priming. J. Cogn. Neurosci. 5, 34–44. https://doi.org/10.1162/jocn.1993.5.1.34",
+            "Brualla, J., Romero, M.F., Serrano, M., Valdizán, J.R., 1998. Auditory event-related potentials to semantic priming during sleep. Electroencephalogr. Clin. Neurophysiol. - Evoked Potentials 108, 283–290. https://doi.org/10.1016/S0168-5597(97)00102-0",
+            "Cantiani, C., Choudhury, N.A., Yu, Y.H., Shafer, V.L., Schwartz, R.G., Benasich, A.A., 2016. From sensory perception to lexical-semantic processing: An ERP study in non-verbal children with autism. PLoS One 11, 1–31. https://doi.org/10.1371/journal.pone.0161637",
+            "Chwilla, D.J., 2022. Context effects in language comprehension: The role of emotional state and attention on semantic and syntactic processing. Front. Hum. Neurosci. 16. https://doi.org/10.3389/fnhum.2022.1014547",
+            "Chwilla, D.J., Brown, C.M., Hagoort, P., 1995. The N400 as a function of the level of processing. Psychophysiology 32, 274–285. https://doi.org/10.1111/j.1469-8986.1995.tb02956.x",
+            "Connolly, J.F., Phillips, N.A., 1994. Event-related potential components reflect phonological and semantic processing of the terminal word of spoken sentences. J. Cogn. Neurosci. 6, 256–266. https://doi.org/10.1162/jocn.1994.6.3.256",
+            "Contier, F., Weymar, M., Wartenburger, I., Rabovsky, M., 2022. Sustained Attention as Measured by Reaction Time Variability Is a Strong Modulator for the P600, but Not the N400. J. Cogn. Neurosci. 34, 2297–2310. https://doi.org/10.1162/jocn_a_01918",
+            "Daltrozzo, J., 2009. Cortical information processing in Coma. Cog Behav Neurol 22, 53–62. https://doi.org/10.1097/WNN.0b013e318192ccc8",
+            "Delorme, A., Makeig, S., 2004. EEGLAB: An open source toolbox for analysis of single-trial EEG dynamics including independent component analysis. J. Neurosci. Methods 134, 9–21. https://doi.org/10.1016/j.jneumeth.2003.10.009",
+            "DePape, A.M.R., Chen, A., Hall, G.B.C., Trainor, L.J., 2012. Use of prosody and information structure in high functioning adults with Autism in relation to language ability. Front. Psychol. 3, 1–13. https://doi.org/10.3389/fpsyg.2012.00072",
+            "Dien, J., Frishkoff, G.A., Cerbone, A., Tucker, D.M., 2003. Parametric analysis of event-related potentials in semantic comprehension: Evidence for parallel brain mechanisms. Cogn. Brain Res. 15, 137–153. https://doi.org/10.1016/S0926-6410(02)00147-7",
+            "Erlbeck, H., Kübler, A., Kotchoubey, B., Veser, S., 2014. Task instructions modulate the attentional mode affecting the auditory MMN and the semantic N400. Front. Hum. Neurosci. 8, 1–16. https://doi.org/10.3389/fnhum.2014.00654",
+            "Fernandez, E.M., Smith Cairns, H., 2011. Fundamentals of Psycholinguisitics, Sereal Untuk. Blackwell Publishing, West Sussex.",
+            "Fitz, H., Chang, F., 2019. Language ERPs reflect learning through prediction error propagation. Cogn. Psychol. 111, 15–52. https://doi.org/10.1016/j.cogpsych.2019.03.002",
+            "Foxe, J.J., Burke, K.M., Andrade, G.N., Djukic, A., Frey, H.P., Molholm, S., 2016. Automatic cortical representation of auditory pitch changes in Rett syndrome. J. Neurodev. Disord. 8, 1–10. https://doi.org/10.1186/s11689-016-9166-5",
+            "Foxe, J.J., Simpson, G. V., 2005. Biasing the brain’s attentional set: II. Effects of selective intersensory attentional deployments on subsequent sensory processing. Exp. Brain Res. 166, 393–401. https://doi.org/10.1007/s00221-005-2379-6",
+            "Foxe, J.J., Simpson, G. V., Ahlfors, S.P., Saron, C.D., 2005. Biasing the brain’s attentional set: I. Cue driven deployments of intersensory selective attention. Exp. Brain Res. 166, 370–392. https://doi.org/10.1007/s00221-005-2378-7",
+            "Francisco, A.A., Foxe, J.J., Horsthuis, D.J., Molholm, S., 2020. Impaired auditory sensory memory in Cystinosis despite typical sensory processing: A high-density electrical mapping study of the mismatch negativity (MMN). NeuroImage Clin. 25, 102170. https://doi.org/10.1016/j.nicl.2020.102170",
+            "Friederici, A.D., 2011. The brain basis of language processing: From structure to function. Physiol. Rev. 91, 1357–1392. https://doi.org/10.1152/physrev.00006.2011",
+            "Friederici, A.D., 2002. Towards a neural basis of auditory sentence processing. Trends Cogn. Sci. 6, 78–84. https://doi.org/10.1016/s1364-6613(00)01839-8",
+            "Giacino, J.T., Fins, J.J., Laureys, S., Schiff, N.D., 2014. Disorders of consciousness after acquired brain injury: The state of the science. Nat. Rev. Neurol. 10, 99–114. https://doi.org/10.1038/nrneurol.2013.279",
+            "Gouvea, A.C., Phillips, C., Kazanina, N., Poeppel, D., 2010. The linguistic processes underlying the P600. Lang. Cogn. Process. 25, 149–188. https://doi.org/10.1080/01690960902965951",
+            "Green, D.A., Swets, J.A., 1966. Signal Detection Theory and Psychophysics. John Wiley and Sons., New-York.",
+            "Hagoort, P., 2008. The fractionation of spoken language understanding by measuring electrical and magnetic brain signals. Phil. Trans. R. Soc. B 363, 1055–1069. https://doi.org/10.1098/rstb.2007.2159",
+            "Hohlfeld, A., Martín-Loeches, M., Sommer, W., 2015. Is semantic processing during sentence reading autonomous or controlled? Evidence from the N400 component in a dual task paradigm. Adv. Cogn. Psychol. 11, 42–55. https://doi.org/10.5709/acp-0170-2",
+            "Hohlfeld, A., Sommer, W., 2005. Semantic processing of unattended meaning is modulated by additional task load: Evidence from electrophysiology. Cogn. Brain Res. 24, 500–512. https://doi.org/10.1016/j.cogbrainres.2005.03.001",
+            "Hubbard, R.J., Federmeier, K.D., 2021. Dividing attention influences contextual facilitation and revision during language comprehension. Brain Res. 1764, 147466. https://doi.org/10.1016/j.brainres.2021.147466",
+            "Ibáñez, A., López, V., Cornejo, C., 2006. ERPs and contextual semantic discrimination: Degrees of congruence in wakefulness and sleep. Brain Lang. 98, 264–275. https://doi.org/10.1016/j.bandl.2006.05.005",
+            "Ibáñez, A.M., San Martín, R., Hurtado, E., López, V., 2009. ERPs studies of cognitive processing during sleep. Int. J. Psychol. 44, 290–304. https://doi.org/10.1080/00207590802194234",
+            "Isenstein, E.L., Freedman, E.G., Molholm, S., Foxe, J.J., 2024. Intact Somatosensory Temporal Sensitivity in Adults on the Autism Spectrum : A High-Density Electrophysiological Mapping Study Using the Mismatch Negativity ( MMN ) Sensory Memory Paradigm . 0–24.",
+            "Kaan, E., 2007. Event-Related Potentials and Language Processing: A Brief Overview. Lang. Linguist. Compass 1, 571–591. https://doi.org/10.1111/j.1749-818x.2007.00037.x",
+            "Kaan, E., Harris, A., Gibson, E., Holcomb, P., 2000. The P600 as an index of syntactic integration difficulty. Lang. Cogn. Process. 15, 159–201. https://doi.org/10.1080/016909600386084",
+            "Kim, A., Osterhout, L., 2005. The independence of combinatory semantic processing: Evidence from event-related potentials. J. Mem. Lang. 52, 205–225. https://doi.org/10.1016/j.jml.2004.10.002",
+            "Knight, E.J., Oakes, L., Hyman, S.L., Freedman, E.G., Foxe, J.J., 2020. Individuals With Autism Have No Detectable Deficit in Neural Markers of Prediction Error When Presented With Auditory Rhythms of Varied Temporal Complexity. Autism Res. 13, 2058–2072. https://doi.org/10.1002/aur.2362",
+            "Kotchoubey, B., Daltrozzo, J., 2005. Semantic processing in a coma patient. Gd. Rounds 5, 37–41. https://doi.org/10.1102/1470-5206.2005.0013",
+            "Kutas, M., Hillyard, S.A., 1984. Brain potentials during reading reflect word expectancy and semantic association. Nature 307, 161–163. https://doi.org/10.1038/307161a0",
+            "Kutas, M., Hillyard, S.A., 1980. Reading Senseless Sentences: Brain Potentials Reflect Semantic Incongruity. Science (80-. ). 207, 203–205. https://doi.org/10.1126/science.7350657",
+            "Lau, E.F., Phillips, C., Poeppel, D., 2008. A cortical network for semantics: (De)constructing the N400. Nat. Rev. Neurosci. 9, 920–933. https://doi.org/10.1038/nrn2532",
+            "Leckey, M., Federmeier, K.D., 2020. The P3b and P600(s): Positive contributions to language comprehension. Psychophysiology 57, 1–15. https://doi.org/10.1111/psyp.13351",
+            "Lehmann, D., Skrandies, W., 1980. Reference-free identification of components of checkerboard-evoked multichannel potential fields. Electroencephalogr. Clin. Neurophysiol. 48, 609–621. https://doi.org/10.1016/0013-4694(80)90419-8",
+            "Leitman, D.I., Foxe, J.J., Butler, P.D., Saperstein, A., Revheim, N., Javitt, D.C., 2005. Sensory contributions to impaired prosodic processing in schizophrenia. Biol. Psychiatry 58, 56–61. https://doi.org/10.1016/j.biopsych.2005.02.034",
+            "Leitman, D.I., Hoptman, M.J., Foxe, J.J., Saccente, E., Wylie, G.R., Nierenberg, J., Jalbrzikowski, M., Lim, K.O., Javitt, D.C., 2007. The neural substrates of impaired prosodic detection in schizophrenia and its sensorial antecedents. Am. J. Psychiatry 164, 474–482. https://doi.org/10.1176/ajp.2007.164.3.474",
+            "Luck, S., 2005. An Introduction to the Event-Related Potential Technique. MIT Press, Cambridge, Massachusetts.",
+            "Martín-Loeches, M., 2007. The gate for reading: Reflections on the recognition potential. Brain Res. Rev. 53, 89–97. https://doi.org/10.1016/j.brainresrev.2006.07.001",
+            "Martín-Loeches, M., Hinojosa, J.A., Casado, P., Muñoz, F., Fernández-Frías, C., 2004. Electrophysiological evidence of an early effect of sentence context in reading. Biol. Psychol. 65, 265–280. https://doi.org/10.1016/j.biopsycho.2003.07.002",
+            "Martín-Loeches, M., Hinojosa, J.A., Gómez-Jarabo, G., Rubia, F.J., 1999. The recognition potential: An ERP index of lexical access. Brain Lang. 70, 364–384. https://doi.org/10.1006/brln.1999.2178",
+            "Martzoukou, M., Papadopoulou, D., Kosmidis, M.H., 2017. The Comprehension of Syntactic and Affective Prosody by Adults with Autism Spectrum Disorder Without Accompanying Cognitive Deficits. J. Psycholinguist. Res. 46, 1573–1595. https://doi.org/10.1007/s10936-017-9500-4",
+            "Maxfield, L., 1997. Attention and Semantic Priming: A Review of Prime Task Effects. Conscious. Cogn. 6, 204–218. https://doi.org/10.1006/ccog.1997.0311",
+            "McCann, J., Peppé, S., Gibbon, F.E., O’Hare, A., Rutherford, M., 2007. Prosody and its relationship to language in school-aged children with high-functioning autism. Int. J. Lang. Commun. Disord. 42, 682–702. https://doi.org/10.1080/13682820601170102",
+            "McCarthy, G., Nobre, A., 1993. Modulation of semantic processing by spatial selective attention. Electroencephalogr Clin Neurophysiol 88, 210–219. https://doi.org/10.1016/0168-5597(93)90005-a",
+            "Molholm, S., Ritter, W., Murray, M.M., Javitt, D.C., Schroeder, C.E., Foxe, J.J., 2002. Multisensory auditory-visual interactions during early sensory processing in humans: A high-density electrical mapping study. Cogn. Brain Res. 14, 115–128. https://doi.org/10.1016/S0926-6410(02)00066-6",
+            "Murray, M.M., Brunet, D., Michel, C.M., 2008. Topographic ERP analyses: A step-by-step tutorial review. Brain Topogr. 20, 249–264. https://doi.org/10.1007/s10548-008-0054-5",
+            "Okita, T., Jibu, T., 1998. Selective attention and N400 attenuation with spoken word repetition. Psychophysiology 35, 260–271. https://doi.org/10.1017/S0048577298961042",
+            "Oostenveld, R., Fries, P., Maris, E., Schoffelen, J.M., 2011. FieldTrip: Open source software for advanced analysis of MEG, EEG, and invasive electrophysiological data. Comput. Intell. Neurosci. 2011. https://doi.org/10.1155/2011/156869",
+            "Osterhout, L., Holcomb, P.J., 1992. Event-related brain potentials elicited by syntactic anomaly. J. Mem. Lang. 31, 785–806. https://doi.org/10.1016/0749-596X(92)90039-Z",
+            "Pajankar, N., 2022. Developing an ERP Paradigm to Assess Conceptual Processing in DOC. McMaster University.",
+            "Pernet, C.R., Appelhoff, S., Gorgolewski, K.J., Flandin, G., Phillips, C., Delorme, A., Oostenveld, R., 2019. EEG-BIDS, an extension to the brain imaging data structure for electroencephalography. Sci. Data 6, 6–10. https://doi.org/10.1038/s41597-019-0104-8",
+            "Perrin, F., Bastuji, H., Garcia-Larrea, L., 2002. Detection of verbal discordances during sleep. Neuroreport 13, 1345–1349. https://doi.org/10.1097/00001756-200207190-00026",
+            "Poulsen, A.T., Pedroni, A., Langer, N., Hansen, L.K., 2018. Microstate EEGlab toolbox: An introductory guide. bioRxiv 1–30. https://doi.org/10.1101/289850",
+            "Proverbio, A.M., Riva, F., 2009. RP and N400 ERP components reflect semantic violations in visual processing of human actions. Neurosci. Lett. 459, 142–146. https://doi.org/10.1016/j.neulet.2009.05.012",
+            "Relander, K., Rämä, P., Kujala, T., 2009. Word semantics is processed even without attentional effort. J. Cogn. Neurosci. 21, 1511–1522. https://doi.org/10.1162/jocn.2009.21127",
+            "Risetti, M., Formisano, R., Toppi, J., Quitadamo, L.R., Bianchi, L., Astolfi, L., Cincotti, F., Mattia, D., 2013. On ERPs detection in disorders of consciousness rehabilitation. Front. Hum. Neurosci. 7, 1–10. https://doi.org/10.3389/fnhum.2013.00775",
+            "Rohaut, B., Faugeras, F., Chausson, N., King, J.R., Karoui, I. El, Cohen, L., Naccache, L., 2015. Probing ERP correlates of verbal semantic processing in patients with impaired consciousness. Neuropsychologia 66, 279–292. https://doi.org/10.1016/j.neuropsychologia.2014.10.014",
+            "Rohaut, B., Naccache, L., 2018. What are the boundaries of unconscious semantic cognition? Eur. J. Neurosci. 47, 1287–1288. https://doi.org/10.1111/ejn.13930",
+            "Rudell, A.P., Hua, J., 1996. The recognition potential and conscious awareness. Electroencephalogr. Clin. Neurophysiol. 98, 309–318. https://doi.org/10.1016/0013-4694(95)00265-0",
+            "Schacht, A., Sommer, W., Shmuilovich, O., Martíenz, P.C., Martín-Loeches, M., 2014. Differential task effects on N400 and P600 elicited by semantic and syntactic violations. PLoS One 9, 1–7. https://doi.org/10.1371/journal.pone.0091226",
+            "Seel, R.T., Sherer, M., Whyte, J., Katz, D.I., Giacino, J.T., Rosenbaum, A.M., Hammond, F.M., Kalmar, K., Pape, T.L.B., Zafonte, R., Biester, R.C., Kaelin, D., Kean, J., Zasler, N., 2010. Assessment scales for disorders of consciousness: Evidence-based recommendations for clinical practice and research. Arch. Phys. Med. Rehabil. 91, 1795–1813. https://doi.org/10.1016/j.apmr.2010.07.218",
+            "Skrandies, W., 1993. EEG / EP : New Techniques. Brain Topogr. 5, 347–350. https://doi.org/10.1007/BF01128688",
+            "Skrandies, W., 1990. Global field power and topographic similarity. Brain Topogr. 3, 137–141. https://doi.org/10.1007/BF01128870",
+            "Toffolo, K.K., Freedman, E.G., Foxe, J.J., 2022. Evoking the N400 Event-related Potential (ERP) Component Using a Publicly Available Novel Set of Sentences with Semantically Incongruent or Congruent Eggplants (Endings). Neuroscience 501, 143–158. https://doi.org/10.1016/j.neuroscience.2022.07.030",
+            "Tripier, J., 2018. You Can’t See Me: Searching for Evidence of Unconscious Semantic Processing in an Inattentional Blindness Paradigm. J. Mater. Process. Technol. Reed College. https://doi.org/10.1088/1751-8113/44/8/085201",
+            "Van Herten, M., Kolk, H.H.J., Chwilla, D.J., 2005. An ERP study of P600 effects elicited by semantic anomalies. Cogn. Brain Res. 22, 241–255. https://doi.org/10.1016/j.cogbrainres.2004.09.002",
+            "Wang, S., Dong, X., Ren, Y., Yang, Y., 2009. The development of semantic priming effect in childhood: An event-related potential study. Neuroreport 20, 574–578. https://doi.org/10.1097/WNR.0b013e328329f215"
+          ],
+          "Links": [
+            "DatasetDOI OpenNeuro: ds004940 https://openneuro.org/datasets/ds004940",
+            "StimsetDOI https://doi.org/10.5061/dryad.9ghx3ffkg"
+          ],
+          "HowToAcknowledge": "Citation of this paper and dataset. If the stimulus set was used, citation of that paper and stimulus set as well. ",
+          "License": "CC0",
+          "DatasetDOI": "doi:10.18112/openneuro.ds004940.v1.0.1"
+        }
+      },
+      {
+        "label": "README",
+        "kind": "text",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004940/README",
+        "bytes_read": 34317,
+        "content_length_header": "34317",
+        "content_range": null,
+        "artifact": {
+          "sha256": "8cf7fad802ebb00777a6ceffd50da6a2116140a5786eba837d9fdb61c23d9c2b",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004940/02_README.txt",
+          "artifact_bytes": 34317
+        },
+        "parsed": {
+          "lines": [
+            "Citation",
+            "",
+            "Toffolo, K.K., Freedman, E.G., Foxe, J.J. Neurophysiological measures of covert semantic processing in neurotypical adolescents actively ignoring spoken sentence inputs: A high-density event-related potential (ERP) study. Neuroscience. 560:238-253 (2024). PMID PMC39369943 DOI: 10.1016/j.neuroscience. 2024.10.008",
+            "",
+            "Project name and executive summary",
+            "",
+            "\tTitle: Neurophysiological measures of covert semantic processing in neurotypical adolescents actively ignoring spoken sentence inputs: A high-density event-related potential (ERP) study.",
+            "\t",
+            "\tAbstract: Language comprehension requires semantic processing of individual words and their context within a sentence. Well-characterized event-related potential (ERP) components (the N400 and late positivity component (LPC/P600)) provide neuromarkers of semantic processing, and are robustly evoked when semantic errors are introduced into sentences. These measures are useful for evaluating semantic processing in clinical populations, but it is not known whether they can be evoked in more severe neurodevelopmental disorders where explicit attention to the sentence inputs cannot be objectively assessed (i.e., when sentences are passively listened to). We evaluated whether N400 and LPC/P600 could be detected in adolescents who were explicitly ignoring sentence inputs. Specifically, it was asked whether explicit attention to spoken inputs was required for semantic processing, or if a degree of automatic processing occurs when the focus of attention is directed elsewhere? High-density ERPs were acquired from twenty-two adolescents (12–17 years), under two experimental conditions: 1. individuals actively determined whether the final word in a sentence was congruent or incongruent with sentence context, or 2. passively listened to background sentences while watching a video. When sentences were ignored, N400 and LPC/P600 were robustly evoked to semantic errors, albeit with reduced amplitudes and protracted/delayed latencies. Statistically distinct topographic distributions during passive versus active paradigms pointed to distinct generator configurations for semantic processing as a function of attention. Covert semantic processing continues in neurotypical adolescents when explicit attention is withdrawn from sentence inputs. As such, this approach could be used to objectively investigate semantic processing in populations with communication deficits.",
+            "\t\t",
+            "\tTask Descriptions:",
+            ""
+          ],
+          "char_count": 34314
+        }
+      },
+      {
+        "label": "stimulus parameters",
+        "kind": "tsv",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004940/N400PvsA_stimuli_parameters.tsv",
+        "bytes_read": 67451,
+        "content_length_header": "67451",
+        "content_range": null,
+        "artifact": {
+          "sha256": "26b15a495f32faf8348ccc44d4a438e6e806c566c32e62c69864d4b93b130ed1",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004940/03_stimulus_parameters.tsv",
+          "artifact_bytes": 67451
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "stim_key",
+            "stim_file",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "known_word",
+            "stim_dur(s)",
+            "target_onset(s)",
+            "target_end(s)",
+            "target_dur(s)",
+            "cloze-probability%_div",
+            "linguistic-group_div",
+            "linguistic-group_reasoning"
+          ],
+          "preview_rows": [
+            [
+              "sound1",
+              "NPC_bake.wav",
+              "The",
+              "cake",
+              "is",
+              "in",
+              "the",
+              "oven",
+              "to",
+              "bake.",
+              "bake",
+              "3.578784",
+              "3.117626",
+              "3.548376",
+              "0.43075",
+              "0.92248062",
+              "1",
+              "Expectation not disrupted/Congruent and incongruent type match"
+            ],
+            [
+              "sound2",
+              "NPC_cat.wav",
+              "Meow",
+              "goes",
+              "the",
+              "cat.",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "cat",
+              "1.856939",
+              "1.408013",
+              "1.820172",
+              "0.412159",
+              "0.968992248",
+              "1",
+              "Expectation not disrupted/Congruent and incongruent type match"
+            ],
+            [
+              "sound3",
+              "NPI_car(chest).wav",
+              "He",
+              "puts",
+              "gas",
+              "in",
+              "his",
+              "chest.",
+              "n/a",
+              "n/a",
+              "gas",
+              "2.615079",
+              "2.162985",
+              "2.56786",
+              "0.404875",
+              "0.727272727",
+              "1",
+              "Expectation not disrupted/Congruent and incongruent type match"
+            ],
+            [
+              "sound4",
+              "NPI_outside(apple).wav",
+              "He",
+              "put",
+              "on",
+              "his",
+              "shoes",
+              "to",
+              "go",
+              "apple.",
+              "boot(shoes)",
+              "3.466553",
+              "2.977523",
+              "3.413498",
+              "0.435975",
+              "0.583333333",
+              "3",
+              "Adjective then noun"
+            ],
+            [
+              "sound5",
+              "NPC_freeze.wav",
+              "In",
+              "the",
+              "winter",
+              "the",
+              "pond",
+              "will",
+              "freeze.",
+              "n/a",
+              "freeze",
+              "2.99288",
+              "2.473696",
+              "2.967768",
+              "0.494072",
+              "0.9609375",
+              "4",
+              "Verb then noun"
+            ]
+          ],
+          "line_count_in_sample": 25
+        }
+      },
+      {
+        "label": "sub001 active events",
+        "kind": "tsv",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004940/sub-001/eeg/sub-001_task-N400Active_events.tsv",
+        "bytes_read": 88603,
+        "content_length_header": "88603",
+        "content_range": null,
+        "artifact": {
+          "sha256": "48fd7858368225599aa8e87cc6f81c85ac69b0b6eb5e08d142b4e5495d94788b",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004940/04_sub001_active_events.tsv",
+          "artifact_bytes": 88603
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "onset",
+            "duration",
+            "stim_onset_s_",
+            "stim_dur_s_",
+            "type",
+            "trial_type",
+            "stim_file"
+          ],
+          "preview_rows": [
+            [
+              "n/a",
+              "n/a",
+              "0.993",
+              "1.16585",
+              "Picture-Sound",
+              "intro",
+              "(Intro_01)Thanksforparticipating.wav"
+            ],
+            [
+              "n/a",
+              "n/a",
+              "2.156",
+              "5.523152",
+              "Picture-Sound",
+              "intro",
+              "(Intro_02)TaskDescription.wav"
+            ],
+            [
+              "n/a",
+              "n/a",
+              "5.506",
+              "18.915102",
+              "Picture-Sound",
+              "intro",
+              "(Intro_03)TaskDescription.wav"
+            ],
+            [
+              "n/a",
+              "n/a",
+              "15.708",
+              "5.200385",
+              "Picture-Sound",
+              "intro",
+              "(Intro_04)TaskDescription.wav"
+            ],
+            [
+              "n/a",
+              "n/a",
+              "18.896",
+              "3.464354",
+              "Picture-Sound",
+              "intro",
+              "(Intro_05)StayStill.wav"
+            ]
+          ],
+          "line_count_in_sample": 58
+        }
+      },
+      {
+        "label": "sub001 active channels",
+        "kind": "tsv",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004940/sub-001/eeg/sub-001_task-N400Active_channels.tsv",
+        "bytes_read": 3342,
+        "content_length_header": "3342",
+        "content_range": null,
+        "artifact": {
+          "sha256": "65dae80d6cdb25012d74cdfeae5da539d87a6b2fe536fa73338a835ab0840e84",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004940/05_sub001_active_channels.tsv",
+          "artifact_bytes": 3342
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "name",
+            "type",
+            "units",
+            "status",
+            "status_description"
+          ],
+          "preview_rows": [
+            [
+              "A1_Cz",
+              "EEG",
+              "microV",
+              "good",
+              "n/a"
+            ],
+            [
+              "A2",
+              "EEG",
+              "microV",
+              "good",
+              "n/a"
+            ],
+            [
+              "A3",
+              "EEG",
+              "microV",
+              "good",
+              "n/a"
+            ],
+            [
+              "A4",
+              "EEG",
+              "microV",
+              "good",
+              "n/a"
+            ],
+            [
+              "A5",
+              "EEG",
+              "microV",
+              "good",
+              "n/a"
+            ]
+          ],
+          "line_count_in_sample": 129
+        }
+      },
+      {
+        "label": "example stimulus wav header",
+        "kind": "wav",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004940/stimuli/NPC_aisle.wav",
+        "bytes_read": 4096,
+        "content_length_header": "4096",
+        "content_range": "bytes 0-4095/230500",
+        "artifact": {
+          "sha256": "70efa026d2a2e4b36c7883ee8a44b789369743b59901f30c1ba684c75a34023f",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004940/06_example_stimulus_wav_header.wav.header.bin",
+          "artifact_bytes": 4096
+        },
+        "parsed": {
+          "valid_wav": true,
+          "audio_format": 1,
+          "channels": 1,
+          "sample_rate": 44100,
+          "byte_rate": 88200,
+          "block_align": 2,
+          "bits_per_sample": 16,
+          "duration_sec_est": 2.613
+        }
+      },
+      {
+        "label": "sub001 active BDF bytes",
+        "kind": "binary",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004940/sub-001/eeg/sub-001_task-N400Active_eeg.bdf",
+        "bytes_read": 512,
+        "content_length_header": "512",
+        "content_range": "bytes 0-511/675522048",
+        "artifact": {
+          "sha256": "a4cca1087951c2e45c8ea0bb4d4465fdef7f8aaf06b25f372d7c42576b9786b6",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004940/07_sub001_active_BDF_bytes.bin",
+          "artifact_bytes": 512
+        },
+        "parsed": {
+          "bytes_read": 512,
+          "content_range": "bytes 0-511/675522048",
+          "magic_hex": "ff42494f53454d494163743031202020",
+          "ascii_prefix": ".BIOSEMIAct01                                                   "
+        }
+      }
+    ]
+  },
+  {
+    "dataset_id": "ds007591",
+    "title": "Delineating neural contributions to EEG-based speech decoding",
+    "source": "OpenNeuro",
+    "url": "https://openneuro.org/datasets/ds007591",
+    "priority": "secondary",
+    "fit": "Speech production/covert speech sanity check; small subject count",
+    "s3_first_page": {
+      "key_count_page": 126,
+      "is_truncated": false,
+      "sample_small_files": [
+        {
+          "key": "ds007591/.bidsignore",
+          "size": 59
+        },
+        {
+          "key": "ds007591/.datalad/config",
+          "size": 63
+        },
+        {
+          "key": "ds007591/.gitattributes",
+          "size": 615
+        },
+        {
+          "key": "ds007591/CHANGES",
+          "size": 180
+        },
+        {
+          "key": "ds007591/README",
+          "size": 1119
+        },
+        {
+          "key": "ds007591/dataset_description.json",
+          "size": 1122
+        },
+        {
+          "key": "ds007591/events.json",
+          "size": 1473
+        },
+        {
+          "key": "ds007591/participants.json",
+          "size": 324
+        },
+        {
+          "key": "ds007591/participants.tsv",
+          "size": 65
+        },
+        {
+          "key": "ds007591/sub-1/ses-20230511/eeg/sub-1_ses-20230511_coordsystem.json",
+          "size": 242
+        }
+      ]
+    },
+    "targets": [
+      {
+        "label": "dataset_description",
+        "kind": "json",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds007591/dataset_description.json",
+        "bytes_read": 1122,
+        "content_length_header": "1122",
+        "content_range": null,
+        "artifact": {
+          "sha256": "0803c399f6144319ceb56426e59a5e056e15aa15a95234c381d839b25695df59",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds007591/01_dataset_description.json",
+          "artifact_bytes": 1122
+        },
+        "parsed": {
+          "Name": "Delineating neural contributions to EEG-based speech decoding",
+          "BIDSVersion": "1.9.0",
+          "DatasetType": "raw",
+          "License": "CC0",
+          "Authors": [
+            "Motoshige Sato",
+            "Yasuo Kabe",
+            "Sensho Nobe",
+            "Akito Yoshida",
+            "Masakazu Inoue",
+            "Mayumi Shimizu",
+            "Kenichi Tomeoka",
+            "Shuntaro Sasai"
+          ],
+          "Acknowledgements": "We thank Ryota Kanai, for helpful discussions, and Rousslan Fernand Julien Dossa for data collection. Special thanks to Anna Maria Hadjiev for her meticulous proofreading, significantly enhancing our manuscript's quality.",
+          "Funding": [
+            "JST, Moonshot R&D Grant Number JPMJMS2012"
+          ],
+          "ReferencesAndLinks": [
+            "https://doi.org/10.1101/2024.05.09.591996"
+          ],
+          "HowToAcknowledge": "Please cite the following paper (doi: https://doi.org/10.1101/2024.05.09.591996) and this dataset using its OpenNeuro DOI.",
+          "EthicsApprovals": [
+            "Shiba Palace Clinic Ethics Review Committee",
+            "Declaration of Helsinki"
+          ],
+          "DatasetDOI": "doi:10.18112/openneuro.ds007591.v1.0.1"
+        }
+      },
+      {
+        "label": "participants",
+        "kind": "tsv",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds007591/participants.tsv",
+        "bytes_read": 65,
+        "content_length_header": "65",
+        "content_range": null,
+        "artifact": {
+          "sha256": "73edac187b85361eef80958fdabf8c1b4959c45df94a859c3a0675ba67b5e972",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds007591/02_participants.tsv",
+          "artifact_bytes": 65
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "participant_id",
+            "age",
+            "sex"
+          ],
+          "preview_rows": [
+            [
+              "sub-1",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-2",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-3",
+              "n/a",
+              "n/a"
+            ]
+          ],
+          "line_count_in_sample": 4
+        }
+      },
+      {
+        "label": "events",
+        "kind": "tsv",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds007591/sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_events.tsv",
+        "bytes_read": 5456,
+        "content_length_header": "5456",
+        "content_range": null,
+        "artifact": {
+          "sha256": "3f2adc3d9ea3dd3c4077cd5702ceaf49c570ac9bc82559d98c2cb5c6488e8f0a",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds007591/03_events.tsv",
+          "artifact_bytes": 5456
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "onset",
+            "duration",
+            "trial_type",
+            "value",
+            "session_type",
+            "task_condition"
+          ],
+          "preview_rows": [
+            [
+              "58.96484375",
+              "6.25",
+              "yellow",
+              "4",
+              "calibration",
+              "minimally overt"
+            ],
+            [
+              "68.859375",
+              "6.25",
+              "green",
+              "0",
+              "calibration",
+              "minimally overt"
+            ],
+            [
+              "81.0625",
+              "6.25",
+              "orange",
+              "2",
+              "calibration",
+              "minimally overt"
+            ],
+            [
+              "91.2734375",
+              "6.25",
+              "magenta",
+              "1",
+              "calibration",
+              "minimally overt"
+            ],
+            [
+              "102.921875",
+              "6.25",
+              "orange",
+              "2",
+              "calibration",
+              "minimally overt"
+            ]
+          ],
+          "line_count_in_sample": 77
+        }
+      },
+      {
+        "label": "channels",
+        "kind": "tsv",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds007591/sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_channels.tsv",
+        "bytes_read": 3135,
+        "content_length_header": "3135",
+        "content_range": null,
+        "artifact": {
+          "sha256": "30c03057912c8a8e35cd85910b0a83b63793aae9904a07cdefff7f46c303e659",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds007591/04_channels.tsv",
+          "artifact_bytes": 3135
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "name",
+            "type",
+            "units",
+            "sampling_frequency",
+            "status"
+          ],
+          "preview_rows": [
+            [
+              "EEG001",
+              "EEG",
+              "V",
+              "256",
+              "good"
+            ],
+            [
+              "EEG002",
+              "EEG",
+              "V",
+              "256",
+              "good"
+            ],
+            [
+              "EEG003",
+              "EEG",
+              "V",
+              "256",
+              "good"
+            ],
+            [
+              "EEG004",
+              "EEG",
+              "V",
+              "256",
+              "bad"
+            ],
+            [
+              "EEG005",
+              "EEG",
+              "V",
+              "256",
+              "good"
+            ]
+          ],
+          "line_count_in_sample": 140
+        }
+      },
+      {
+        "label": "EEG sidecar",
+        "kind": "json",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds007591/sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_eeg.json",
+        "bytes_read": 823,
+        "content_length_header": "823",
+        "content_range": null,
+        "artifact": {
+          "sha256": "b6c332ca39f3b8cb788873806da8fe6e668f07cf15cef3040d6dfea294ea9507",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds007591/05_EEG_sidecar.json",
+          "artifact_bytes": 823
+        },
+        "parsed": {
+          "TaskName": "minimallyovert",
+          "TaskDescription": "Speech decoding task (minimally overt). Participants produced one of 5 color words (green, magenta, orange, violet, yellow) in minimally overt speech condition. Each trial consists of 5 repetitions of the same word (1.25 sec per repetition, 6.25 sec total). Session type: calibration.",
+          "InstitutionName": "Araya Inc.",
+          "Manufacturer": "g.tec medical engineering GmbH",
+          "ManufacturersModelName": "Pangolin",
+          "SamplingFrequency": 256,
+          "EEGChannelCount": 128,
+          "EOGChannelCount": 2,
+          "EMGChannelCount": 4,
+          "MiscChannelCount": 4,
+          "TriggerChannelCount": 1,
+          "EEGReference": "n/a (raw, pre-reference)",
+          "EEGGround": "left mastoid",
+          "PowerLineFrequency": 50,
+          "SoftwareFilters": "n/a",
+          "RecordingType": "continuous"
+        }
+      },
+      {
+        "label": "raw EDF bytes",
+        "kind": "binary",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds007591/sub-1/ses-20230511/eeg/sub-1_ses-20230511_task-minimallyovert_acq-calibration_run-01_eeg.edf",
+        "bytes_read": 512,
+        "content_length_header": "512",
+        "content_range": "bytes 0-511/82497276",
+        "artifact": {
+          "sha256": "fc74272648ead5235a297d92701ab6251f77aa7728a562a7a2b659408aa0f5c2",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds007591/06_raw_EDF_bytes.bin",
+          "artifact_bytes": 512
+        },
+        "parsed": {
+          "bytes_read": 512,
+          "content_range": "bytes 0-511/82497276",
+          "magic_hex": "30202020202020205820582058205820",
+          "ascii_prefix": "0       X X X X                                                 "
+        }
+      }
+    ]
+  },
+  {
+    "dataset_id": "ds005170",
+    "title": "Chisco Chinese imagined speech",
+    "source": "OpenNeuro",
+    "url": "https://openneuro.org/datasets/ds005170",
+    "priority": "p2-imagined",
+    "fit": "Chinese imagined speech probe; raw EDF plus FIF/PKL derivatives and text stimuli",
+    "s3_first_page": {
+      "key_count_page": 1000,
+      "is_truncated": true,
+      "sample_small_files": [
+        {
+          "key": "ds005170/.bidsignore",
+          "size": 89
+        },
+        {
+          "key": "ds005170/.datalad/config",
+          "size": 63
+        },
+        {
+          "key": "ds005170/.gitattributes",
+          "size": 427
+        },
+        {
+          "key": "ds005170/CHANGES",
+          "size": 281
+        },
+        {
+          "key": "ds005170/README",
+          "size": 2778
+        },
+        {
+          "key": "ds005170/dataset_description.json",
+          "size": 1440
+        }
+      ]
+    },
+    "targets": [
+      {
+        "label": "dataset_description",
+        "kind": "json",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds005170/dataset_description.json",
+        "bytes_read": 1440,
+        "content_length_header": "1440",
+        "content_range": null,
+        "artifact": {
+          "sha256": "bfb6e3f443ee22025945537e4dd4bd62f60e081949a9962a0e247d92e6805704",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds005170/01_dataset_description.json",
+          "artifact_bytes": 1440
+        },
+        "parsed": {
+          "Name": "Chisco",
+          "BIDSVersion": "1.6.0",
+          "License": "CC0",
+          "Authors": [
+            "Zihan Zhang",
+            "Yi Zhao",
+            "Yu Bao",
+            "Xiao Ding"
+          ],
+          "Acknowledgements": "We would like to express our heartfelt gratitude to everyone who supported and assisted in the research and construction of this dataset. First and foremost, we thank the Social Computing and Information Retrieval Laboratory at Harbin Institute of Technology for their support and resources, which made this research possible. We are especially grateful to our advisor, Professor Xiao Ding, for his guidance, advice, and encouragement throughout the entire research process. We also extend our thanks to all the volunteers who participated in the data collection process, providing valuable data and time. Without their active participation, the completion of our dataset would not have been possible.Finally, we thank all the members of our team, who made significant contributions to data collection, experimental design, and data processing. Without their efforts, the construction of this dataset would not have been achievable.",
+          "HowToAcknowledge": "Please refer to https://github.com/zhangzihan-is-good/Chisco",
+          "Funding": [
+            "National Natural Science Foundation of China under Grants 62176079"
+          ],
+          "EthicsApprovals": [
+            "HIT2024035"
+          ],
+          "DatasetDOI": "doi:10.18112/openneuro.ds005170.v1.1.2"
+        }
+      },
+      {
+        "label": "README",
+        "kind": "text",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds005170/README",
+        "bytes_read": 2778,
+        "content_length_header": "2778",
+        "content_range": null,
+        "artifact": {
+          "sha256": "7aebbcf4b37fe0d06a659fcfd1ad96d62ac90194a41716267d4334d1e23708ff",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds005170/02_README.txt",
+          "artifact_bytes": 2778
+        },
+        "parsed": {
+          "lines": [
+            "# Chisco Dataset",
+            "",
+            "This dataset is a Chinese imagined speech dataset with five participants, identified as sub-01 to sub-05. The dataset includes raw data and preprocessed data in both fif and pkl formats. Information also can be found in https://github.com/zhangzihan-is-good/Chisco",
+            "",
+            "## Supplementary Information",
+            "",
+            "The initial dataset release encompassed data from three participants (sub-01 to sub-03) as detailed in related Chisco publications. Subsequently, data from two additional subjects (sub-04 and sub-05) were incorporated. During the interval between the original dataset release and the addition of the new data, the BIDS protocol underwent updates. To preserve the integrity of the data processing code presented in our publications, the supplementary data continue to adhere to the previous version of the BIDS protocol. Consequently, the BIDS validator on our website may report errors; however, these do not compromise the usability of the dataset.",
+            "",
+            "Future releases will include data from sub-06 and sub-07, who participated under a new experimental paradigm. These will be published as part of a new dataset, Chisco 2.0. We invite you to stay tuned for further updates.",
+            "",
+            "## Dataset Structure",
+            ""
+          ],
+          "char_count": 2778
+        }
+      },
+      {
+        "label": "text split xlsx",
+        "kind": "xlsx",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds005170/textdataset/split_data_1.xlsx",
+        "bytes_read": 11390,
+        "content_length_header": "11390",
+        "content_range": null,
+        "artifact": {
+          "sha256": "f5f45444f4198582702103ca3619f4b42a1db6b8c064f0824f94b47d2e217129",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds005170/03_text_split_xlsx.xlsx",
+          "artifact_bytes": 11390
+        },
+        "parsed": {
+          "error": "openpyxl unavailable"
+        }
+      },
+      {
+        "label": "sub01 ses01 raw EDF bytes",
+        "kind": "binary",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds005170/sub-01/ses-01/eeg/sub-01_ses-01_task-imagine_run-01_eeg.edf",
+        "bytes_read": 512,
+        "content_length_header": "512",
+        "content_range": "bytes 0-511/595530560",
+        "artifact": {
+          "sha256": "311e1a12d99f8635db66436f4f9b6f38e681fc283e8b6a03eab98d9e84299c15",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds005170/04_sub01_ses01_raw_EDF_bytes.bin",
+          "artifact_bytes": 512
+        },
+        "parsed": {
+          "bytes_read": 512,
+          "content_range": "bytes 0-511/595530560",
+          "magic_hex": "30202020202020205820582058205820",
+          "ascii_prefix": "0       X X X X                                                 "
+        }
+      },
+      {
+        "label": "sub01 preprocessed FIF bytes",
+        "kind": "binary",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds005170/derivatives/preprocessed_fif/sub-01/eeg/sub-01_task-imagine_run-01_eeg.fif",
+        "bytes_read": 512,
+        "content_length_header": "512",
+        "content_range": "bytes 0-511/152755040",
+        "artifact": {
+          "sha256": "5e008da0eb46387a4ff9f8d717853c384488e6fbe8f8535b2eb4062afe4ae1ca",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds005170/05_sub01_preprocessed_FIF_bytes.bin",
+          "artifact_bytes": 512
+        },
+        "parsed": {
+          "bytes_read": 512,
+          "content_range": "bytes 0-511/152755040",
+          "magic_hex": "000000640000001f0000001400000000",
+          "ascii_prefix": "...d................03030303...........e...................j...."
+        }
+      }
+    ]
+  },
+  {
+    "dataset_id": "ds003626",
+    "title": "Inner Speech",
+    "source": "OpenNeuro",
+    "url": "https://openneuro.org/datasets/ds003626",
+    "priority": "p2-inner-speech",
+    "fit": "Spanish inner/pronounced/visualized speech commands; 10 subjects and 5640 trials",
+    "s3_first_page": {
+      "key_count_page": 187,
+      "is_truncated": false,
+      "sample_small_files": [
+        {
+          "key": "ds003626/.datalad/.gitattributes",
+          "size": 125
+        },
+        {
+          "key": "ds003626/.datalad/config",
+          "size": 63
+        },
+        {
+          "key": "ds003626/.gitattributes",
+          "size": 284
+        },
+        {
+          "key": "ds003626/CHANGES",
+          "size": 377
+        },
+        {
+          "key": "ds003626/README",
+          "size": 1675
+        },
+        {
+          "key": "ds003626/annex-uuid",
+          "size": 36
+        },
+        {
+          "key": "ds003626/dataset_description.json",
+          "size": 647
+        },
+        {
+          "key": "ds003626/derivatives/sub-01/ses-01/sub-01_ses-01_events.dat",
+          "size": 6813
+        },
+        {
+          "key": "ds003626/derivatives/sub-01/ses-01/sub-01_ses-01_report.pkl",
+          "size": 615
+        },
+        {
+          "key": "ds003626/derivatives/sub-01/ses-02/sub-01_ses-02_events.dat",
+          "size": 6804
+        }
+      ]
+    },
+    "targets": [
+      {
+        "label": "dataset_description",
+        "kind": "json",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds003626/dataset_description.json",
+        "bytes_read": 647,
+        "content_length_header": "647",
+        "content_range": null,
+        "artifact": {
+          "sha256": "672c963d2116ad00ebdd3c13afc25aa474277937f0649c3ddd7a4521247c434d",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds003626/01_dataset_description.json",
+          "artifact_bytes": 647
+        },
+        "parsed": {
+          "Name": "Inner Speech",
+          "BIDSVersion": "1.4",
+          "License": "CC0",
+          "Authors": [
+            "Nicolas Nieto",
+            "Victoria Peterson",
+            "Hugo Rufiner",
+            "Juan Kamienkowski",
+            "Ruben Spies"
+          ],
+          "HowToAcknowledge": "",
+          "ReferencesAndLinks": [
+            "https://www.nature.com/articles/s41597-022-01147-2",
+            "https://github.com/N-Nieto/Inner_Speech_Dataset"
+          ],
+          "DatasetDOI": "doi:10.18112/openneuro.ds003626.v2.1.2",
+          "DatasetType": "raw",
+          "EthicsApprovals": [
+            "Comité Asesor de Ética y Seguridad en el Trabajo Experimental (CEySTE), CCT-CONICET, Santa Fe,"
+          ]
+        }
+      },
+      {
+        "label": "README",
+        "kind": "text",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds003626/README",
+        "bytes_read": 1675,
+        "content_length_header": "1675",
+        "content_range": null,
+        "artifact": {
+          "sha256": "5aa891661103b8b55aee125e3ec4373e54f03d40d4746f7782d7419e108530d0",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds003626/02_README.txt",
+          "artifact_bytes": 1675
+        },
+        "parsed": {
+          "lines": [
+            "Inner Speech Dataset.",
+            "",
+            "Author: Nicolás Nieto ",
+            "",
+            "Code available at: https://github.com/N-Nieto/Inner_Speech_Dataset",
+            "",
+            "Publication available at: https://www.nature.com/articles/s41597-022-01147-2",
+            "",
+            "Abstract:",
+            "Surface electroencephalography is a standard and noninvasive way to measure electrical brain activity. Recent advances in artificial intelligence led to significant improvements in the automatic detection of brain patterns, allowing increasingly faster, more reliable and accessible Brain-Computer Interfaces.",
+            "Different paradigms have been used to enable the human-machine interaction and the last few years have broad a mark increase in the interest for interpreting and characterizing the \"inner voice\" phenomenon. This paradigm, called inner speech, raises the possibility of executing an order just by thinking about it, allowing a “natural” way of controlling external devices. Unfortunately, the lack of publicly available electroencephalography datasets, restricts the development of new techniques for inner speech recognition. A ten-subjects dataset acquired under this and two others related paradigms, obtain with an acquisition systems of 136 channels, is presented. The main purpose of this work is to provide the scientific community with an open-access multiclass electroencephalography database of inner speech commands that could be used for better understanding of the related brain mechanisms.  ",
+            ""
+          ],
+          "char_count": 1670
+        }
+      },
+      {
+        "label": "sub01 ses01 events dat",
+        "kind": "binary",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds003626/derivatives/sub-01/ses-01/sub-01_ses-01_events.dat",
+        "bytes_read": 2048,
+        "content_length_header": "2048",
+        "content_range": "bytes 0-2047/6813",
+        "artifact": {
+          "sha256": "02470bbffc4f608a986240fc562299e92127281239ab68da4f08d51f3fcb41c0",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds003626/03_sub01_ses01_events_dat.bin",
+          "artifact_bytes": 2048
+        },
+        "parsed": {
+          "bytes_read": 2048,
+          "content_range": "bytes 0-2047/6813",
+          "magic_hex": "8002636e756d70792e636f72652e6d75",
+          "ascii_prefix": "..cnumpy.core.multiarray._reconstruct.q.cnumpy.ndarray.q.K..q.c_"
+        }
+      },
+      {
+        "label": "sub01 ses01 EEG epochs bytes",
+        "kind": "binary",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds003626/derivatives/sub-01/ses-01/sub-01_ses-01_eeg-epo.fif",
+        "bytes_read": 512,
+        "content_length_header": "512",
+        "content_range": "bytes 0-511/236165355",
+        "artifact": {
+          "sha256": "791315e6fd3043542def8b7b76f9a961c543a855cd682a43f45c338c090e711e",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds003626/04_sub01_ses01_EEG_epochs_bytes.bin",
+          "artifact_bytes": 512
+        },
+        "parsed": {
+          "bytes_read": 512,
+          "content_range": "bytes 0-511/236165355",
+          "magic_hex": "000000640000001f0000001400000000",
+          "ascii_prefix": "...d................03030303...........e...................j...."
+        }
+      }
+    ]
+  },
+  {
+    "dataset_id": "ds004306",
+    "title": "EEG Semantic Imagination and Perception Dataset",
+    "source": "OpenNeuro",
+    "url": "https://openneuro.org/datasets/ds004306",
+    "priority": "p2-semantic-proxy",
+    "fit": "Auditory/visual/orthographic perception and semantic imagination proxy",
+    "s3_first_page": {
+      "key_count_page": 564,
+      "is_truncated": false,
+      "sample_small_files": [
+        {
+          "key": "ds004306/.datalad/config",
+          "size": 63
+        },
+        {
+          "key": "ds004306/.gitattributes",
+          "size": 385
+        },
+        {
+          "key": "ds004306/CHANGES",
+          "size": 168
+        },
+        {
+          "key": "ds004306/README",
+          "size": 801
+        },
+        {
+          "key": "ds004306/dataset_description.json",
+          "size": 543
+        }
+      ]
+    },
+    "targets": [
+      {
+        "label": "dataset_description",
+        "kind": "json",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004306/dataset_description.json",
+        "bytes_read": 543,
+        "content_length_header": "543",
+        "content_range": null,
+        "artifact": {
+          "sha256": "e7462ddc03ad13c94cadb09f886d3f6c3010cf9d3588f35597db597f9dcfc97d",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004306/01_dataset_description.json",
+          "artifact_bytes": 543
+        },
+        "parsed": {
+          "Name": "EEG Semantic Imagination and Perception Dataset",
+          "BIDSVersion": "1.7.0",
+          "DatasetType": "raw",
+          "License": "CC0",
+          "Authors": [
+            "Holly Wilson",
+            "Mohammad Golbabaee",
+            "Michael Proulx",
+            "Eamonn O'Neill"
+          ],
+          "Acknowledgements": "",
+          "HowToAcknowledge": "",
+          "Funding": [
+            "EPSRC"
+          ],
+          "EthicsApprovals": [
+            "PREC"
+          ],
+          "ReferencesAndLinks": [
+            "",
+            "",
+            ""
+          ],
+          "DatasetDOI": "doi:10.18112/openneuro.ds004306.v1.0.2"
+        }
+      },
+      {
+        "label": "participants",
+        "kind": "tsv",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004306/participants.tsv",
+        "bytes_read": 324,
+        "content_length_header": "324",
+        "content_range": null,
+        "artifact": {
+          "sha256": "4b1152ae63d2893315f3a3f0e6a8dc63d77bd492fd72487c455cae8a23782880",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004306/02_participants.tsv",
+          "artifact_bytes": 324
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "participant_id",
+            "vviq",
+            "bais",
+            "cap",
+            " vision_impaired",
+            "hearing_impaired"
+          ],
+          "preview_rows": [
+            [
+              "sub-03",
+              "4.25",
+              "4.8",
+              "L",
+              "n",
+              "n"
+            ],
+            [
+              "sub-08",
+              "3.1",
+              "4.2",
+              "M",
+              "n",
+              "n"
+            ],
+            [
+              "sub-10",
+              "4.9",
+              "6.33",
+              "M",
+              "n",
+              "n"
+            ],
+            [
+              "sub-11",
+              "3.3",
+              "4",
+              "M",
+              "n",
+              "n"
+            ],
+            [
+              "sub-12",
+              "3.2",
+              "3.8",
+              "L",
+              "n",
+              "n"
+            ]
+          ],
+          "line_count_in_sample": 13
+        }
+      },
+      {
+        "label": "README",
+        "kind": "text",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004306/README",
+        "bytes_read": 801,
+        "content_length_header": "801",
+        "content_range": null,
+        "artifact": {
+          "sha256": "4196ce03b9e29fc75f31d30a5939b6bb8cc1f525872688a83eb452ded83f2eea",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004306/03_README.txt",
+          "artifact_bytes": 801
+        },
+        "parsed": {
+          "lines": [
+            "",
+            "This dataset consists of electroencephalography (EEG) signals acquired with a 124 EEG ANT-Neuro device. ",
+            "",
+            "### Participants and Sessions",
+            "There are 13 participants included, ten performed one session and three performed two sessions. All participants had normal or corrected vision and hearing, apart from sub-16.",
+            "",
+            "### Task",
+            "The task consisted of imagining and perceiving stimuli from three modalities; visual pictorial, visual orthographic (writing) or auditory. Each of the stimuli belonged to one of three categories: guitar, flower and penguin. These categories were selected based on being semantically dissimilar to one another, and because there were all of 2 syllables. ",
+            "",
+            "### Dataset Versions",
+            "The dataset provided consists of the raw EEG data, a pre-processed version, and an epoched version. ",
+            ""
+          ],
+          "char_count": 801
+        }
+      },
+      {
+        "label": "flower audio bytes",
+        "kind": "binary",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004306/stimuli/audio/flower/1.ogg",
+        "bytes_read": 512,
+        "content_length_header": "512",
+        "content_range": "bytes 0-511/35314",
+        "artifact": {
+          "sha256": "98a6eae24b9b4a2c0757ec96dcc9b2a334e55fcdd2fc057b93464b5877991857",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004306/04_flower_audio_bytes.bin",
+          "artifact_bytes": 512
+        },
+        "parsed": {
+          "bytes_read": 512,
+          "content_range": "bytes 0-511/35314",
+          "magic_hex": "4f6767530002000000000000000031ca",
+          "ascii_prefix": "OggS..........1..<....O_.@...vorbis..............q........OggS.."
+        }
+      },
+      {
+        "label": "sub10 preprocessed FIF bytes",
+        "kind": "binary",
+        "url": "https://s3.amazonaws.com/openneuro.org/ds004306/derivatives/preprocessed/sub-010/ses-01/eeg/sub10_sess1_50_ica_eeg-1.fif",
+        "bytes_read": 512,
+        "content_length_header": "512",
+        "content_range": "bytes 0-511/313763012",
+        "artifact": {
+          "sha256": "d351e16a905721f7e6794b312cf2323ad2e1a46c76b7cca0d6373815a35da4f3",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ds004306/05_sub10_preprocessed_FIF_bytes.bin",
+          "artifact_bytes": 512
+        },
+        "parsed": {
+          "bytes_read": 512,
+          "content_range": "bytes 0-511/313763012",
+          "magic_hex": "000000640000001f0000001400000000",
+          "ascii_prefix": "...d................03030303...........e...................j...."
+        }
+      }
+    ]
+  },
+  {
+    "dataset_id": "kara_one",
+    "title": "Kara One imagined and articulated speech",
+    "source": "Web",
+    "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html",
+    "priority": "p2-imagined-overt",
+    "fit": "Imagined and vocalized phonemic/single-word prompts with EEG, face tracking, and audio",
+    "targets": [
+      {
+        "label": "dataset page",
+        "kind": "text",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html",
+        "bytes_read": 13409,
+        "content_length_header": "13409",
+        "content_range": null,
+        "artifact": {
+          "sha256": "a8df3fc1590aca314310ea8f189e53205c8a9714810da462ff0f3784f3feaac9",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/kara_one/01_dataset_page.txt",
+          "artifact_bytes": 13409
+        },
+        "parsed": {
+          "lines": [
+            "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\"",
+            "    \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">",
+            "<html xmlns=\"http://www.w3.org/1999/xhtml\">",
+            "<head>",
+            "<title>The KARA ONE database</title>",
+            "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=iso-8859-1\" />",
+            "<meta name=\"description\" content=\"Website description\" />",
+            "<meta name=\"keywords\" content=\"keyword1,keyword2,keyword2,keyword4\" />",
+            "<link href=\"style.css\" rel=\"stylesheet\" type=\"text/css\" />",
+            "</head>",
+            "<script type=\"text/javascript\">",
+            "<!--"
+          ],
+          "char_count": 13409
+        }
+      }
+    ]
+  },
+  {
+    "dataset_id": "feis_3554128",
+    "title": "Fourteen-channel EEG with Imagined Speech (FEIS) dataset",
+    "source": "Zenodo",
+    "url": "https://zenodo.org/records/3554128",
+    "priority": "p2-low-density",
+    "fit": "Heard/imagined/spoken English phonemes plus Chinese syllables with recorded audio",
+    "doi": "10.5281/zenodo.3554128",
+    "file_count": 1,
+    "files_preview": [
+      {
+        "key": "scottwellington/FEIS-v1.1.zip",
+        "size": 1647825020,
+        "url": "https://zenodo.org/api/records/3554128/files/scottwellington/FEIS-v1.1.zip/content"
+      }
+    ],
+    "targets": [
+      {
+        "label": "GitHub README",
+        "kind": "text",
+        "url": "https://raw.githubusercontent.com/scottwellington/FEIS/v1.1/README.txt",
+        "bytes_read": 6299,
+        "content_length_header": "6299",
+        "content_range": null,
+        "artifact": {
+          "sha256": "ca7846b2f8450491282e9d9ae0fb4115e501527841aa3a388995539342dd0c9d",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/feis_3554128/01_GitHub_README.txt",
+          "artifact_bytes": 6299
+        },
+        "parsed": {
+          "lines": [
+            "﻿",
+            "><> ><> ><> ><> ><> ><> ><> ><> ><> ><> ><> ><> ><> ><> ><> ><> ><> ><>",
+            "",
+            "Welcome to the FEIS (Fourteen-channel EEG with Imagined Speech) dataset.",
+            "",
+            "<>< <>< <>< <>< <>< <>< <>< <>< <>< <>< <>< <>< <>< <>< <>< <>< <>< <><",
+            "",
+            "The FEIS dataset comprises Emotiv EPOC+ [1] EEG recordings of:",
+            "",
+            "* 21 participants listening to, imagining speaking, and then actually speaking",
+            "  16 English phonemes (see supplementary, below)",
+            ""
+          ],
+          "char_count": 6271
+        }
+      },
+      {
+        "label": "FEIS subject 01 wav listing",
+        "kind": "json",
+        "url": "https://api.github.com/repos/scottwellington/FEIS/contents/wavs/01/wavs?ref=v1.1",
+        "error": "HTTPError: HTTP Error 403: rate limit exceeded"
+      },
+      {
+        "label": "FEIS subject 01 thinking/stimuli zip listing",
+        "kind": "json",
+        "url": "https://api.github.com/repos/scottwellington/FEIS/contents/experiments/01?ref=v1.1",
+        "error": "HTTPError: HTTP Error 403: rate limit exceeded"
+      },
+      {
+        "label": "FEIS subject 01 prompt wav header",
+        "kind": "wav",
+        "url": "https://raw.githubusercontent.com/scottwellington/FEIS/v1.1/wavs/01/wavs/f.wav",
+        "bytes_read": 4096,
+        "content_length_header": "4096",
+        "content_range": "bytes 0-4095/88244",
+        "artifact": {
+          "sha256": "cb95e4ec0f7544245cc948e7830c7fcc696e9a139029674efe868f1ab7cab951",
+          "is_partial": true,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/feis_3554128/04_FEIS_subject_01_prompt_wav_header.wav.header.bin",
+          "artifact_bytes": 4096
+        },
+        "parsed": {
+          "valid_wav": true,
+          "audio_format": 1,
+          "channels": 1,
+          "sample_rate": 44100,
+          "byte_rate": 88200,
+          "block_align": 2,
+          "bits_per_sample": 16,
+          "duration_sec_est": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "dataset_id": "ugr_mindvoice",
+    "title": "UGR-MINDVOICE",
+    "source": "Web",
+    "url": "https://osf.io/6sh5d",
+    "priority": "p2-overt-covert",
+    "fit": "Iberian Spanish overt/covert EEG-audio dataset; use OSF listing and GitHub code first",
+    "targets": [
+      {
+        "label": "OSF root listing",
+        "kind": "json",
+        "url": "https://api.osf.io/v2/nodes/6sh5d/files/osfstorage/",
+        "bytes_read": 5269,
+        "content_length_header": "5269",
+        "content_range": null,
+        "artifact": {
+          "sha256": "8f15b2dc4594c44e85235f9166dabd5bbb187cc655f7c6395fe59a4879569084",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ugr_mindvoice/01_OSF_root_listing.json",
+          "artifact_bytes": 5269
+        },
+        "parsed": {
+          "data": [
+            {
+              "id": "6812063699c3b93e007c5bc5",
+              "type": "files",
+              "attributes": {
+                "guid": null,
+                "checkout": null,
+                "name": "Analyses and Results",
+                "kind": "folder",
+                "path": "/6812063699c3b93e007c5bc5/",
+                "size": null,
+                "provider": "osfstorage",
+                "materialized_path": "/Analyses and Results/",
+                "last_touched": null,
+                "date_modified": null,
+                "date_created": null,
+                "extra": {
+                  "hashes": {
+                    "md5": null,
+                    "sha256": null
+                  }
+                },
+                "tags": [],
+                "current_user_can_comment": false,
+                "current_version": 1,
+                "show_as_unviewed": false
+              },
+              "relationships": {
+                "parent_folder": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/files/681205be530b97629decdcf5/",
+                      "meta": {}
+                    }
+                  },
+                  "data": {
+                    "id": "681205be530b97629decdcf5",
+                    "type": "files"
+                  }
+                },
+                "files": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/nodes/6sh5d/files/osfstorage/6812063699c3b93e007c5bc5/",
+                      "meta": {}
+                    }
+                  }
+                },
+                "node": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/nodes/6sh5d/",
+                      "meta": {}
+                    }
+                  },
+                  "data": {
+                    "id": "6sh5d",
+                    "type": "nodes"
+                  }
+                },
+                "target": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/nodes/6sh5d/",
+                      "meta": {
+                        "type": "nodes"
+                      }
+                    }
+                  },
+                  "data": {
+                    "type": "nodes",
+                    "id": "6sh5d"
+                  }
+                },
+                "cedar_metadata_records": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/files/6812063699c3b93e007c5bc5/cedar_metadata_records/",
+                      "meta": {}
+                    }
+                  }
+                }
+              },
+              "links": {
+                "info": "https://api.osf.io/v2/files/6812063699c3b93e007c5bc5/",
+                "move": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/6812063699c3b93e007c5bc5/",
+                "upload": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/6812063699c3b93e007c5bc5/",
+                "delete": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/6812063699c3b93e007c5bc5/",
+                "new_folder": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/6812063699c3b93e007c5bc5/?kind=folder",
+                "self": "https://api.osf.io/v2/files/6812063699c3b93e007c5bc5/"
+              }
+            },
+            {
+              "id": "693aa91bc0d99a7dc3439470",
+              "type": "files",
+              "attributes": {
+                "guid": null,
+                "checkout": null,
+                "name": "Data",
+                "kind": "folder",
+                "path": "/693aa91bc0d99a7dc3439470/",
+                "size": null,
+                "provider": "osfstorage",
+                "materialized_path": "/Data/",
+                "last_touched": null,
+                "date_modified": null,
+                "date_created": null,
+                "extra": {
+                  "hashes": {
+                    "md5": null,
+                    "sha256": null
+                  }
+                },
+                "tags": [],
+                "current_user_can_comment": false,
+                "current_version": 1,
+                "show_as_unviewed": false
+              },
+              "relationships": {
+                "parent_folder": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/files/681205be530b97629decdcf5/",
+                      "meta": {}
+                    }
+                  },
+                  "data": {
+                    "id": "681205be530b97629decdcf5",
+                    "type": "files"
+                  }
+                },
+                "files": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/nodes/6sh5d/files/osfstorage/693aa91bc0d99a7dc3439470/",
+                      "meta": {}
+                    }
+                  }
+                },
+                "node": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/nodes/6sh5d/",
+                      "meta": {}
+                    }
+                  },
+                  "data": {
+                    "id": "6sh5d",
+                    "type": "nodes"
+                  }
+                },
+                "target": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/nodes/6sh5d/",
+                      "meta": {
+                        "type": "nodes"
+                      }
+                    }
+                  },
+                  "data": {
+                    "type": "nodes",
+                    "id": "6sh5d"
+                  }
+                },
+                "cedar_metadata_records": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/files/693aa91bc0d99a7dc3439470/cedar_metadata_records/",
+                      "meta": {}
+                    }
+                  }
+                }
+              },
+              "links": {
+                "info": "https://api.osf.io/v2/files/693aa91bc0d99a7dc3439470/",
+                "move": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/693aa91bc0d99a7dc3439470/",
+                "upload": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/693aa91bc0d99a7dc3439470/",
+                "delete": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/693aa91bc0d99a7dc3439470/",
+                "new_folder": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/693aa91bc0d99a7dc3439470/?kind=folder",
+                "self": "https://api.osf.io/v2/files/693aa91bc0d99a7dc3439470/"
+              }
+            },
+            {
+              "id": "6812061ae62a792ac05ef967",
+              "type": "files",
+              "attributes": {
+                "guid": null,
+                "checkout": null,
+                "name": "Materials",
+                "kind": "folder",
+                "path": "/6812061ae62a792ac05ef967/",
+                "size": null,
+                "provider": "osfstorage",
+                "materialized_path": "/Materials/",
+                "last_touched": null,
+                "date_modified": null,
+                "date_created": null,
+                "extra": {
+                  "hashes": {
+                    "md5": null,
+                    "sha256": null
+                  }
+                },
+                "tags": [],
+                "current_user_can_comment": false,
+                "current_version": 1,
+                "show_as_unviewed": false
+              },
+              "relationships": {
+                "parent_folder": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/files/681205be530b97629decdcf5/",
+                      "meta": {}
+                    }
+                  },
+                  "data": {
+                    "id": "681205be530b97629decdcf5",
+                    "type": "files"
+                  }
+                },
+                "files": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/nodes/6sh5d/files/osfstorage/6812061ae62a792ac05ef967/",
+                      "meta": {}
+                    }
+                  }
+                },
+                "node": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/nodes/6sh5d/",
+                      "meta": {}
+                    }
+                  },
+                  "data": {
+                    "id": "6sh5d",
+                    "type": "nodes"
+                  }
+                },
+                "target": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/nodes/6sh5d/",
+                      "meta": {
+                        "type": "nodes"
+                      }
+                    }
+                  },
+                  "data": {
+                    "type": "nodes",
+                    "id": "6sh5d"
+                  }
+                },
+                "cedar_metadata_records": {
+                  "links": {
+                    "related": {
+                      "href": "https://api.osf.io/v2/files/6812061ae62a792ac05ef967/cedar_metadata_records/",
+                      "meta": {}
+                    }
+                  }
+                }
+              },
+              "links": {
+                "info": "https://api.osf.io/v2/files/6812061ae62a792ac05ef967/",
+                "move": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/6812061ae62a792ac05ef967/",
+                "upload": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/6812061ae62a792ac05ef967/",
+                "delete": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/6812061ae62a792ac05ef967/",
+                "new_folder": "https://files.de-1.osf.io/v1/resources/6sh5d/providers/osfstorage/6812061ae62a792ac05ef967/?kind=folder",
+                "self": "https://api.osf.io/v2/files/6812061ae62a792ac05ef967/"
+              }
+            }
+          ],
+          "links": {
+            "first": null,
+            "last": null,
+            "prev": null,
+            "next": null,
+            "meta": {
+              "total": 3,
+              "per_page": 10
+            }
+          },
+          "meta": {
+            "version": "2.0"
+          }
+        }
+      },
+      {
+        "label": "dataset_description",
+        "kind": "json",
+        "url": "https://osf.io/download/yfb97/",
+        "bytes_read": 214,
+        "content_length_header": "214",
+        "content_range": null,
+        "artifact": {
+          "sha256": "173e7fb9f7e1bb5120c1e323b490d9c3cdcc1b6e45deacd7e5625373681af31f",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ugr_mindvoice/02_dataset_description.json",
+          "artifact_bytes": 214
+        },
+        "parsed": {
+          "Name": "[BCI Dataset for Spanish Speech Synthesis]",
+          "BIDSVersion": "1.7.0",
+          "DatasetType": "raw",
+          "Authors": [
+            "[Owais Mujata]",
+            "[Jose Andres]",
+            "[Marc Ouellet"
+          ]
+        }
+      },
+      {
+        "label": "participants",
+        "kind": "tsv",
+        "url": "https://osf.io/download/95e2w/",
+        "bytes_read": 450,
+        "content_length_header": "450",
+        "content_range": null,
+        "artifact": {
+          "sha256": "3825a1537e6d35d020ffb156135fc0278ca44913427ddd82a99b3f0741396fe9",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ugr_mindvoice/03_participants.tsv",
+          "artifact_bytes": 450
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "﻿participant_id",
+            "age",
+            "sex",
+            "hand",
+            "weight",
+            "height"
+          ],
+          "preview_rows": [
+            [
+              "sub-01",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-02",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-03",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-04",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ],
+            [
+              "sub-05",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a",
+              "n/a"
+            ]
+          ],
+          "line_count_in_sample": 16
+        }
+      },
+      {
+        "label": "sub01 eeg sidecar",
+        "kind": "json",
+        "url": "https://osf.io/download/ba35t/",
+        "bytes_read": 463,
+        "content_length_header": "463",
+        "content_range": null,
+        "artifact": {
+          "sha256": "2d721e9570f4953ee21d3032a71ce8b2d1fbb92afe12f7d36e36d1c9550a913f",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ugr_mindvoice/04_sub01_eeg_sidecar.json",
+          "artifact_bytes": 463
+        },
+        "parsed": {
+          "TaskName": "VCV",
+          "Manufacturer": "n/a",
+          "PowerLineFrequency": "n/a",
+          "SamplingFrequency": 1000.0,
+          "SoftwareFilters": "n/a",
+          "RecordingDuration": 6306.6,
+          "RecordingType": "continuous",
+          "EEGReference": "n/a",
+          "EEGGround": "n/a",
+          "EEGPlacementScheme": "n/a",
+          "EEGChannelCount": 64,
+          "EOGChannelCount": 0,
+          "ECGChannelCount": 0,
+          "EMGChannelCount": 0,
+          "MiscChannelCount": 0,
+          "TriggerChannelCount": 0
+        }
+      },
+      {
+        "label": "sub01 eeg events",
+        "kind": "tsv",
+        "url": "https://osf.io/download/zhwj3/",
+        "bytes_read": 653645,
+        "content_length_header": "653645",
+        "content_range": null,
+        "artifact": {
+          "sha256": "91d2e856463254b424ea87cc7722780191bce514f85fbe87583aa04e416ab3aa",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ugr_mindvoice/05_sub01_eeg_events.tsv",
+          "artifact_bytes": 653645
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "﻿onset",
+            "duration",
+            "trial_type",
+            "value",
+            "sample"
+          ],
+          "preview_rows": [
+            [
+              "16.301",
+              "0.0",
+              "SilentSyllablesPracticeStartFixation:Text_FAS",
+              "4373",
+              "16301"
+            ],
+            [
+              "17.511",
+              "0.0",
+              "SilentSyllablesPracticeEndFixation:Text_FAS",
+              "5323",
+              "17511"
+            ],
+            [
+              "17.558",
+              "0.0",
+              "SilentSyllablesPracticeStartStimulus:Text_FAS",
+              "1937",
+              "17558"
+            ],
+            [
+              "18.298",
+              "0.0",
+              "SilentSyllablesPracticeEndStimulus:Text_FAS",
+              "3688",
+              "18298"
+            ],
+            [
+              "18.298",
+              "0.0",
+              "SilentSyllablesPracticeStartISI:Text_FAS",
+              "5080",
+              "18298"
+            ]
+          ],
+          "line_count_in_sample": 63
+        }
+      },
+      {
+        "label": "sub01 channels",
+        "kind": "tsv",
+        "url": "https://osf.io/download/62bj3/",
+        "bytes_read": 3720,
+        "content_length_header": "3720",
+        "content_range": null,
+        "artifact": {
+          "sha256": "ea736e8ae6ea8621ad12178d2a3cf93ae251b1a39f9c4b312f0cae5758d2e1ea",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ugr_mindvoice/06_sub01_channels.tsv",
+          "artifact_bytes": 3720
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "﻿name",
+            "type",
+            "units",
+            "low_cutoff",
+            "high_cutoff",
+            "description",
+            "sampling_frequency",
+            "status",
+            "status_description"
+          ],
+          "preview_rows": [
+            [
+              "Fp1",
+              "EEG",
+              "V",
+              "0.0",
+              "500.0",
+              "ElectroEncephaloGram",
+              "1000.0",
+              "good",
+              "n/a"
+            ],
+            [
+              "Fz",
+              "EEG",
+              "V",
+              "0.0",
+              "500.0",
+              "ElectroEncephaloGram",
+              "1000.0",
+              "good",
+              "n/a"
+            ],
+            [
+              "F3",
+              "EEG",
+              "V",
+              "0.0",
+              "500.0",
+              "ElectroEncephaloGram",
+              "1000.0",
+              "good",
+              "n/a"
+            ],
+            [
+              "F7",
+              "EEG",
+              "V",
+              "0.0",
+              "500.0",
+              "ElectroEncephaloGram",
+              "1000.0",
+              "good",
+              "n/a"
+            ],
+            [
+              "FT9",
+              "EEG",
+              "V",
+              "0.0",
+              "500.0",
+              "ElectroEncephaloGram",
+              "1000.0",
+              "good",
+              "n/a"
+            ]
+          ],
+          "line_count_in_sample": 65
+        }
+      },
+      {
+        "label": "sub01 audio events",
+        "kind": "tsv",
+        "url": "https://osf.io/download/jvgeu/",
+        "bytes_read": 634605,
+        "content_length_header": "634605",
+        "content_range": null,
+        "artifact": {
+          "sha256": "284738000a96f87b8924a7e537c1a2f8e4b47bea76d483407e397101e72e5412",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ugr_mindvoice/07_sub01_audio_events.tsv",
+          "artifact_bytes": 634605
+        },
+        "parsed": {
+          "delimiter": "\\t",
+          "columns": [
+            "onset",
+            "duration",
+            "description"
+          ],
+          "preview_rows": [
+            [
+              "16.30090754201592",
+              "0.0",
+              "SilentSyllablesPracticeStartFixation:Text_FAS"
+            ],
+            [
+              "17.51148288070908",
+              "0.0",
+              "SilentSyllablesPracticeEndFixation:Text_FAS"
+            ],
+            [
+              "17.557912557187592",
+              "0.0",
+              "SilentSyllablesPracticeStartStimulus:Text_FAS"
+            ],
+            [
+              "18.29755762073728",
+              "0.0",
+              "SilentSyllablesPracticeEndStimulus:Text_FAS"
+            ],
+            [
+              "18.29771746066217",
+              "0.0",
+              "SilentSyllablesPracticeStartISI:Text_FAS"
+            ]
+          ],
+          "line_count_in_sample": 62
+        }
+      },
+      {
+        "label": "GitHub README",
+        "kind": "text",
+        "url": "https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/Readme.md",
+        "bytes_read": 16300,
+        "content_length_header": "16300",
+        "content_range": null,
+        "artifact": {
+          "sha256": "433e449ca31da2103751a643285f5a8a66d289661f483f660be10e05bc4e009e",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ugr_mindvoice/08_GitHub_README.txt",
+          "artifact_bytes": 16300
+        },
+        "parsed": {
+          "lines": [
+            "## Mind Voice: A Multimodal EEG-Audio Dataset for Overt and Covert Iberian Spanish Speech Production",
+            "",
+            "",
+            "Mind-Voice is an advanced research framework designed for the analysis of electroencephalography (EEG) data, focusing on event-related potentials (ERPs), brainwave decoding for imagined speech (covert/overt), and even voice anonymization. This project provides a robust pipeline for handling BIDS-formatted EEG datasets, performing detailed signal processing, machine learning-based classification, and comprehensive data visualization.",
+            "",
+            "## Table of Contents",
+            "",
+            "- [Introduction](#introduction)",
+            "- [Features](#features)",
+            "- [Technological Stack](#technological-stack)",
+            "- [Project Structure](#project-structure)",
+            "- [How It Works](#how-it-works)"
+          ],
+          "char_count": 15998
+        }
+      },
+      {
+        "label": "GitHub config",
+        "kind": "text",
+        "url": "https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/config.yaml",
+        "bytes_read": 2288,
+        "content_length_header": "2288",
+        "content_range": null,
+        "artifact": {
+          "sha256": "7247b5f54d8b284851f9984d97b21472d439e8d6606f0a30ede99b3cb8c7aff5",
+          "is_partial": false,
+          "artifact_path": "outputs/imagined_speech_probe_artifacts/ugr_mindvoice/09_GitHub_config.txt",
+          "artifact_bytes": 2288
+        },
+        "parsed": {
+          "lines": [
+            "dataset:",
+            "    create_bids: False",
+            "    BIDS_DIR: '/home/owaismujtaba/projects/mind-voice/BIDS'",
+            "    MONTAGE: 'standard_1020'",
+            "    config_path: 'bids_config.yaml'",
+            "    EEG_SR: 1000",
+            "    AUDIO_SR: 48000",
+            "",
+            "preprocessing:",
+            "    EEG_FILTER: {\"l_freq\": 0.1, \"h_freq\": 40.0}",
+            "    ICA_PARAMS: {\"n_components\": 0.99999999, \"random_state\": 97, \"ica_method\": \"fastica\"}",
+            "    NOTCH: [50, 100]"
+          ],
+          "char_count": 2288
+        }
+      }
+    ]
+  }
+]

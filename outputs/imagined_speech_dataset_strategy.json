@@ -1,0 +1,93 @@
+[
+  {
+    "rank": "1",
+    "dataset": "feis_3554128",
+    "title": "FEIS: Fourteen-channel EEG with Imagined Speech",
+    "source_url": "https://zenodo.org/records/3554128",
+    "role": "primary imagined-speech pilot",
+    "language": "English, plus two Chinese subjects",
+    "imagined_window": "thinking phase per epoch",
+    "target_proxy": "prompt wav or same-label spoken wav",
+    "overt_audio": "yes, per-subject recorded wavs",
+    "eeg_quality": "14-channel Emotiv; low density but directly task-matched",
+    "recommendation": "Start here for the first end-to-end imagined EEG to label/audio-embedding retrieval baseline."
+  },
+  {
+    "rank": "2",
+    "dataset": "kara_one",
+    "title": "KARA ONE imagined and articulated speech",
+    "source_url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html",
+    "role": "primary cross-check if archives are accessible",
+    "language": "English",
+    "imagined_window": "5 s imagined speech state",
+    "target_proxy": "prompt label/audio; vocalized audio for same prompt",
+    "overt_audio": "yes",
+    "eeg_quality": "EEG plus face tracking and audio; smaller cohort",
+    "recommendation": "Use after FEIS to test whether the same windowing and target proxy transfers."
+  },
+  {
+    "rank": "3",
+    "dataset": "ugr_mindvoice",
+    "title": "UGR-MINDVOICE",
+    "source_url": "https://osf.io/6sh5d",
+    "role": "modern overt/covert EEG-audio validation",
+    "language": "Iberian Spanish",
+    "imagined_window": "covert event windows from BIDS events",
+    "target_proxy": "materials wav, event label, or same-session anonymized speech audio",
+    "overt_audio": "yes",
+    "eeg_quality": "BIDS EDF with audio folder; conceptually close but not English",
+    "recommendation": "Use as the best concept match if language can be relaxed."
+  },
+  {
+    "rank": "4",
+    "dataset": "ds003626",
+    "title": "Thinking Out Loud / Inner Speech",
+    "source_url": "https://openneuro.org/datasets/ds003626",
+    "role": "inner-speech classification benchmark",
+    "language": "Spanish",
+    "imagined_window": "inner/pronounced/visualized trial epochs",
+    "target_proxy": "word label only",
+    "overt_audio": "no public per-trial audio target",
+    "eeg_quality": "128-channel EEG; strong for classification, weak for waveform target",
+    "recommendation": "Use for representation learning and sanity-check classification, not audio reconstruction."
+  },
+  {
+    "rank": "5",
+    "dataset": "ds005170",
+    "title": "Chisco Chinese imagined speech",
+    "source_url": "https://openneuro.org/datasets/ds005170",
+    "role": "imagined-speech supplementary benchmark",
+    "language": "Chinese",
+    "imagined_window": "imagine task runs",
+    "target_proxy": "text stimulus label",
+    "overt_audio": "not confirmed in public probe",
+    "eeg_quality": "OpenNeuro raw EDF plus derivatives; large",
+    "recommendation": "Keep as a secondary imagined-speech benchmark after FEIS/KARA/UGR."
+  },
+  {
+    "rank": "6",
+    "dataset": "ds004408",
+    "title": "EEG responses to continuous naturalistic speech",
+    "source_url": "https://openneuro.org/datasets/ds004408",
+    "role": "heard-speech pretraining only",
+    "language": "English",
+    "imagined_window": "none",
+    "target_proxy": "wav + TextGrid word/phoneme timing",
+    "overt_audio": "n/a",
+    "eeg_quality": "128-channel heard speech with strong audio alignment",
+    "recommendation": "Use for acoustic/phoneme pretraining, not as imagined-speech supervision."
+  },
+  {
+    "rank": "7",
+    "dataset": "ds004940",
+    "title": "Auditory N400 active/passive sentence EEG",
+    "source_url": "https://openneuro.org/datasets/ds004940",
+    "role": "heard-speech response/pretraining only",
+    "language": "English",
+    "imagined_window": "none",
+    "target_proxy": "audio stimuli, word/sentence metadata, and active-response events",
+    "overt_audio": "n/a",
+    "eeg_quality": "high-density BDF heard-speech EEG; useful for response-event plumbing",
+    "recommendation": "Use to test event/response handling and heard-speech pretraining, not imagined supervision."
+  }
+]

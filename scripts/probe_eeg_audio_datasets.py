@@ -473,6 +473,23 @@ def build_probes() -> list[Probe]:
             ],
         ),
         Probe(
+            "ds004940",
+            "Auditory N400 active/passive sentence EEG",
+            "OpenNeuro",
+            "https://openneuro.org/datasets/ds004940",
+            "pretraining-response",
+            "Heard English sentence/word EEG with audio stimuli and response task; auxiliary only for imagined-speech work",
+            [
+                Target("dataset_description", s3_url("ds004940/dataset_description.json"), "json"),
+                Target("README", s3_url("ds004940/README"), "text"),
+                Target("stimulus parameters", s3_url("ds004940/N400PvsA_stimuli_parameters.tsv"), "tsv"),
+                Target("sub001 active events", s3_url("ds004940/sub-001/eeg/sub-001_task-N400Active_events.tsv"), "tsv"),
+                Target("sub001 active channels", s3_url("ds004940/sub-001/eeg/sub-001_task-N400Active_channels.tsv"), "tsv"),
+                Target("example stimulus wav header", s3_url("ds004940/stimuli/NPC_aisle.wav"), "wav", 4096),
+                Target("sub001 active BDF bytes", s3_url("ds004940/sub-001/eeg/sub-001_task-N400Active_eeg.bdf"), "binary", 512),
+            ],
+        ),
+        Probe(
             "ds005345",
             "Le Petit Prince Multi-talker",
             "OpenNeuro",
@@ -731,7 +748,29 @@ def build_probes() -> list[Probe]:
             "https://zenodo.org/records/3554128",
             "p2-low-density",
             "Heard/imagined/spoken English phonemes plus Chinese syllables with recorded audio",
-            [],
+            [
+                Target(
+                    "GitHub README",
+                    "https://raw.githubusercontent.com/scottwellington/FEIS/v1.1/README.txt",
+                    "text",
+                ),
+                Target(
+                    "FEIS subject 01 wav listing",
+                    "https://api.github.com/repos/scottwellington/FEIS/contents/wavs/01/wavs?ref=v1.1",
+                    "json",
+                ),
+                Target(
+                    "FEIS subject 01 thinking/stimuli zip listing",
+                    "https://api.github.com/repos/scottwellington/FEIS/contents/experiments/01?ref=v1.1",
+                    "json",
+                ),
+                Target(
+                    "FEIS subject 01 prompt wav header",
+                    "https://raw.githubusercontent.com/scottwellington/FEIS/v1.1/wavs/01/wavs/f.wav",
+                    "wav",
+                    4096,
+                ),
+            ],
             zenodo_id=3554128,
         ),
         Probe(
@@ -743,6 +782,12 @@ def build_probes() -> list[Probe]:
             "Iberian Spanish overt/covert EEG-audio dataset; use OSF listing and GitHub code first",
             [
                 Target("OSF root listing", "https://api.osf.io/v2/nodes/6sh5d/files/osfstorage/", "json"),
+                Target("dataset_description", "https://osf.io/download/yfb97/", "json"),
+                Target("participants", "https://osf.io/download/95e2w/", "tsv"),
+                Target("sub01 eeg sidecar", "https://osf.io/download/ba35t/", "json"),
+                Target("sub01 eeg events", "https://osf.io/download/zhwj3/", "tsv"),
+                Target("sub01 channels", "https://osf.io/download/62bj3/", "tsv"),
+                Target("sub01 audio events", "https://osf.io/download/jvgeu/", "tsv"),
                 Target("GitHub README", "https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/Readme.md", "text"),
                 Target("GitHub config", "https://raw.githubusercontent.com/owaismujtaba/mind-voice/main/config.yaml", "text"),
             ],
@@ -892,7 +937,9 @@ def compact_markdown(results: list[dict[str, Any]]) -> str:
                 if "error" in target:
                     continue
                 parsed = target.get("parsed", {})
-                if isinstance(parsed, dict):
+                if isinstance(parsed, list):
+                    bits.append(f"{target['label']}: {len(parsed)} json items")
+                elif isinstance(parsed, dict):
                     if target["kind"] == "wav":
                         bits.append(
                             f"{target['label']}: {parsed.get('sample_rate')} Hz, {parsed.get('duration_sec_est')} s"
@@ -937,6 +984,13 @@ def summarize_parsed_value(target: dict[str, Any]) -> str:
     parsed = target.get("parsed", {})
     if "error" in target:
         return target["error"]
+    if isinstance(parsed, list):
+        names = [
+            item.get("name")
+            for item in parsed[:8]
+            if isinstance(item, dict) and item.get("name") is not None
+        ]
+        return f"json_items={len(parsed)}; first_names={names}"
     if not isinstance(parsed, dict):
         return "unparsed"
     kind = target.get("kind")

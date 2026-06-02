@@ -1,0 +1,6 @@
+dataset,subject,trial,mode,label,eeg_start,eeg_end,audio_path_or_label,target_kind,source_path,notes
+feis_3554128,01,pending_full_extraction,imagined,f,,,wavs/01/wavs/f.wav,prompt_audio,experiments/01/thinking.zip,Fill eeg_start/eeg_end after extracting FEIS thinking CSV trial timing.
+feis_3554128,01,pending_full_extraction,overt,f,,,wavs/01/wavs/f.wav,same_label_spoken_or_prompt_audio,experiments/01/speaking.zip,Use overt EEG/audio for acoustic target pretraining or same-label pairing.
+kara_one,P02,pending_archive_extraction,imagined,iy|uw|piy|tiy|diy|m|n|pat|pot|knew|gnaw,,,prompt label or vocalized audio for the same prompt,prompt_label_or_same_label_overt_audio,P02.tar.bz2,KARA archives need full participant extraction before trial timing can be indexed.
+ugr_mindvoice,sub-05,event_row,covert,events.trial_type,events.onset,events.onset + events.duration,Materials/*.wav or same-session anonymized.wav,materials_audio_or_event_label,Data/sub-05/ses-*/eeg/*_events.tsv,Use BIDS events once selected subject files are downloaded.
+ds003626,sub-01,epoch_row,inner,direction word label,epoch start,epoch end,word label only,label,derivatives/sub-01/ses-01/*_events.dat,"Useful for classification/representation checks, not waveform supervision."
