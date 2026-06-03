@@ -274,7 +274,7 @@ def extract_karaone_subject_to_temp(karaone_root: Path, subject: str, temp_root:
             name = member.name
             if not name.startswith(subject_prefix):
                 continue
-            if name.endswith("Acquisition 232 Data.cnt") or name.endswith("epoch_inds.mat"):
+            if name.endswith(".cnt") or name.endswith("epoch_inds.mat"):
                 extract_members.append(member)
                 continue
             if "/kinect_data/" in name and (name.endswith(".wav") or name.endswith(".txt")):
@@ -283,13 +283,23 @@ def extract_karaone_subject_to_temp(karaone_root: Path, subject: str, temp_root:
     return work_dir / KARAONE_RELATIVE_SUBJECT_DIR / subject
 
 
+def find_karaone_cnt_file(subject_dir: Path) -> Path:
+    cnt_files = sorted(subject_dir.glob("*.cnt"))
+    if len(cnt_files) == 1:
+        return cnt_files[0]
+    if len(cnt_files) > 1:
+        return cnt_files[0]
+    raise FileNotFoundError(f"No .cnt file found under {subject_dir}")
+
+
 def preprocess_karaone_continuous(
     subject_dir: Path,
     bandpass_low: float,
     bandpass_high: float,
     notch_hz: float,
 ) -> tuple[np.ndarray, float, list[str]]:
-    raw = mne.io.read_raw_cnt(str(subject_dir / "Acquisition 232 Data.cnt"), preload=True, verbose="ERROR")
+    cnt_path = find_karaone_cnt_file(subject_dir)
+    raw = mne.io.read_raw_cnt(str(cnt_path), preload=True, verbose="ERROR")
     keep_names = [name for name in raw.ch_names if name not in KARAONE_DROP_CHANNELS]
     data = raw.get_data(picks=keep_names).astype(np.float32)
     sfreq = float(raw.info["sfreq"])
