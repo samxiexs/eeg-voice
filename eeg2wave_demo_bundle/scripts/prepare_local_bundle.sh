@@ -2,8 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUNDLE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SOURCE_ROOT="/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/data/processed/thinking_waveform_pairs/feis"
-TARGET_ROOT="${SCRIPT_DIR}/data/feis"
+TARGET_ROOT="${BUNDLE_DIR}/data/feis"
 
 if [[ ! -d "${SOURCE_ROOT}" ]]; then
   echo "Missing source FEIS directory: ${SOURCE_ROOT}" >&2
@@ -16,9 +17,9 @@ if [[ -e "${TARGET_ROOT}" ]]; then
   exit 1
 fi
 
-mkdir -p "${SCRIPT_DIR}/data"
+mkdir -p "${BUNDLE_DIR}/data"
 cp -R "${SOURCE_ROOT}" "${TARGET_ROOT}"
-mkdir -p "${SCRIPT_DIR}/outputs/checkpoints" "${SCRIPT_DIR}/outputs/recon_wavs" "${SCRIPT_DIR}/outputs/metrics"
+mkdir -p "${BUNDLE_DIR}/outputs/checkpoints" "${BUNDLE_DIR}/outputs/recon_wavs" "${BUNDLE_DIR}/outputs/metrics"
 
 echo "Bundle data prepared at: ${TARGET_ROOT}"
 echo "Bundle is now ready for server upload."

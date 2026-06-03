@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -10,16 +11,20 @@ from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from dataset import FEISThinkingDataset
-from losses import compute_total_loss
-from model import EEG2WaveVQModel
-from utils import ensure_dir, load_simple_yaml, resolve_bundle_path, write_json
+BUNDLE_DIR = Path(__file__).resolve().parents[1]
+if str(BUNDLE_DIR) not in sys.path:
+    sys.path.insert(0, str(BUNDLE_DIR))
+
+from src.dataset import FEISThinkingDataset
+from src.losses import compute_total_loss
+from src.model import EEG2WaveVQModel
+from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, write_json
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train minimal FEIS EEG2Wave demo.")
     parser.add_argument("--subject", required=True, help="FEIS subject id, e.g. 01")
-    parser.add_argument("--config", default=str(Path(__file__).with_name("config.yaml")))
+    parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "config.yaml"))
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--output-root", default=None)
     return parser.parse_args()
@@ -96,17 +101,16 @@ def evaluate(model: EEG2WaveVQModel, loader: DataLoader, device: torch.device, c
 
 def main() -> None:
     args = parse_args()
-    bundle_dir = Path(__file__).resolve().parent
     config = load_simple_yaml(args.config)
     set_seed(int(config["train"]["seed"]))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    resolved_data_root = resolve_bundle_path(args.data_root or config["data"]["root"], bundle_dir)
+    resolved_data_root = resolve_bundle_path(args.data_root or config["data"]["root"], BUNDLE_DIR)
     train_loader, val_loader, test_loader = build_loaders(config, args.subject, str(resolved_data_root))
     model = build_model(config).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(config["train"]["lr"]))
 
-    output_root = resolve_bundle_path(args.output_root or config["output"]["root"], bundle_dir)
+    output_root = resolve_bundle_path(args.output_root or config["output"]["root"], BUNDLE_DIR)
     ckpt_dir = ensure_dir(output_root / "checkpoints")
     metrics_dir = ensure_dir(output_root / "metrics")
     best_ckpt = ckpt_dir / f"subject_{args.subject}_best.pt"

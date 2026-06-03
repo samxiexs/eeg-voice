@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 
-from dataset import FEISThinkingDataset
-from losses import compute_total_loss, stft_distance_single
-from model import EEG2WaveVQModel
-from utils import ensure_dir, load_simple_yaml, resolve_bundle_path, save_wav, write_json
+BUNDLE_DIR = Path(__file__).resolve().parents[1]
+if str(BUNDLE_DIR) not in sys.path:
+    sys.path.insert(0, str(BUNDLE_DIR))
+
+from src.dataset import FEISThinkingDataset
+from src.losses import compute_total_loss, stft_distance_single
+from src.model import EEG2WaveVQModel
+from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, save_wav, write_json
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Infer minimal FEIS EEG2Wave demo.")
     parser.add_argument("--subject", required=True, help="FEIS subject id, e.g. 01")
-    parser.add_argument("--config", default=str(Path(__file__).with_name("config.yaml")))
+    parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "config.yaml"))
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--output-root", default=None)
     parser.add_argument("--checkpoint", default=None)
@@ -37,9 +42,8 @@ def build_model(config: dict) -> EEG2WaveVQModel:
 
 def main() -> None:
     args = parse_args()
-    bundle_dir = Path(__file__).resolve().parent
     config = load_simple_yaml(args.config)
-    output_root = resolve_bundle_path(args.output_root or config["output"]["root"], bundle_dir)
+    output_root = resolve_bundle_path(args.output_root or config["output"]["root"], BUNDLE_DIR)
     checkpoint_path = Path(args.checkpoint or output_root / "checkpoints" / f"subject_{args.subject}_best.pt")
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Missing checkpoint: {checkpoint_path}")
@@ -53,7 +57,7 @@ def main() -> None:
 
     dataset = FEISThinkingDataset(
         subject_id=args.subject,
-        data_root=str(resolve_bundle_path(args.data_root or config["data"]["root"], bundle_dir)),
+        data_root=str(resolve_bundle_path(args.data_root or config["data"]["root"], BUNDLE_DIR)),
         stage=config["data"]["stage"],
         split="test",
         train_ratio=config["data"]["train_ratio"],

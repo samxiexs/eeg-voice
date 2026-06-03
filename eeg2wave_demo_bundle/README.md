@@ -6,6 +6,10 @@ Minimal FEIS imagined-speech demo:
 - bottleneck: discrete VQ tokens
 - output: fixed-length waveform
 
+For the full run guide, tuning notes, and training-objective explanation, see:
+
+- `RUN_GUIDE.md`
+
 This bundle is aligned to the processed local dataset described in:
 
 - `/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_modeling_prompt.md`
@@ -32,15 +36,19 @@ Important:
 ```text
 eeg2wave_demo_bundle/
   README.md
+  RUN_GUIDE.md
   requirements.txt
-  config.yaml
-  dataset.py
-  model.py
-  losses.py
-  utils.py
-  train.py
-  infer.py
-  prepare_local_bundle.sh
+  configs/
+    config.yaml
+  src/
+    dataset.py
+    model.py
+    losses.py
+    utils.py
+  scripts/
+    train.py
+    infer.py
+    prepare_local_bundle.sh
 ```
 
 This folder is intended to become a self-contained upload bundle for cloud/server training.
@@ -48,7 +56,7 @@ This folder is intended to become a self-contained upload bundle for cloud/serve
 If you want a single folder with data included, run:
 
 ```bash
-bash eeg2wave_demo_bundle/prepare_local_bundle.sh
+bash eeg2wave_demo_bundle/scripts/prepare_local_bundle.sh
 ```
 
 That copies the real processed FEIS data into:
@@ -66,13 +74,13 @@ python -m pip install -r eeg2wave_demo_bundle/requirements.txt
 ## Train One Subject
 
 ```bash
-python eeg2wave_demo_bundle/train.py --subject 01
+python eeg2wave_demo_bundle/scripts/train.py --subject 01
 ```
 
 ## Run Inference
 
 ```bash
-python eeg2wave_demo_bundle/infer.py --subject 01
+python eeg2wave_demo_bundle/scripts/infer.py --subject 01
 ```
 
 ## Default Data Root
@@ -104,13 +112,10 @@ eeg2wave_demo_bundle/
       audio/
   outputs/
   README.md
-  config.yaml
-  dataset.py
-  infer.py
-  losses.py
-  model.py
-  prepare_local_bundle.sh
+  RUN_GUIDE.md
+  configs/
+    config.yaml
+  src/
+  scripts/
   requirements.txt
-  train.py
-  utils.py
 ```

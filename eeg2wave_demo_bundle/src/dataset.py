@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from utils import load_wav_fixed, resolve_feis_root
+from .utils import load_wav_fixed, resolve_feis_root
 
 
 @dataclass(frozen=True)

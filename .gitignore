@@ -19,6 +19,9 @@ __pycache__/
 venv/
 env/
 
+# Node dependencies
+node_modules/
+
 # Local data downloads: keep raw data outside git
 data/
 datasets/
@@ -121,6 +124,7 @@ checkpoints/
 models/
 
 # Self-contained upload bundle artifacts
+eeg2wave_demo_bundle/
 eeg2wave_demo_bundle/data/
 eeg2wave_demo_bundle/outputs/
 
