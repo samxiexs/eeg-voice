@@ -46,6 +46,8 @@ results/
 # Probe artifacts: reports are OK, saved remote snippets/binaries stay local
 outputs/probe_artifacts/
 outputs/imagined_speech_probe_artifacts/
+notebooks/
+
 
 # EEG / MEG / biosignal raw and derivative files
 *.eeg
