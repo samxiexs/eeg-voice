@@ -28,7 +28,7 @@
 | MM21 | 1.18 |
 | P02 | 2.19 |
 
-![KaraOne archive sizes](outputs/dataset_analysis_assets/karaone/karaone_archive_sizes.png)
+![KaraOne archive sizes](../../outputs/dataset_analysis_assets/karaone/karaone_archive_sizes.png)
 
 ## 实验范式总结
 
@@ -56,7 +56,7 @@
 
 ### EEG 波形
 
-![KaraOne waveform](outputs/dataset_analysis_assets/karaone/karaone_mm05_waveform.png)
+![KaraOne waveform](../../outputs/dataset_analysis_assets/karaone/karaone_mm05_waveform.png)
 
 图中展示了 `MM05` 第一个 trial 附近的连续 EEG，并按照 `epoch_inds.mat` 中的区间对 `clearing / stimulus-like / thinking / overt-like` 做了阴影标注。
 
@@ -76,9 +76,9 @@
 | pat | 15 |
 | pot | 15 |
 
-![KaraOne labels](outputs/dataset_analysis_assets/karaone/karaone_mm05_labels.png)
+![KaraOne labels](../../outputs/dataset_analysis_assets/karaone/karaone_mm05_labels.png)
 
-![KaraOne audio durations](outputs/dataset_analysis_assets/karaone/karaone_mm05_audio_durations.png)
+![KaraOne audio durations](../../outputs/dataset_analysis_assets/karaone/karaone_mm05_audio_durations.png)
 
 - `11` 个唯一标签
 - 每个标签在 `MM05` 中都是 `15` 次

@@ -35,7 +35,7 @@
 | chinese-1 | 60 | 0 | no |
 | chinese-2 | 60 | 0 | no |
 
-![FEIS trial counts](outputs/dataset_analysis_assets/feis/feis_trial_counts.png)
+![FEIS trial counts](../../outputs/dataset_analysis_assets/feis/feis_trial_counts.png)
 
 ## 实验范式总结
 
@@ -63,15 +63,15 @@
 
 ### 波形与通道
 
-![FEIS waveform](outputs/dataset_analysis_assets/feis/feis_subject01_waveform.png)
+![FEIS waveform](../../outputs/dataset_analysis_assets/feis/feis_subject01_waveform.png)
 
-![FEIS channel std](outputs/dataset_analysis_assets/feis/feis_subject01_channel_std.png)
+![FEIS channel std](../../outputs/dataset_analysis_assets/feis/feis_subject01_channel_std.png)
 
 可以直接看到 `subject 01` 的 `full_eeg.csv` 在 5-32 秒区间内按阶段整齐切换，14 个通道都能连续观测到波形变化。
 
 ### Trial 与标签
 
-![FEIS labels](outputs/dataset_analysis_assets/feis/feis_subject01_labels.png)
+![FEIS labels](../../outputs/dataset_analysis_assets/feis/feis_subject01_labels.png)
 
 - `subject 01` 共 `160` 个 trial
 - `16` 个标签，每个标签 `10` 次

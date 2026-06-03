@@ -1,3 +1,0 @@
-This EEG file requires MNE-Python for a signal preview.
-Install with: python -m pip install mne matplotlib numpy scipy
-Source: data/raw/openneuro/ds005345_datalad/derivatives/sub-01/eeg/sub-01_task-multitalker_run-1_eeg_preprocessed.fif
