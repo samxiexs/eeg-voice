@@ -1,5 +1,5 @@
 data:
-  root: data/feis
+  root: ../data/feis
   stage: thinking
   train_ratio: 0.8
   val_ratio: 0.1

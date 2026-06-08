@@ -40,6 +40,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def build_run_name(config: dict, args: argparse.Namespace) -> str:
+    protocol = str(config["data"]["protocol"]).upper()
+    run_name = f"{protocol.lower()}_{config['data']['stage']}_{config['data'].get('ablation_mode', 'none')}"
+    if protocol == "S":
+        run_name += f"_subject_{args.subject or config['data'].get('subject_id')}"
+    if protocol == "U":
+        run_name += f"_holdout_{args.holdout_subject or config['data'].get('holdout_subject_id')}"
+    return run_name
+
+
 def _valid_steps_from_samples(valid_samples: torch.Tensor) -> torch.Tensor:
     return torch.ceil(valid_samples.float() / 32.0).long().clamp_min(1)
 
@@ -235,7 +245,7 @@ def run_eval(config: dict, args: argparse.Namespace, include_anomalous: bool | N
     eval_loader = DataLoader(eval_ds, batch_size=int(config["train"]["batch_size"]), shuffle=False, num_workers=0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    checkpoint_path = Path(args.checkpoint) if args.checkpoint else resolve_bundle_path(config["output"]["root"], BUNDLE_DIR)
+    checkpoint_path = Path(args.checkpoint) if args.checkpoint else resolve_bundle_path(config["output"]["root"], BUNDLE_DIR) / build_run_name(config, args)
     if checkpoint_path.is_dir():
         checkpoint_path = checkpoint_path / "checkpoints" / "best.pt"
     checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -293,11 +303,7 @@ def main() -> None:
         sensitivity.pop("predictions", None)
 
     output_root = resolve_bundle_path(args.output_root or config["output"]["root"], BUNDLE_DIR)
-    run_name = f"{protocol.lower()}_{config['data']['stage']}_{config['data'].get('ablation_mode', 'none')}"
-    if protocol == "S":
-        run_name += f"_subject_{args.subject or config['data'].get('subject_id')}"
-    if protocol == "U":
-        run_name += f"_holdout_{args.holdout_subject or config['data'].get('holdout_subject_id')}"
+    run_name = build_run_name(config, args)
     metrics_path = output_root / run_name / "metrics" / f"{args.split}_evaluation.json"
     payload = dict(result)
     if sensitivity is not None:

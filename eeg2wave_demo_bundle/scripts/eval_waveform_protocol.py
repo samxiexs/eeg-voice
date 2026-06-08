@@ -39,6 +39,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def build_run_name(config: dict, args: argparse.Namespace) -> str:
+    protocol = str(config["data"]["protocol"]).upper()
+    run_name = f"{protocol.lower()}_{config['data']['stage']}_{config['data'].get('ablation_mode', 'none')}"
+    if protocol == "S":
+        run_name += f"_subject_{args.subject or config['data'].get('subject_id')}"
+    if protocol == "U":
+        run_name += f"_holdout_{args.holdout_subject or config['data'].get('holdout_subject_id')}"
+    if config["model"].get("use_subject_conditioning", False):
+        run_name += "_subject_conditioned"
+    return run_name
+
+
 def build_dataset(config: dict, args: argparse.Namespace, split: str, include_anomalous: bool | None = None) -> FEISProtocolDataset:
     cfg_data = config["data"]
     cfg_audio = config["audio"]
@@ -110,7 +122,7 @@ def run_eval(config: dict, args: argparse.Namespace, include_anomalous: bool | N
     loader = DataLoader(dataset, batch_size=int(config["train"]["batch_size"]), shuffle=False, num_workers=0)
     bank, bank_policy = build_waveform_bank(dataset, args.retrieval_bank)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    checkpoint_path = Path(args.checkpoint) if args.checkpoint else resolve_bundle_path(config["output"]["root"], BUNDLE_DIR)
+    checkpoint_path = Path(args.checkpoint) if args.checkpoint else resolve_bundle_path(config["output"]["root"], BUNDLE_DIR) / build_run_name(config, args)
     if checkpoint_path.is_dir():
         checkpoint_path = checkpoint_path / "checkpoints" / "best.pt"
     checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -207,13 +219,7 @@ def main() -> None:
     if protocol in {"G", "U"} and not bool(args.include_anomalous or config["data"].get("include_anomalous", False)):
         sensitivity = run_eval(config, args, include_anomalous=True)
         sensitivity.pop("predictions", None)
-    run_name = f"{protocol.lower()}_{config['data']['stage']}_{config['data'].get('ablation_mode', 'none')}"
-    if protocol == "S":
-        run_name += f"_subject_{args.subject or config['data'].get('subject_id')}"
-    if protocol == "U":
-        run_name += f"_holdout_{args.holdout_subject or config['data'].get('holdout_subject_id')}"
-    if config["model"].get("use_subject_conditioning", False):
-        run_name += "_subject_conditioned"
+    run_name = build_run_name(config, args)
     metrics_path = resolve_bundle_path(args.output_root or config["output"]["root"], BUNDLE_DIR) / run_name / "metrics" / "test_metrics.json"
     payload = dict(result)
     if sensitivity is not None:
