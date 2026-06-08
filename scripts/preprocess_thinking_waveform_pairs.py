@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -71,6 +72,11 @@ KARAONE_STAGE_ROLE = {
 }
 
 FEIS_LABEL_FALLBACK_AUDIO_DIR = Path("B059691/decoded wavs/Original")
+FEIS_AUDIO_SOURCE_SUBJECT_OVERRIDES = {
+    "05": "04",
+}
+FEIS_SUBJECT_KNOWN_EVAL = "Protocol S: within-subject evaluation with subject-known template bank."
+FEIS_SUBJECT_UNKNOWN_EVAL = "Protocol U: unseen-subject evaluation for disentangling subject identity from speech-relevant EEG information."
 
 
 @dataclass
@@ -80,6 +86,16 @@ class DatasetStats:
     trial_count: int
     segment_count: int
     notes: list[str]
+
+
+@dataclass(frozen=True)
+class FEISAudioSource:
+    subject_id: str
+    label: str
+    path: Path
+    audio_source_subject: str
+    audio_source_kind: str
+    is_fallback_audio: bool
 
 
 def ensure_dir(path: Path) -> None:
@@ -234,6 +250,130 @@ def resolve_feis_audio_path(feis_root: Path, subject: str, label: str) -> Path:
     raise FileNotFoundError(f"Could not resolve FEIS audio for subject={subject} label={label}")
 
 
+def resolve_feis_audio_source(feis_root: Path, subject: str, label: str) -> FEISAudioSource:
+    subject_str = str(subject).zfill(2) if str(subject).isdigit() else str(subject)
+    candidates = [
+        (
+            feis_root / FEIS_INNER_DIR / "wavs" / subject_str / "wavs" / f"{label}.wav",
+            subject_str,
+            "subject_wavs",
+            False,
+        ),
+        (
+            feis_root / FEIS_INNER_DIR / "wavs" / subject_str / "combined_wavs" / f"{label}.wav",
+            subject_str,
+            "subject_combined_wavs",
+            False,
+        ),
+        (
+            feis_root / FEIS_INNER_DIR / FEIS_LABEL_FALLBACK_AUDIO_DIR / f"{label}.wav",
+            FEIS_AUDIO_SOURCE_SUBJECT_OVERRIDES.get(subject_str, "fallback_unknown"),
+            "fallback_original",
+            True,
+        ),
+    ]
+    for candidate, source_subject, source_kind, is_fallback in candidates:
+        if candidate.exists():
+            return FEISAudioSource(
+                subject_id=subject_str,
+                label=str(label),
+                path=candidate,
+                audio_source_subject=str(source_subject),
+                audio_source_kind=str(source_kind),
+                is_fallback_audio=bool(is_fallback),
+            )
+    raise FileNotFoundError(f"Could not resolve FEIS audio for subject={subject_str} label={label}")
+
+
+def sha1_for_file(path: Path) -> str:
+    digest = hashlib.sha1()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def enrich_feis_rows(
+    feis_root: Path,
+    output_root: Path,
+    trial_rows: list[dict[str, object]],
+    segment_rows: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+    rows = [dict(row) for row in trial_rows]
+    segs = [dict(row) for row in segment_rows]
+    source_cache: dict[tuple[str, str], FEISAudioSource] = {}
+    processed_audio_cache: dict[str, dict[str, object]] = {}
+    label_hashes: dict[str, set[str]] = {}
+
+    def get_audio_meta(subject_id: str, label: str, audio_path: str) -> dict[str, object]:
+        key = (subject_id, label)
+        if key not in source_cache:
+            source_cache[key] = resolve_feis_audio_source(feis_root, subject_id, label)
+        if audio_path not in processed_audio_cache:
+            processed_path = output_root / "feis" / audio_path
+            sr, audio = load_audio_mono(processed_path)
+            processed_audio_cache[audio_path] = {
+                "audio_sha1": sha1_for_file(processed_path),
+                "audio_duration_sec": round(float(len(audio) / sr), 6),
+            }
+        source = source_cache[key]
+        meta = processed_audio_cache[audio_path]
+        label_hashes.setdefault(label, set()).add(str(meta["audio_sha1"]))
+        return {
+            "audio_source_subject": source.audio_source_subject,
+            "audio_source_kind": source.audio_source_kind,
+            "is_fallback_audio": source.is_fallback_audio,
+            "audio_sha1": meta["audio_sha1"],
+            "audio_duration_sec": meta["audio_duration_sec"],
+            "unique_hashes_per_subject_label": 1,
+            "subject_known_eval": FEIS_SUBJECT_KNOWN_EVAL,
+            "subject_unknown_eval": FEIS_SUBJECT_UNKNOWN_EVAL,
+            "is_clean_subject": not source.is_fallback_audio,
+        }
+
+    for row in rows:
+        subject_id = str(row["subject_id"]).zfill(2) if str(row["subject_id"]).isdigit() else str(row["subject_id"])
+        row["subject_id"] = subject_id
+        row.update(get_audio_meta(subject_id, str(row["label"]), str(row["audio_path"])))
+
+    for row in segs:
+        subject_id = str(row["subject_id"]).zfill(2) if str(row["subject_id"]).isdigit() else str(row["subject_id"])
+        row["subject_id"] = subject_id
+        row.update(get_audio_meta(subject_id, str(row["label"]), str(row["audio_path"])))
+
+    label_hash_counts = {label: len(hashes) for label, hashes in label_hashes.items()}
+    for row in rows:
+        row["unique_hashes_per_label_across_subjects"] = label_hash_counts[str(row["label"])]
+    for row in segs:
+        row["unique_hashes_per_label_across_subjects"] = label_hash_counts[str(row["label"])]
+
+    clean_subjects = sorted(
+        {
+            str(row["subject_id"])
+            for row in rows
+            if not bool(row["is_fallback_audio"])
+        }
+    )
+    anomaly_subjects = sorted(
+        {
+            str(row["subject_id"])
+            for row in rows
+            if bool(row["is_fallback_audio"])
+        }
+    )
+    summary = {
+        "clean_subject_ids": clean_subjects,
+        "anomalous_subject_ids": anomaly_subjects,
+        "unique_hashes_per_label_across_subjects": {
+            label: int(count) for label, count in sorted(label_hash_counts.items())
+        },
+    }
+    return rows, segs, summary
+
+
 def list_karaone_subjects(karaone_root: Path) -> list[str]:
     archive_subjects = sorted(path.name.replace(".tar.bz2", "") for path in karaone_root.glob("*.tar.bz2"))
     existing_dirs = []
@@ -358,7 +498,7 @@ def preprocess_feis_subject(
 
     for label in labels:
         if label not in audio_rel_cache:
-            src_audio = resolve_feis_audio_path(feis_root, subject, label)
+            src_audio = resolve_feis_audio_source(feis_root, subject, label).path
             dst_audio = audio_root / f"{label}.wav"
             preprocess_audio_file(src_audio, dst_audio, target_audio_sfreq)
             audio_rel_cache[label] = str(dst_audio.relative_to(output_root / "feis"))
@@ -623,6 +763,12 @@ def main() -> None:
             )
             feis_trial_rows.extend(trial_rows)
             feis_segment_rows.extend(segment_rows)
+        feis_trial_rows, feis_segment_rows, feis_enrichment = enrich_feis_rows(
+            feis_root=args.feis_root,
+            output_root=args.output_root,
+            trial_rows=feis_trial_rows,
+            segment_rows=feis_segment_rows,
+        )
         feis_manifest = {
             "dataset": "feis",
             "source_root": str(args.feis_root),
@@ -637,10 +783,16 @@ def main() -> None:
             "target_audio_sfreq": args.target_audio_sfreq,
             "bandpass_hz": [args.bandpass_low, args.bandpass_high],
             "notch_hz": args.feis_notch_hz,
+            "subject_known_eval": FEIS_SUBJECT_KNOWN_EVAL,
+            "subject_unknown_eval": FEIS_SUBJECT_UNKNOWN_EVAL,
+            "clean_subject_ids": feis_enrichment["clean_subject_ids"],
+            "anomalous_subject_ids": feis_enrichment["anomalous_subject_ids"],
+            "unique_hashes_per_label_across_subjects": feis_enrichment["unique_hashes_per_label_across_subjects"],
             "notes": [
                 "Only numbered English subjects are processed by default.",
                 "All five FEIS phases are exported separately: stimuli, articulators, thinking, speaking, resting.",
                 "Each phase is baseline-normalized with the same trial's resting window.",
+                "Processed metadata records subject-specific audio provenance and subject-05 fallback audio anomaly.",
             ],
         }
         write_csv(args.output_root / "feis" / "trials.csv", feis_trial_rows)

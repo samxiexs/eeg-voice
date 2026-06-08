@@ -124,9 +124,31 @@ checkpoints/
 models/
 
 # Self-contained upload bundle artifacts
-eeg2wave_demo_bundle/
+eeg2wave_demo_bundle/*
+!eeg2wave_demo_bundle/configs/
+eeg2wave_demo_bundle/configs/*
+!eeg2wave_demo_bundle/configs/alignment.yaml
+!eeg2wave_demo_bundle/configs/waveform_protocol.yaml
+!eeg2wave_demo_bundle/scripts/
+eeg2wave_demo_bundle/scripts/*
+!eeg2wave_demo_bundle/scripts/audit_pipeline.py
+!eeg2wave_demo_bundle/scripts/eval_alignment.py
+!eeg2wave_demo_bundle/scripts/eval_waveform_protocol.py
+!eeg2wave_demo_bundle/scripts/extract_audio_targets.py
+!eeg2wave_demo_bundle/scripts/train_alignment.py
+!eeg2wave_demo_bundle/scripts/train_waveform_protocol.py
+!eeg2wave_demo_bundle/src/
+eeg2wave_demo_bundle/src/*
+!eeg2wave_demo_bundle/src/alignment_losses.py
+!eeg2wave_demo_bundle/src/alignment_model.py
+!eeg2wave_demo_bundle/src/audio_features.py
+!eeg2wave_demo_bundle/src/dataset.py
+!eeg2wave_demo_bundle/src/eval_utils.py
+!eeg2wave_demo_bundle/src/subject_conditioned_waveform.py
+!eeg2wave_demo_bundle/src/utils.py
 eeg2wave_demo_bundle/data/
 eeg2wave_demo_bundle/outputs/
+eeg2wave_demo_bundle/outputs/**
 
 # Keep current lightweight reports trackable
 !outputs/
