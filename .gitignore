@@ -128,6 +128,7 @@ eeg2wave_demo_bundle/*
 !eeg2wave_demo_bundle/configs/
 eeg2wave_demo_bundle/configs/*
 !eeg2wave_demo_bundle/configs/alignment.yaml
+!eeg2wave_demo_bundle/configs/alignment_ssl_local.yaml
 !eeg2wave_demo_bundle/configs/waveform_protocol.yaml
 !eeg2wave_demo_bundle/scripts/
 eeg2wave_demo_bundle/scripts/*
@@ -135,6 +136,7 @@ eeg2wave_demo_bundle/scripts/*
 !eeg2wave_demo_bundle/scripts/eval_alignment.py
 !eeg2wave_demo_bundle/scripts/eval_waveform_protocol.py
 !eeg2wave_demo_bundle/scripts/extract_audio_targets.py
+!eeg2wave_demo_bundle/scripts/prepare_server_bundle.py
 !eeg2wave_demo_bundle/scripts/train_alignment.py
 !eeg2wave_demo_bundle/scripts/train_waveform_protocol.py
 !eeg2wave_demo_bundle/src/
@@ -146,6 +148,8 @@ eeg2wave_demo_bundle/src/*
 !eeg2wave_demo_bundle/src/eval_utils.py
 !eeg2wave_demo_bundle/src/subject_conditioned_waveform.py
 !eeg2wave_demo_bundle/src/utils.py
+!eeg2wave_demo_bundle/README.md
+!eeg2wave_demo_bundle/requirements.txt
 eeg2wave_demo_bundle/data/
 eeg2wave_demo_bundle/outputs/
 eeg2wave_demo_bundle/outputs/**

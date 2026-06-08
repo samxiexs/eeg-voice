@@ -1,0 +1,14 @@
+# This bundle does not require torchaudio.
+# Audio I/O and resampling here are handled by scipy.
+#
+# Recommended usage:
+#   conda activate eegvoice
+#   python -m pip install -r requirements.txt
+
+torch>=2.4,<3.0
+numpy>=1.26,<3.0
+scipy>=1.11,<2.0
+tqdm>=4.66,<5.0
+matplotlib>=3.8,<4.0
+transformers>=4.53,<5.0
+huggingface_hub>=0.33,<1.0

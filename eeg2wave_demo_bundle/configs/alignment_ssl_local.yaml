@@ -1,5 +1,5 @@
 data:
-  root: data/feis
+  root: ../data/feis
   stage: thinking
   protocol: G
   subject_id: 01
@@ -15,9 +15,9 @@ audio:
   max_gain: 10.0
 
 targets:
-  cache_path: outputs/audio_targets/feis_subject_templates.npz
-  backend: auto
-  ssl_model_name_or_path: facebook/hubert-base-ls960
+  cache_path: ../artifacts/audio_targets/feis_subject_templates_ssl.npz
+  backend: ssl_local
+  ssl_model_name_or_path: ../models/hubert-base-ls960
   local_files_only: true
   spectral_bins: 48
 
@@ -43,4 +43,4 @@ train:
   lambda_cls: 0.2
 
 output:
-  root: outputs_alignment
+  root: ../artifacts/outputs_alignment
