@@ -238,6 +238,100 @@ python scripts/infer.py --subject 01
 
 ## 7.1 输出目录默认分开
 
+## 8. Phase 2: Retrieval Waveform
+
+对齐模型训练完之后，Phase 2 的主实验入口是：
+
+```bash
+python scripts/eval_alignment_retrieval.py \
+  --config configs/alignment_ssl_local.yaml \
+  --protocol G \
+  --split test
+```
+
+`Protocol S`：
+
+```bash
+python scripts/eval_alignment_retrieval.py \
+  --config configs/alignment_ssl_local.yaml \
+  --protocol S \
+  --subject 01 \
+  --split test
+```
+
+`Protocol U`：
+
+```bash
+python scripts/eval_alignment_retrieval.py \
+  --config configs/alignment_ssl_local.yaml \
+  --protocol U \
+  --holdout-subject 21 \
+  --split test
+```
+
+这个脚本会：
+
+- EEG -> predicted embedding
+- predicted embedding -> top-5 template retrieval
+- 保存 top-1 retrieved waveform
+- 输出 exact/label top-k
+- 输出 waveform-space `NTA`
+- `Protocol U` 下额外单列 oracle ceiling
+
+结果默认在：
+
+```text
+../artifacts/outputs_alignment/<run_name>/retrieval/test/<policy>/
+```
+
+总汇总 JSON 在：
+
+```text
+../artifacts/outputs_alignment/<run_name>/metrics/test_retrieval_evaluation.json
+```
+
+## 9. Speech Space Analysis
+
+```bash
+python scripts/analyze_alignment_space.py --config configs/alignment_ssl_local.yaml
+```
+
+输出：
+
+- `pca_by_subject.png`
+- `pca_by_label.png`
+- `space_summary.json`
+- `space_summary.md`
+
+默认目录：
+
+```text
+../artifacts/outputs_alignment/template_space/feis_subject_templates_ssl/
+```
+
+## 10. Consolidated Phase 2 Report
+
+```bash
+python scripts/report_phase2.py \
+  --config configs/alignment_ssl_local.yaml \
+  --protocol G \
+  --split test
+```
+
+它会把：
+
+- alignment audit
+- retrieval benchmark
+- speech-space summary
+- Route A/B/C decoder memo
+- 主方向建议
+
+整合到一个 markdown：
+
+```text
+../artifacts/outputs_alignment/<run_name>/metrics/test_phase2_report.md
+```
+
 为了避免 `thinking` 和 `stimuli` 共用同一个 `outputs/`，当前代码默认会自动分开写：
 
 - `thinking -> outputs-thinking/`

@@ -54,6 +54,9 @@ eeg2wave_demo_bundle/
     extract_audio_targets.py
     train_alignment.py
     eval_alignment.py
+    eval_alignment_retrieval.py
+    analyze_alignment_space.py
+    report_phase2.py
     train_waveform_protocol.py
     eval_waveform_protocol.py
     prepare_server_bundle.py
@@ -103,6 +106,40 @@ Then extract SSL targets with:
 
 ```bash
 python eeg2wave_demo_bundle/scripts/extract_audio_targets.py --config eeg2wave_demo_bundle/configs/alignment.yaml --backend ssl_local
+```
+
+## Phase 2 Retrieval Evaluation
+
+Run the new retrieval-waveform evaluation with the SSL alignment config:
+
+```bash
+python server_bundle/feis_subject_aware_bundle/app/scripts/eval_alignment_retrieval.py \
+  --config server_bundle/feis_subject_aware_bundle/app/configs/alignment_ssl_local.yaml \
+  --protocol G \
+  --split test
+```
+
+This writes:
+
+- per-trial retrieved wavs
+- top-5 retrieval JSON
+- predicted embedding cache
+- protocol-aware metrics including exact/label top-k and waveform-space NTA
+
+For template-space structure analysis:
+
+```bash
+python server_bundle/feis_subject_aware_bundle/app/scripts/analyze_alignment_space.py \
+  --config server_bundle/feis_subject_aware_bundle/app/configs/alignment_ssl_local.yaml
+```
+
+To consolidate audit + retrieval + space analysis into one markdown report:
+
+```bash
+python server_bundle/feis_subject_aware_bundle/app/scripts/report_phase2.py \
+  --config server_bundle/feis_subject_aware_bundle/app/configs/alignment_ssl_local.yaml \
+  --protocol G \
+  --split test
 ```
 
 ## Train One Subject

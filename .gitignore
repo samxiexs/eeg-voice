@@ -46,6 +46,10 @@ data/retrieval/
 artifacts/
 results/
 
+server_bundle/models/
+server_bundle/data/
+server_bundle/feis_subject_aware_bundle/app/outputs_waveform_protocol/
+
 # Probe artifacts: reports are OK, saved remote snippets/binaries stay local
 outputs/probe_artifacts/
 outputs/imagined_speech_probe_artifacts/
