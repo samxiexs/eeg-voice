@@ -16,16 +16,20 @@ if str(BUNDLE_DIR) not in sys.path:
 
 from src.alignment_losses import compute_alignment_losses
 from src.alignment_model import EEGSpeechAlignmentModel
+from src.alignment_retrieval import build_retrieval_bank, evaluate_embedding_retrieval
 from src.dataset import FEISProtocolDataset
-from src.eval_utils import retrieval_topk
-from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, set_seed, write_json
+from src.utils import build_protocol_run_name, ensure_dir, load_simple_yaml, resolve_bundle_path, set_seed, write_json
 
 
 ALIGNMENT_KEYS = (
     "total",
-    "embedding_cosine_loss",
+    "sequence_cosine_loss",
+    "sequence_cosine",
+    "sequence_mse",
+    "summary_cosine",
     "embedding_cosine",
     "embedding_mse",
+    "contrastive",
     "prosody_loss",
     "cls",
     "cls_acc",
@@ -49,6 +53,10 @@ def parse_args() -> argparse.Namespace:
 
 def _valid_steps_from_samples(valid_samples: torch.Tensor) -> torch.Tensor:
     return torch.ceil(valid_samples.float() / 32.0).long().clamp_min(1)
+
+
+def _top_k(config: dict) -> int:
+    return int(config.get("eval", {}).get("top_k", config["train"].get("retrieval_top_k", 5)))
 
 
 def build_datasets(config: dict, args: argparse.Namespace) -> tuple[FEISProtocolDataset, FEISProtocolDataset, FEISProtocolDataset]:
@@ -84,21 +92,16 @@ def build_model(config: dict, dataset: FEISProtocolDataset) -> EEGSpeechAlignmen
     return EEGSpeechAlignmentModel(
         n_channels_eeg=int(cfg_model["n_channels_eeg"]),
         hidden_dim=int(cfg_model["hidden_dim"]),
-        speech_embedding_dim=int(dataset.target_embedding_dim),
-        prosody_dim=int(dataset.prosody_dim),
+        speech_embedding_dim=int(dataset.target_sequence_dim),
+        prosody_dim=int(dataset.prosody_dim) if bool(cfg_model.get("use_prosody_head", dataset.prosody_dim > 0)) else 0,
         num_labels=int(dataset.num_labels),
         latent_dim=int(cfg_model.get("latent_dim", 192)),
+        target_steps=int(dataset.target_sequence_steps),
         use_label_head=bool(cfg_model.get("use_label_head", True)),
         use_subject_demo_head=bool(cfg_model.get("use_subject_demo_head", False)),
         num_subjects=int(dataset.num_subjects),
         subject_embedding_dim=int(cfg_model.get("subject_embedding_dim", 64)),
     )
-
-
-def _build_retrieval_bank(dataset: FEISProtocolDataset) -> tuple[torch.Tensor, list[str]]:
-    bank_ids = dataset.unique_template_ids(split="train")
-    bank = np.stack([dataset.get_template_target(template_id)["speech_embedding"] for template_id in bank_ids], axis=0)
-    return torch.from_numpy(bank).float(), bank_ids
 
 
 def evaluate(
@@ -109,28 +112,35 @@ def evaluate(
     config: dict,
 ) -> dict[str, float]:
     model.eval()
-    retrieval_bank, bank_ids = _build_retrieval_bank(dataset)
-    retrieval_bank = retrieval_bank.to(device)
+    retrieval_bank = build_retrieval_bank(dataset, policy="auto")
     sums = {key: 0.0 for key in ALIGNMENT_KEYS}
     total = 0
-    all_pred: list[torch.Tensor] = []
+    all_pred_sequence: list[np.ndarray] = []
+    all_pred_summary: list[np.ndarray] = []
     all_target_ids: list[str] = []
+    all_target_labels: list[str] = []
     with torch.no_grad():
         for batch in loader:
             eeg = batch["eeg"].to(device)
-            speech_target = batch["speech_embedding"].to(device)
-            prosody_target = batch["prosody_target"].to(device)
+            target_sequence = batch["target_sequence"].to(device)
+            target_mask = batch["target_mask"].to(device)
+            target_summary = batch["target_summary"].to(device)
             label_ids = batch["label_id"].to(device)
             valid_steps = _valid_steps_from_samples(batch["eeg_valid_num_samples"].to(device))
             outputs = model(eeg, subject_indices=batch["subject_index"].to(device), valid_steps=valid_steps)
             losses = compute_alignment_losses(
-                pred_embedding=outputs["speech_embedding"],
-                target_embedding=speech_target,
-                pred_prosody=outputs["prosody"],
-                target_prosody=prosody_target,
-                lambda_cosine=float(config["train"]["lambda_cosine"]),
-                lambda_mse=float(config["train"]["lambda_mse"]),
-                lambda_prosody=float(config["train"]["lambda_prosody"]),
+                pred_sequence=outputs["speech_sequence"],
+                target_sequence=target_sequence,
+                target_mask=target_mask,
+                pred_summary=outputs["speech_embedding"],
+                target_summary=target_summary,
+                pred_prosody=outputs.get("prosody"),
+                target_prosody=batch["prosody_target"].to(device) if "prosody_target" in batch else None,
+                lambda_seq_cosine=float(config["train"].get("lambda_seq_cosine", config["train"].get("lambda_cosine", 1.0))),
+                lambda_seq_mse=float(config["train"].get("lambda_seq_mse", config["train"].get("lambda_mse", 0.5))),
+                lambda_contrastive=float(config["train"].get("lambda_contrastive", 1.0)),
+                lambda_prosody=float(config["train"].get("lambda_prosody", 0.0)),
+                contrastive_temperature=float(config["train"].get("contrastive_temperature", 0.07)),
                 label_logits=outputs.get("label_logits"),
                 label_ids=label_ids,
                 lambda_cls=float(config["train"].get("lambda_cls", 0.0)),
@@ -139,18 +149,20 @@ def evaluate(
             total += batch_size
             for key in ALIGNMENT_KEYS:
                 sums[key] += float(losses[key].item()) * batch_size
-            all_pred.append(outputs["speech_embedding"].detach())
+            all_pred_sequence.append(outputs["speech_sequence"].detach().cpu().numpy())
+            all_pred_summary.append(outputs["speech_embedding"].detach().cpu().numpy())
             all_target_ids.extend(list(batch["template_id"]))
+            all_target_labels.extend(list(batch["label"]))
     metrics = {key: value / max(total, 1) for key, value in sums.items()}
-    pred_matrix = torch.cat(all_pred, dim=0).cpu().numpy()
-    retrieval = retrieval_topk(
-        predicted=pred_matrix,
+    retrieval = evaluate_embedding_retrieval(
+        bank=retrieval_bank,
+        predicted_sequences=np.concatenate(all_pred_sequence, axis=0),
+        predicted_summaries=np.concatenate(all_pred_summary, axis=0),
         target_template_ids=all_target_ids,
-        bank_embeddings=retrieval_bank.cpu().numpy(),
-        bank_template_ids=bank_ids,
-        topk=(1, 5),
+        target_labels=all_target_labels,
+        top_k=_top_k(config),
     )
-    metrics.update(retrieval)
+    metrics.update(retrieval["metrics"])
     return metrics
 
 
@@ -197,11 +209,14 @@ def main() -> None:
 
     protocol = str(config["data"]["protocol"]).upper()
     output_root = resolve_bundle_path(args.output_root or config["output"]["root"], BUNDLE_DIR)
-    run_name = f"{protocol.lower()}_{config['data']['stage']}_{config['data'].get('ablation_mode', 'none')}"
-    if protocol == "S":
-        run_name += f"_subject_{train_ds.subject_vocab[0]}"
-    if protocol == "U":
-        run_name += f"_holdout_{args.holdout_subject or config['data'].get('holdout_subject_id')}"
+    run_name = build_protocol_run_name(
+        config=config,
+        protocol=protocol,
+        stage=str(config["data"]["stage"]),
+        ablation_mode=str(config["data"].get("ablation_mode", "none")),
+        subject_id=args.subject or config["data"].get("subject_id"),
+        holdout_subject_id=args.holdout_subject or config["data"].get("holdout_subject_id"),
+    )
     run_root = ensure_dir(output_root / run_name)
     ckpt_dir = ensure_dir(run_root / "checkpoints")
     metrics_dir = ensure_dir(run_root / "metrics")
@@ -211,25 +226,32 @@ def main() -> None:
     best_val = float("inf")
     epochs = int(config["train"]["epochs"])
     progress = tqdm(range(1, epochs + 1), desc=f"alignment {run_name}")
+    top1_key = f"retrieval_top1_{'label' if protocol == 'U' else 'exact'}"
     for epoch in progress:
         model.train()
         sums = {key: 0.0 for key in ALIGNMENT_KEYS}
         total = 0
         for batch in train_loader:
             eeg = batch["eeg"].to(device)
-            speech_target = batch["speech_embedding"].to(device)
-            prosody_target = batch["prosody_target"].to(device)
+            target_sequence = batch["target_sequence"].to(device)
+            target_mask = batch["target_mask"].to(device)
+            target_summary = batch["target_summary"].to(device)
             label_ids = batch["label_id"].to(device)
             valid_steps = _valid_steps_from_samples(batch["eeg_valid_num_samples"].to(device))
             outputs = model(eeg, subject_indices=batch["subject_index"].to(device), valid_steps=valid_steps)
             losses = compute_alignment_losses(
-                pred_embedding=outputs["speech_embedding"],
-                target_embedding=speech_target,
-                pred_prosody=outputs["prosody"],
-                target_prosody=prosody_target,
-                lambda_cosine=float(config["train"]["lambda_cosine"]),
-                lambda_mse=float(config["train"]["lambda_mse"]),
-                lambda_prosody=float(config["train"]["lambda_prosody"]),
+                pred_sequence=outputs["speech_sequence"],
+                target_sequence=target_sequence,
+                target_mask=target_mask,
+                pred_summary=outputs["speech_embedding"],
+                target_summary=target_summary,
+                pred_prosody=outputs.get("prosody"),
+                target_prosody=batch["prosody_target"].to(device) if "prosody_target" in batch else None,
+                lambda_seq_cosine=float(config["train"].get("lambda_seq_cosine", config["train"].get("lambda_cosine", 1.0))),
+                lambda_seq_mse=float(config["train"].get("lambda_seq_mse", config["train"].get("lambda_mse", 0.5))),
+                lambda_contrastive=float(config["train"].get("lambda_contrastive", 1.0)),
+                lambda_prosody=float(config["train"].get("lambda_prosody", 0.0)),
+                contrastive_temperature=float(config["train"].get("contrastive_temperature", 0.07)),
                 label_logits=outputs.get("label_logits"),
                 label_ids=label_ids,
                 lambda_cls=float(config["train"].get("lambda_cls", 0.0)),
@@ -251,7 +273,7 @@ def main() -> None:
             train=f"{train_metrics['total']:.4f}",
             val=f"{val_metrics['total']:.4f}",
             cos=f"{val_metrics['embedding_cosine']:.3f}",
-            r1=f"{val_metrics['retrieval_top1']:.3f}",
+            r1=f"{float(val_metrics.get(top1_key, 0.0) or 0.0):.3f}",
         )
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]
@@ -263,6 +285,9 @@ def main() -> None:
                     "run_name": run_name,
                     "train_subjects": train_ds.subject_vocab,
                     "label_vocab": train_ds.label_vocab,
+                    "target_kind": train_ds.target_kind,
+                    "target_steps": train_ds.target_sequence_steps,
+                    "target_dim": train_ds.target_sequence_dim,
                 },
                 best_ckpt,
             )
@@ -274,13 +299,11 @@ def main() -> None:
         metrics_dir / "history.json",
         {
             "run_name": run_name,
+            "target_kind": train_ds.target_kind,
             "history": history,
             "test": test_metrics,
         },
     )
-    print(f"Saved best checkpoint to {best_ckpt}")
-    print(f"Test embedding cosine: {test_metrics['embedding_cosine']:.4f}")
-    print(f"Test retrieval@1: {test_metrics['retrieval_top1']:.4f}")
 
 
 if __name__ == "__main__":

@@ -276,7 +276,10 @@ class FEISProtocolDataset(Dataset):
 
         self.shuffle_indices = np.random.RandomState(self.seed).permutation(len(self.entries))
         self.target_cache = self._load_target_cache(target_cache_path, require_targets=require_targets)
-        self.target_embedding_dim = 0 if self.target_cache is None else int(self.target_cache["speech_embeddings"].shape[1])
+        self.target_kind = "none" if self.target_cache is None else str(self.target_cache["target_kind"])
+        self.target_sequence_steps = 0 if self.target_cache is None else int(self.target_cache["target_sequences"].shape[1])
+        self.target_sequence_dim = 0 if self.target_cache is None else int(self.target_cache["target_sequences"].shape[2])
+        self.target_embedding_dim = 0 if self.target_cache is None else int(self.target_cache["target_summaries"].shape[1])
         self.prosody_dim = 0 if self.target_cache is None else int(self.target_cache["prosody_targets"].shape[1])
 
     def _load_stage_rows(self) -> list[dict[str, Any]]:
@@ -474,15 +477,45 @@ class FEISProtocolDataset(Dataset):
         payload = np.load(resolved_path, allow_pickle=True)
         template_ids = payload["template_ids"].astype(str)
         index = {template_id: idx for idx, template_id in enumerate(template_ids.tolist())}
+        if "target_sequences" in payload.files:
+            target_sequences = payload["target_sequences"].astype(np.float32)
+        else:
+            target_sequences = payload["speech_embeddings"].astype(np.float32)[:, None, :]
+        if "target_masks" in payload.files:
+            target_masks = payload["target_masks"].astype(np.float32)
+        else:
+            target_masks = np.ones(target_sequences.shape[:2], dtype=np.float32)
+        if "target_summaries" in payload.files:
+            target_summaries = payload["target_summaries"].astype(np.float32)
+        else:
+            target_summaries = payload["speech_embeddings"].astype(np.float32)
+        prosody_targets = (
+            payload["prosody_targets"].astype(np.float32)
+            if "prosody_targets" in payload.files
+            else np.zeros((target_sequences.shape[0], 0), dtype=np.float32)
+        )
+        target_kind = (
+            str(payload["target_kind"].item())
+            if "target_kind" in payload.files
+            else ("hubert_pooled" if target_sequences.shape[1] == 1 else "unknown")
+        )
         return {
             "path": resolved_path,
             "template_ids": template_ids,
             "subject_ids": payload["subject_ids"].astype(str),
             "labels": payload["labels"].astype(str),
             "audio_paths": payload["audio_paths"].astype(str),
-            "speech_embeddings": payload["speech_embeddings"].astype(np.float32),
-            "prosody_targets": payload["prosody_targets"].astype(np.float32),
+            "speech_embeddings": target_summaries,
+            "target_sequences": target_sequences,
+            "target_masks": target_masks,
+            "target_summaries": target_summaries,
+            "prosody_targets": prosody_targets,
             "feature_backend": payload["feature_backend"].astype(str),
+            "target_kind": target_kind,
+            "decoder_scales": payload["decoder_scales"].astype(np.float32) if "decoder_scales" in payload.files else None,
+            "default_decoder_scales": payload["default_decoder_scales"].astype(np.float32)
+            if "default_decoder_scales" in payload.files
+            else None,
             "index": index,
         }
 
@@ -515,8 +548,12 @@ class FEISProtocolDataset(Dataset):
             raise RuntimeError("Target cache is not loaded")
         idx = self.target_cache["index"][template_id]
         return {
-            "speech_embedding": self.target_cache["speech_embeddings"][idx],
+            "speech_embedding": self.target_cache["target_summaries"][idx],
+            "target_sequence": self.target_cache["target_sequences"][idx],
+            "target_mask": self.target_cache["target_masks"][idx],
+            "target_summary": self.target_cache["target_summaries"][idx],
             "prosody_target": self.target_cache["prosody_targets"][idx],
+            "decoder_scale": None if self.target_cache["decoder_scales"] is None else self.target_cache["decoder_scales"][idx],
         }
 
     def build_control_predictions(self, mode: str, use_oracle_for_unseen: bool = False) -> dict[str, np.ndarray]:
@@ -537,31 +574,35 @@ class FEISProtocolDataset(Dataset):
         for template_id in reference_templates:
             meta = self.template_metadata(template_id)
             target = self.get_template_target(template_id)
-            label_pool[meta["label"]].append(target["speech_embedding"])
-            subject_pool[meta["subject_id"]].append(target["speech_embedding"])
-            label_subject_pool[(meta["subject_id"], meta["label"])] = target["speech_embedding"]
+            label_pool[meta["label"]].append(target["target_sequence"])
+            subject_pool[meta["subject_id"]].append(target["target_sequence"])
+            label_subject_pool[(meta["subject_id"], meta["label"])] = target["target_sequence"]
 
         label_means = {key: np.mean(np.stack(values, axis=0), axis=0) for key, values in label_pool.items()}
         subject_means = {key: np.mean(np.stack(values, axis=0), axis=0) for key, values in subject_pool.items()}
-        zero_embedding = np.zeros(self.target_embedding_dim, dtype=np.float32)
-        preds: list[np.ndarray] = []
+        zero_sequence = np.zeros((self.target_sequence_steps, self.target_sequence_dim), dtype=np.float32)
+        pred_sequences: list[np.ndarray] = []
         availability: list[float] = []
         for entry in self.entries:
             availability.append(1.0)
             if mode == "label_only":
-                preds.append(label_means.get(entry.label, zero_embedding))
+                pred_sequences.append(label_means.get(entry.label, zero_sequence))
                 continue
             if mode == "subject_only":
                 available = entry.subject_id in subject_means
                 availability[-1] = 1.0 if available else 0.0
-                preds.append(subject_means.get(entry.subject_id, zero_embedding))
+                pred_sequences.append(subject_means.get(entry.subject_id, zero_sequence))
                 continue
             key = (entry.subject_id, entry.label)
             available = key in label_subject_pool
             availability[-1] = 1.0 if available else 0.0
-            preds.append(label_subject_pool.get(key, zero_embedding))
+            pred_sequences.append(label_subject_pool.get(key, zero_sequence))
+        sequences = np.stack(pred_sequences, axis=0).astype(np.float32)
         return {
-            "speech_embeddings": np.stack(preds, axis=0).astype(np.float32),
+            "target_sequences": sequences,
+            "target_masks": np.ones((sequences.shape[0], sequences.shape[1]), dtype=np.float32),
+            "target_summaries": sequences.mean(axis=1).astype(np.float32),
+            "speech_embeddings": sequences.mean(axis=1).astype(np.float32),
             "availability": np.asarray(availability, dtype=np.float32),
         }
 
@@ -607,11 +648,25 @@ class FEISProtocolDataset(Dataset):
 
         if self.target_cache is None:
             speech_embedding = np.zeros((0,), dtype=np.float32)
+            target_sequence = np.zeros((0, 0), dtype=np.float32)
+            target_mask = np.zeros((0,), dtype=np.float32)
+            target_summary = np.zeros((0,), dtype=np.float32)
             prosody_target = np.zeros((0,), dtype=np.float32)
+            decoder_scale = np.zeros((0,), dtype=np.float32)
+            target_kind = "none"
         else:
             template_target = self.get_template_target(entry.template_id)
             speech_embedding = template_target["speech_embedding"].astype(np.float32)
+            target_sequence = template_target["target_sequence"].astype(np.float32)
+            target_mask = template_target["target_mask"].astype(np.float32)
+            target_summary = template_target["target_summary"].astype(np.float32)
             prosody_target = template_target["prosody_target"].astype(np.float32)
+            decoder_scale = (
+                np.asarray(template_target["decoder_scale"], dtype=np.float32)
+                if template_target["decoder_scale"] is not None
+                else np.zeros((0,), dtype=np.float32)
+            )
+            target_kind = self.target_kind
 
         return {
             "eeg": torch.from_numpy(eeg_np).float(),
@@ -624,7 +679,12 @@ class FEISProtocolDataset(Dataset):
             "template_id": entry.template_id,
             "audio_path": entry.audio_path,
             "speech_embedding": torch.from_numpy(speech_embedding).float(),
+            "target_sequence": torch.from_numpy(target_sequence).float(),
+            "target_mask": torch.from_numpy(target_mask).float(),
+            "target_summary": torch.from_numpy(target_summary).float(),
             "prosody_target": torch.from_numpy(prosody_target).float(),
+            "decoder_scale": torch.from_numpy(decoder_scale).float(),
+            "target_kind": target_kind,
             "is_clean_subject": torch.tensor(float(entry.is_clean_subject), dtype=torch.float32),
             "split_name": entry.split_name,
             "protocol": entry.protocol,

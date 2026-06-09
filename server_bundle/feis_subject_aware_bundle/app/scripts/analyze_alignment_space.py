@@ -28,12 +28,19 @@ def parse_args() -> argparse.Namespace:
 
 def load_target_cache(path: Path) -> dict[str, np.ndarray]:
     payload = np.load(path, allow_pickle=True)
+    summaries = (
+        payload["target_summaries"].astype(np.float32)
+        if "target_summaries" in payload.files
+        else payload["speech_embeddings"].astype(np.float32)
+    )
     return {
         "template_ids": payload["template_ids"].astype(str),
         "subject_ids": payload["subject_ids"].astype(str),
         "labels": payload["labels"].astype(str),
         "audio_paths": payload["audio_paths"].astype(str),
-        "speech_embeddings": payload["speech_embeddings"].astype(np.float32),
+        "speech_embeddings": summaries,
+        "target_kind": str(payload["target_kind"].item()) if "target_kind" in payload.files else "hubert_pooled",
+        "target_sequences": payload["target_sequences"].astype(np.float32) if "target_sequences" in payload.files else None,
         "prosody_targets": payload["prosody_targets"].astype(np.float32),
         "feature_backend": payload["feature_backend"].astype(str),
     }
@@ -185,6 +192,7 @@ def compute_space_summary(payload: dict[str, np.ndarray]) -> dict[str, object]:
     return {
         "num_templates": int(embeddings.shape[0]),
         "embedding_dim": int(embeddings.shape[1]),
+        "target_kind": str(payload.get("target_kind", "hubert_pooled")),
         "num_subjects": int(len(set(subject_ids.tolist()))),
         "num_labels": int(len(set(labels.tolist()))),
         "feature_backend": str(payload["feature_backend"][0]),

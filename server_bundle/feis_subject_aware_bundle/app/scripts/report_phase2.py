@@ -9,13 +9,16 @@ BUNDLE_DIR = Path(__file__).resolve().parents[1]
 if str(BUNDLE_DIR) not in sys.path:
     sys.path.insert(0, str(BUNDLE_DIR))
 
-from src.utils import load_simple_yaml, resolve_bundle_path
+from src.utils import build_protocol_run_name, load_simple_yaml, resolve_bundle_path
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate one consolidated Phase 2 FEIS report.")
+    parser = argparse.ArgumentParser(description="Generate a consolidated FEIS alignment report.")
     parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "alignment_ssl_local.yaml"))
-    parser.add_argument("--retrieval-eval", default=None)
+    parser.add_argument("--alignment-eval", default=None)
+    parser.add_argument("--sequence-eval", default=None)
+    parser.add_argument("--codec-eval", default=None)
+    parser.add_argument("--waveform-eval", default=None)
     parser.add_argument("--space-summary", default=None)
     parser.add_argument("--output-path", default=None)
     parser.add_argument("--protocol", default=None)
@@ -28,13 +31,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_run_name(config: dict, args: argparse.Namespace) -> str:
-    protocol = str(config["data"]["protocol"]).upper()
-    run_name = f"{protocol.lower()}_{config['data']['stage']}_{config['data'].get('ablation_mode', 'none')}"
-    if protocol == "S":
-        run_name += f"_subject_{args.subject or config['data'].get('subject_id')}"
-    if protocol == "U":
-        run_name += f"_holdout_{args.holdout_subject or config['data'].get('holdout_subject_id')}"
-    return run_name
+    return build_protocol_run_name(
+        config=config,
+        protocol=str(config["data"]["protocol"]).upper(),
+        stage=str(config["data"]["stage"]),
+        ablation_mode=str(config["data"].get("ablation_mode", "none")),
+        subject_id=args.subject or config["data"].get("subject_id"),
+        holdout_subject_id=args.holdout_subject or config["data"].get("holdout_subject_id"),
+    )
 
 
 def fmt_metric(value) -> str:
@@ -51,210 +55,185 @@ def load_json(path: Path | None) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def extract_model_block(payload: dict | None) -> dict | None:
+def load_alignment_summary(path: Path | None) -> dict | None:
+    payload = load_json(path)
     if payload is None:
         return None
-    model = payload.get("model")
-    if isinstance(model, dict):
-        nested = model.get("model")
-        if isinstance(nested, dict):
-            return nested
-        return model
+    return payload
+
+
+def load_waveform_summary(path: Path | None) -> dict | None:
+    return load_json(path)
+
+
+def _alignment_model_block(payload: dict | None) -> dict | None:
+    if payload is None:
+        return None
+    block = payload.get("model")
+    if isinstance(block, dict) and isinstance(block.get("model"), dict):
+        return block["model"]
     return None
 
 
-def choose_recommendation(retrieval_eval: dict | None) -> tuple[str, str]:
-    if retrieval_eval is None:
-        return (
-            "Recommendation unavailable",
-            "Retrieval evaluation JSON was not found, so the route recommendation could not be derived from evidence.",
-        )
-    main_model = extract_model_block(retrieval_eval)
-    if main_model is None:
-        return (
-            "Recommendation unavailable",
-            "Retrieval evaluation JSON did not contain a usable model summary block.",
-        )
-    match_mode = str(main_model["match_mode"])
+def _route_row(name: str, payload: dict | None) -> str | None:
+    model = _alignment_model_block(payload)
+    if model is None:
+        return None
+    match_mode = str(model.get("match_mode", "exact"))
     top1_key = f"retrieval_top1_{'exact' if match_mode == 'exact' else 'label'}"
-    top1 = float(main_model.get(top1_key) or 0.0)
-    cosine = float(main_model.get("embedding_cosine") or 0.0)
-    oracle = retrieval_eval.get("oracle_ceiling")
-    oracle_top1 = None
-    if oracle is not None:
-        oracle_model = extract_model_block(oracle)
-        if oracle_model is not None:
-            oracle_top1 = float(oracle_model.get("retrieval_top1_exact") or 0.0)
-    if cosine >= 0.85 and top1 <= 0.15:
+    top5_key = f"retrieval_top5_{'exact' if match_mode == 'exact' else 'label'}"
+    nta_key = f"NTA_{'exact' if match_mode == 'exact' else 'label'}"
+    return (
+        f"| {name} | {payload.get('target_kind', 'unknown')} | {payload.get('reconstruction_mode', 'unknown')} | "
+        f"{fmt_metric(model.get(top1_key))} | {fmt_metric(model.get(top5_key))} | {fmt_metric(model.get('MRR'))} | "
+        f"{fmt_metric(model.get('mean_rank'))} | {fmt_metric(model.get(nta_key))} | "
+        f"{fmt_metric(model.get('mean_retrieved_target_stft_distance'))} |"
+    )
+
+
+def _waveform_row(name: str, payload: dict | None) -> str | None:
+    if payload is None:
+        return None
+    return (
+        f"| {name} | raw_waveform | direct_decode | N/A | N/A | N/A | N/A | "
+        f"{fmt_metric(payload.get('nearest_template_accuracy'))} | {fmt_metric(payload.get('stft_distance'))} |"
+    )
+
+
+def choose_recommendation(
+    pooled_eval: dict | None,
+    sequence_eval: dict | None,
+    codec_eval: dict | None,
+) -> tuple[str, str]:
+    codec_model = _alignment_model_block(codec_eval)
+    if codec_model is not None:
         return (
-            "4. EEG → audio token → codec decoder",
-            "Pooled HuBERT appears aligned enough to give high cosine but not discriminative enough for stable retrieval. "
-            "The next investment should shift toward richer targets: first test sequence-level HuBERT, then codec-latent/audio-token targets, "
-            "rather than spending much more time optimizing pooled-template retrieval.",
+            "C. EEG -> codec latent -> frozen codec decoder",
+            "Codec latents remain the primary forward path because they are decoder-compatible and directly optimize waveform reconstruction instead of stopping at retrieval diagnostics.",
         )
-    if oracle_top1 is not None and top1 >= 0.40 and oracle_top1 - top1 <= 0.15:
+    sequence_model = _alignment_model_block(sequence_eval)
+    pooled_model = _alignment_model_block(pooled_eval)
+    if pooled_model is not None:
+        match_mode = str(pooled_model.get("match_mode", "exact"))
+        top1_key = f"retrieval_top1_{'exact' if match_mode == 'exact' else 'label'}"
+        cosine = pooled_model.get("embedding_cosine")
+        retrieval = pooled_model.get(top1_key)
+        if isinstance(cosine, (float, int)) and isinstance(retrieval, (float, int)) and float(cosine) >= 0.85 and float(retrieval) <= 0.15:
+            return (
+                "B -> C. Sequence HuBERT diagnostics, then codec latent reconstruction",
+                "Pooled HuBERT is aligned but not discriminative. Sequence HuBERT should be treated as the diagnostic bridge, while codec latents should absorb the main reconstruction investment.",
+            )
+    if sequence_model is not None:
         return (
-            "2. EEG → speech embedding → retrieval waveform",
-            "Strict retrieval is already competitive and close to the oracle ceiling, so template retrieval is the most robust FEIS-specific path to prioritize now.",
+            "B. Sequence HuBERT retrieval diagnostics",
+            "Sequence-level HuBERT is the right immediate representation-learning target when pooled HuBERT collapses, but it should stay an evaluation bridge rather than the terminal reconstruction system.",
         )
     return (
-        "3. EEG → speech embedding → vocoder waveform",
-        "Retrieval remains useful as a ceiling and sanity baseline, but the main forward path should move toward a decoder that consumes speech representations directly.",
+        "Recommendation unavailable",
+        "No alignment evaluation JSON was found, so the route recommendation could not be derived from evidence.",
     )
 
 
-def route_table() -> str:
-    return "\n".join(
-        [
-            "| Route | Complexity | Expected intelligibility | Expected robustness on FEIS | Research value |",
-            "|---|---|---|---|---|",
-            "| A. Nearest-template waveform | Low | Moderate if retrieval is label-stable | High | Strong baseline / ceiling, limited novelty |",
-            "| B. Speech embedding -> frozen vocoder | Medium | Medium to high if target representation matches the vocoder | Medium | Good balance of realism and tractability |",
-            "| C. Speech embedding -> trainable waveform decoder | High | Uncertain under FEIS scale | Low to medium | High upside, highest data risk |",
-        ]
+def build_report(
+    pooled_eval: dict | None,
+    sequence_eval: dict | None,
+    codec_eval: dict | None,
+    waveform_eval: dict | None,
+    space_summary: dict | None,
+) -> str:
+    recommendation_title, recommendation_body = choose_recommendation(
+        pooled_eval=pooled_eval,
+        sequence_eval=sequence_eval,
+        codec_eval=codec_eval,
     )
-
-
-def build_report(retrieval_eval: dict | None, space_summary: dict | None) -> str:
-    recommendation_title, recommendation_body = choose_recommendation(retrieval_eval)
+    current = codec_eval or sequence_eval or pooled_eval
+    current_model = _alignment_model_block(current)
     lines: list[str] = [
-        "# FEIS Phase 2 Report",
+        "# FEIS Next-Gen Alignment Report",
         "",
-        "## Task 1. Alignment Audit",
+        "## Representation Strategy and Long-Term Goal",
         "",
-        "- Current serious target path: pooled HuBERT SSL embeddings, not frame-level HuBERT, not WavLM, not codec latent.",
-        "- Target cache: `feis_subject_templates_ssl.npz` with `speech_embeddings=(336, 768)` and `prosody_targets=(336, 4)`.",
-        "- Alignment model output: one pooled speech embedding per EEG trial plus prosody.",
+        "- Sequence-level HuBERT is a representation-learning and diagnostic stage, not the final reconstruction method.",
+        "- Retrieval metrics (`Top-1`, `Top-5`, `MRR`, `Mean Rank`, `NTA`) are representation diagnostics rather than terminal success criteria.",
+        "- The long-term reconstruction path is `EEG -> speech representation -> audio codec latent -> waveform`.",
+        "- Phase 3 and later decisions should prioritize downstream waveform quality over isolated retrieval gains.",
+        "",
+        "## Current Run",
+        "",
     ]
-    if retrieval_eval is not None:
-        main_model = extract_model_block(retrieval_eval)
-        if main_model is not None:
-            lines.extend(
-                [
-                    f"- Current evaluated checkpoint embedding cosine: `{fmt_metric(main_model.get('embedding_cosine'))}`.",
-                    f"- Current retrieval policy: `{retrieval_eval['model']['retrieval_policy']}` with match mode `{retrieval_eval['model']['match_mode']}`.",
-                ]
-            )
-    lines.extend(
-        [
-            "",
-            "## Task 2. Retrieval Waveform Reconstruction",
-            "",
-            "- EEG trials are mapped to predicted speech embeddings, ranked against a protocol-aware template bank, and reconstructed by copying the top-1 retrieved waveform.",
-            "- Per-trial outputs include top-5 candidates, retrieved template metadata, cosine scores, saved waveform paths, and waveform-space NTA fields.",
-            "",
-            "## Task 3. Retrieval Benchmark",
-            "",
-        ]
-    )
-    if retrieval_eval is None:
-        lines.append("- Retrieval evaluation file not found.")
+    if current_model is None:
+        lines.append("- No alignment evaluation file was found for the current run.")
     else:
-        main_model = extract_model_block(retrieval_eval)
-        main_controls = retrieval_eval["model"]["controls"]
-        if main_model is None:
-            lines.append("- Retrieval evaluation file was found, but the model summary block was malformed.")
-            main_controls = {}
-        else:
-            main_mode = str(main_model["match_mode"])
-            main_top1_key = f"retrieval_top1_{'exact' if main_mode == 'exact' else 'label'}"
-            main_top5_key = f"retrieval_top5_{'exact' if main_mode == 'exact' else 'label'}"
-            main_nta_key = f"NTA_{'exact' if main_mode == 'exact' else 'label'}"
-            lines.extend(
-                [
-                    f"- Main protocol result: `{main_top1_key}={fmt_metric(main_model.get(main_top1_key))}`, `{main_top5_key}={fmt_metric(main_model.get(main_top5_key))}`, `{main_nta_key}={fmt_metric(main_model.get(main_nta_key))}`.",
-                    f"- Target-match availability in bank: `{fmt_metric(main_model.get('target_match_available_rate'))}`.",
-                    f"- Mean retrieved-vs-target waveform STFT distance: `{fmt_metric(main_model.get('mean_retrieved_target_stft_distance'))}`.",
-                    f"- Random baseline: `{fmt_metric(main_controls['random'].get(main_top1_key))}` / `{fmt_metric(main_controls['random'].get(main_top5_key))}`.",
-                    f"- Label-only baseline: `{fmt_metric(main_controls['label_only'].get(main_top1_key))}` / `{fmt_metric(main_controls['label_only'].get(main_top5_key))}`.",
-                ]
-            )
-            for key in sorted(main_controls):
-                if key in {"random", "label_only"}:
-                    continue
-                lines.append(
-                    f"- {key}: `{fmt_metric(main_controls[key].get(main_top1_key))}` / `{fmt_metric(main_controls[key].get(main_top5_key))}`."
-                )
-            if "oracle_ceiling" in retrieval_eval:
-                oracle_model = extract_model_block(retrieval_eval["oracle_ceiling"])
-                if oracle_model is not None:
-                    lines.extend(
-                        [
-                            "",
-                            "### Oracle Ceiling",
-                            "",
-                            f"- `oracle_exact_top1={fmt_metric(oracle_model.get('retrieval_top1_exact'))}`, `oracle_exact_top5={fmt_metric(oracle_model.get('retrieval_top5_exact'))}`, `oracle_NTA_exact={fmt_metric(oracle_model.get('NTA_exact'))}`.",
-                        ]
-                    )
-    lines.extend(
-        [
-            "",
-            "## Task 4. Speech Space Structure",
-            "",
-        ]
-    )
-    if space_summary is None:
-        lines.append("- Template-space summary file not found.")
-    else:
+        match_mode = str(current_model["match_mode"])
+        top1_key = f"retrieval_top1_{'exact' if match_mode == 'exact' else 'label'}"
+        top5_key = f"retrieval_top5_{'exact' if match_mode == 'exact' else 'label'}"
+        nta_key = f"NTA_{'exact' if match_mode == 'exact' else 'label'}"
         lines.extend(
             [
-                f"- Dominant structure: `{space_summary['dominant_structure']}`.",
-                f"- Subject centroid probe accuracy: `{fmt_metric(space_summary['subject_centroid_probe']['accuracy'])}`.",
-                f"- Label centroid probe accuracy: `{fmt_metric(space_summary['label_centroid_probe']['accuracy'])}`.",
-                f"- Within-label mean cosine distance: `{fmt_metric(space_summary['pairwise_cosine_distance'].get('within_label', {}).get('mean'))}`.",
-                f"- Within-subject mean cosine distance: `{fmt_metric(space_summary['pairwise_cosine_distance'].get('within_subject', {}).get('mean'))}`.",
-                f"- Cross-subject same-label mean cosine distance: `{fmt_metric(space_summary.get('cross_subject_same_label_mean'))}`.",
+                f"- target kind: `{current.get('target_kind', 'unknown')}`",
+                f"- reconstruction mode: `{current.get('reconstruction_mode', 'unknown')}`",
+                f"- `embedding_cosine={fmt_metric(current_model.get('embedding_cosine'))}`",
+                f"- `{top1_key}={fmt_metric(current_model.get(top1_key))}`, `{top5_key}={fmt_metric(current_model.get(top5_key))}`",
+                f"- `MRR={fmt_metric(current_model.get('MRR'))}`, `mean_rank={fmt_metric(current_model.get('mean_rank'))}`",
+                f"- `{nta_key}={fmt_metric(current_model.get(nta_key))}`",
+                f"- mean waveform STFT distance to target: `{fmt_metric(current_model.get('mean_retrieved_target_stft_distance'))}`",
             ]
         )
-    lines.extend(
-        [
-            "",
-            "## Task 5. Retrieval Ceiling",
-            "",
-        ]
-    )
-    if retrieval_eval is None:
-        lines.append("- Ceiling analysis unavailable because retrieval metrics were not found.")
-    elif "oracle_ceiling" not in retrieval_eval:
-        lines.append("- Oracle ceiling was not computed for this run.")
-    else:
-        main_model = extract_model_block(retrieval_eval)
-        oracle_model = extract_model_block(retrieval_eval["oracle_ceiling"])
-        if main_model is None or oracle_model is None:
-            lines.append("- Oracle ceiling JSON exists, but one of the model summary blocks is malformed.")
-        else:
-            main_mode = str(main_model["match_mode"])
-            main_top1_key = f"retrieval_top1_{'exact' if main_mode == 'exact' else 'label'}"
-            lines.extend(
-                [
-                    f"- Main top-1 vs oracle exact top-1: `{fmt_metric(main_model.get(main_top1_key))}` vs `{fmt_metric(oracle_model.get('retrieval_top1_exact'))}`.",
-                    f"- Main NTA vs oracle NTA: `{fmt_metric(main_model.get(f'NTA_{'exact' if main_mode == 'exact' else 'label'}'))}` vs `{fmt_metric(oracle_model.get('NTA_exact'))}`.",
-                ]
-            )
-    lines.extend(
-        [
-            "",
-            "## Task 6. Decoder Route Memo",
-            "",
-            route_table(),
-            "",
-            "## Task 7. Recommended Main Direction",
-            "",
-            f"- Recommended path: **{recommendation_title}**",
-            f"- Justification: {recommendation_body}",
-        ]
-    )
-    if retrieval_eval is not None:
-        alerts = retrieval_eval["model"].get("alerts", {})
-        if alerts.get("high_cosine_poor_retrieval"):
+        if current.get("model", {}).get("alerts", {}).get("high_cosine_poor_retrieval"):
             lines.extend(
                 [
                     "",
                     "## Follow-up Trigger",
                     "",
-                    f"- {alerts['recommended_followup']}",
+                    f"- {current['model']['alerts']['recommended_followup']}",
                 ]
             )
+    lines.extend(
+        [
+            "",
+            "## A/B/C Comparison",
+            "",
+            "| System | Target | Reconstruction | Top-1 | Top-5 | MRR | Mean Rank | NTA | Mean STFT |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+    )
+    for row in [
+        _waveform_row("A. Raw waveform baseline", waveform_eval),
+        _route_row("B. Sequence HuBERT retrieval", sequence_eval),
+        _route_row("C. Codec latent reconstruction", codec_eval),
+        _route_row("Legacy pooled HuBERT", pooled_eval),
+    ]:
+        if row is not None:
+            lines.append(row)
+    lines.extend(
+        [
+            "",
+            "## Speech Space Structure",
+            "",
+        ]
+    )
+    if space_summary is None:
+        lines.append("- Space summary file not found.")
+    else:
+        lines.extend(
+            [
+                f"- dominant structure: `{space_summary.get('dominant_structure')}`",
+                f"- target kind: `{space_summary.get('target_kind', 'unknown')}`",
+                f"- subject centroid probe accuracy: `{fmt_metric(space_summary['subject_centroid_probe']['accuracy'])}`",
+                f"- label centroid probe accuracy: `{fmt_metric(space_summary['label_centroid_probe']['accuracy'])}`",
+                f"- within-label mean cosine distance: `{fmt_metric(space_summary['pairwise_cosine_distance'].get('within_label', {}).get('mean'))}`",
+                f"- within-subject mean cosine distance: `{fmt_metric(space_summary['pairwise_cosine_distance'].get('within_subject', {}).get('mean'))}`",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Recommendation",
+            "",
+            f"- Recommended path: **{recommendation_title}**",
+            f"- Justification: {recommendation_body}",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -267,31 +246,46 @@ def main() -> None:
         config["data"]["stage"] = args.stage
     if args.ablation_mode is not None:
         config["data"]["ablation_mode"] = args.ablation_mode
-
-    output_root = resolve_bundle_path(config["output"]["root"], BUNDLE_DIR)
-    run_name = build_run_name(config, args)
-    retrieval_eval_path = (
-        Path(args.retrieval_eval)
-        if args.retrieval_eval is not None
-        else output_root / run_name / "metrics" / f"{args.split}_retrieval_evaluation.json"
+    run_root = resolve_bundle_path(config["output"]["root"], BUNDLE_DIR) / build_run_name(config, args)
+    split = str(args.split)
+    default_alignment_eval = run_root / "metrics" / f"{split}_evaluation.json"
+    pooled_eval = load_alignment_summary(resolve_bundle_path(args.alignment_eval, BUNDLE_DIR) if args.alignment_eval else None)
+    current_eval = load_alignment_summary(default_alignment_eval)
+    if pooled_eval is None and current_eval is not None and current_eval.get("target_kind") == "hubert_pooled":
+        pooled_eval = current_eval
+    sequence_eval = load_alignment_summary(resolve_bundle_path(args.sequence_eval, BUNDLE_DIR) if args.sequence_eval else None)
+    codec_eval = load_alignment_summary(resolve_bundle_path(args.codec_eval, BUNDLE_DIR) if args.codec_eval else None)
+    if current_eval is not None:
+        if current_eval.get("target_kind") == "hubert_sequence" and sequence_eval is None:
+            sequence_eval = current_eval
+        if current_eval.get("target_kind") == "encodec_latent" and codec_eval is None:
+            codec_eval = current_eval
+    waveform_eval = load_waveform_summary(resolve_bundle_path(args.waveform_eval, BUNDLE_DIR) if args.waveform_eval else None)
+    if waveform_eval is None:
+        waveform_path = run_root / "metrics" / "test_metrics.json"
+        waveform_eval = load_waveform_summary(waveform_path if waveform_path.exists() else None)
+    space_summary = load_json(
+        resolve_bundle_path(args.space_summary, BUNDLE_DIR)
+        if args.space_summary
+        else resolve_bundle_path(config["output"]["root"], BUNDLE_DIR)
+        / "template_space"
+        / Path(config["targets"]["cache_path"]).stem
+        / "space_summary.json"
     )
-    target_cache_path = resolve_bundle_path(config["targets"]["cache_path"], BUNDLE_DIR)
-    space_summary_path = (
-        Path(args.space_summary)
-        if args.space_summary is not None
-        else output_root / "template_space" / Path(target_cache_path).stem / "space_summary.json"
+    report = build_report(
+        pooled_eval=pooled_eval,
+        sequence_eval=sequence_eval,
+        codec_eval=codec_eval,
+        waveform_eval=waveform_eval,
+        space_summary=space_summary,
     )
     output_path = (
-        Path(args.output_path)
-        if args.output_path is not None
-        else output_root / run_name / "metrics" / f"{args.split}_phase2_report.md"
+        resolve_bundle_path(args.output_path, BUNDLE_DIR)
+        if args.output_path
+        else run_root / "metrics" / f"{split}_phase_report.md"
     )
-
-    retrieval_eval = load_json(retrieval_eval_path)
-    space_summary = load_json(space_summary_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(build_report(retrieval_eval=retrieval_eval, space_summary=space_summary), encoding="utf-8")
-    print(f"Saved Phase 2 report to {output_path}")
+    output_path.write_text(report, encoding="utf-8")
+    print(f"Saved FEIS report to {output_path}")
 
 
 if __name__ == "__main__":
