@@ -51,13 +51,30 @@ def load_json(path: Path | None) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def extract_model_block(payload: dict | None) -> dict | None:
+    if payload is None:
+        return None
+    model = payload.get("model")
+    if isinstance(model, dict):
+        nested = model.get("model")
+        if isinstance(nested, dict):
+            return nested
+        return model
+    return None
+
+
 def choose_recommendation(retrieval_eval: dict | None) -> tuple[str, str]:
     if retrieval_eval is None:
         return (
             "Recommendation unavailable",
             "Retrieval evaluation JSON was not found, so the route recommendation could not be derived from evidence.",
         )
-    main_model = retrieval_eval["model"]["model"]
+    main_model = extract_model_block(retrieval_eval)
+    if main_model is None:
+        return (
+            "Recommendation unavailable",
+            "Retrieval evaluation JSON did not contain a usable model summary block.",
+        )
     match_mode = str(main_model["match_mode"])
     top1_key = f"retrieval_top1_{'exact' if match_mode == 'exact' else 'label'}"
     top1 = float(main_model.get(top1_key) or 0.0)
@@ -65,8 +82,9 @@ def choose_recommendation(retrieval_eval: dict | None) -> tuple[str, str]:
     oracle = retrieval_eval.get("oracle_ceiling")
     oracle_top1 = None
     if oracle is not None:
-        oracle_model = oracle["model"]["model"]
-        oracle_top1 = float(oracle_model.get("retrieval_top1_exact") or 0.0)
+        oracle_model = extract_model_block(oracle)
+        if oracle_model is not None:
+            oracle_top1 = float(oracle_model.get("retrieval_top1_exact") or 0.0)
     if cosine >= 0.85 and top1 <= 0.15:
         return (
             "4. EEG → audio token → codec decoder",
@@ -109,13 +127,14 @@ def build_report(retrieval_eval: dict | None, space_summary: dict | None) -> str
         "- Alignment model output: one pooled speech embedding per EEG trial plus prosody.",
     ]
     if retrieval_eval is not None:
-        main_model = retrieval_eval["model"]["model"]
-        lines.extend(
-            [
-                f"- Current evaluated checkpoint embedding cosine: `{fmt_metric(main_model.get('embedding_cosine'))}`.",
-                f"- Current retrieval policy: `{retrieval_eval['model']['retrieval_policy']}` with match mode `{retrieval_eval['model']['match_mode']}`.",
-            ]
-        )
+        main_model = extract_model_block(retrieval_eval)
+        if main_model is not None:
+            lines.extend(
+                [
+                    f"- Current evaluated checkpoint embedding cosine: `{fmt_metric(main_model.get('embedding_cosine'))}`.",
+                    f"- Current retrieval policy: `{retrieval_eval['model']['retrieval_policy']}` with match mode `{retrieval_eval['model']['match_mode']}`.",
+                ]
+            )
     lines.extend(
         [
             "",
@@ -131,37 +150,42 @@ def build_report(retrieval_eval: dict | None, space_summary: dict | None) -> str
     if retrieval_eval is None:
         lines.append("- Retrieval evaluation file not found.")
     else:
-        main_model = retrieval_eval["model"]["model"]
+        main_model = extract_model_block(retrieval_eval)
         main_controls = retrieval_eval["model"]["controls"]
-        main_mode = str(main_model["match_mode"])
-        main_top1_key = f"retrieval_top1_{'exact' if main_mode == 'exact' else 'label'}"
-        main_top5_key = f"retrieval_top5_{'exact' if main_mode == 'exact' else 'label'}"
-        main_nta_key = f"NTA_{'exact' if main_mode == 'exact' else 'label'}"
-        lines.extend(
-            [
-                f"- Main protocol result: `{main_top1_key}={fmt_metric(main_model.get(main_top1_key))}`, `{main_top5_key}={fmt_metric(main_model.get(main_top5_key))}`, `{main_nta_key}={fmt_metric(main_model.get(main_nta_key))}`.",
-                f"- Target-match availability in bank: `{fmt_metric(main_model.get('target_match_available_rate'))}`.",
-                f"- Mean retrieved-vs-target waveform STFT distance: `{fmt_metric(main_model.get('mean_retrieved_target_stft_distance'))}`.",
-                f"- Random baseline: `{fmt_metric(main_controls['random'].get(main_top1_key))}` / `{fmt_metric(main_controls['random'].get(main_top5_key))}`.",
-                f"- Label-only baseline: `{fmt_metric(main_controls['label_only'].get(main_top1_key))}` / `{fmt_metric(main_controls['label_only'].get(main_top5_key))}`.",
-            ]
-        )
-        for key in sorted(main_controls):
-            if key in {"random", "label_only"}:
-                continue
-            lines.append(
-                f"- {key}: `{fmt_metric(main_controls[key].get(main_top1_key))}` / `{fmt_metric(main_controls[key].get(main_top5_key))}`."
-            )
-        if "oracle_ceiling" in retrieval_eval:
-            oracle_model = retrieval_eval["oracle_ceiling"]["model"]["model"]
+        if main_model is None:
+            lines.append("- Retrieval evaluation file was found, but the model summary block was malformed.")
+            main_controls = {}
+        else:
+            main_mode = str(main_model["match_mode"])
+            main_top1_key = f"retrieval_top1_{'exact' if main_mode == 'exact' else 'label'}"
+            main_top5_key = f"retrieval_top5_{'exact' if main_mode == 'exact' else 'label'}"
+            main_nta_key = f"NTA_{'exact' if main_mode == 'exact' else 'label'}"
             lines.extend(
                 [
-                    "",
-                    "### Oracle Ceiling",
-                    "",
-                    f"- `oracle_exact_top1={fmt_metric(oracle_model.get('retrieval_top1_exact'))}`, `oracle_exact_top5={fmt_metric(oracle_model.get('retrieval_top5_exact'))}`, `oracle_NTA_exact={fmt_metric(oracle_model.get('NTA_exact'))}`.",
+                    f"- Main protocol result: `{main_top1_key}={fmt_metric(main_model.get(main_top1_key))}`, `{main_top5_key}={fmt_metric(main_model.get(main_top5_key))}`, `{main_nta_key}={fmt_metric(main_model.get(main_nta_key))}`.",
+                    f"- Target-match availability in bank: `{fmt_metric(main_model.get('target_match_available_rate'))}`.",
+                    f"- Mean retrieved-vs-target waveform STFT distance: `{fmt_metric(main_model.get('mean_retrieved_target_stft_distance'))}`.",
+                    f"- Random baseline: `{fmt_metric(main_controls['random'].get(main_top1_key))}` / `{fmt_metric(main_controls['random'].get(main_top5_key))}`.",
+                    f"- Label-only baseline: `{fmt_metric(main_controls['label_only'].get(main_top1_key))}` / `{fmt_metric(main_controls['label_only'].get(main_top5_key))}`.",
                 ]
             )
+            for key in sorted(main_controls):
+                if key in {"random", "label_only"}:
+                    continue
+                lines.append(
+                    f"- {key}: `{fmt_metric(main_controls[key].get(main_top1_key))}` / `{fmt_metric(main_controls[key].get(main_top5_key))}`."
+                )
+            if "oracle_ceiling" in retrieval_eval:
+                oracle_model = extract_model_block(retrieval_eval["oracle_ceiling"])
+                if oracle_model is not None:
+                    lines.extend(
+                        [
+                            "",
+                            "### Oracle Ceiling",
+                            "",
+                            f"- `oracle_exact_top1={fmt_metric(oracle_model.get('retrieval_top1_exact'))}`, `oracle_exact_top5={fmt_metric(oracle_model.get('retrieval_top5_exact'))}`, `oracle_NTA_exact={fmt_metric(oracle_model.get('NTA_exact'))}`.",
+                        ]
+                    )
     lines.extend(
         [
             "",
@@ -194,16 +218,19 @@ def build_report(retrieval_eval: dict | None, space_summary: dict | None) -> str
     elif "oracle_ceiling" not in retrieval_eval:
         lines.append("- Oracle ceiling was not computed for this run.")
     else:
-        main_model = retrieval_eval["model"]["model"]
-        oracle_model = retrieval_eval["oracle_ceiling"]["model"]["model"]
-        main_mode = str(main_model["match_mode"])
-        main_top1_key = f"retrieval_top1_{'exact' if main_mode == 'exact' else 'label'}"
-        lines.extend(
-            [
-                f"- Main top-1 vs oracle exact top-1: `{fmt_metric(main_model.get(main_top1_key))}` vs `{fmt_metric(oracle_model.get('retrieval_top1_exact'))}`.",
-                f"- Main NTA vs oracle NTA: `{fmt_metric(main_model.get(f'NTA_{'exact' if main_mode == 'exact' else 'label'}'))}` vs `{fmt_metric(oracle_model.get('NTA_exact'))}`.",
-            ]
-        )
+        main_model = extract_model_block(retrieval_eval)
+        oracle_model = extract_model_block(retrieval_eval["oracle_ceiling"])
+        if main_model is None or oracle_model is None:
+            lines.append("- Oracle ceiling JSON exists, but one of the model summary blocks is malformed.")
+        else:
+            main_mode = str(main_model["match_mode"])
+            main_top1_key = f"retrieval_top1_{'exact' if main_mode == 'exact' else 'label'}"
+            lines.extend(
+                [
+                    f"- Main top-1 vs oracle exact top-1: `{fmt_metric(main_model.get(main_top1_key))}` vs `{fmt_metric(oracle_model.get('retrieval_top1_exact'))}`.",
+                    f"- Main NTA vs oracle NTA: `{fmt_metric(main_model.get(f'NTA_{'exact' if main_mode == 'exact' else 'label'}'))}` vs `{fmt_metric(oracle_model.get('NTA_exact'))}`.",
+                ]
+            )
     lines.extend(
         [
             "",
