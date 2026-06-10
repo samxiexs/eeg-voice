@@ -122,11 +122,29 @@ configs/v3_multidataset.yaml
 
 ### 准备 KaraOne（一次性）
 
-把处理好的 KaraOne 拷进 bundle（与 FEIS 同构：`segments.csv`/`subjects/`/`audio/`）：
+推荐直接从原始 KaraOne 受试者压缩包准备 v4 数据。脚本会逐个读取
+`<repo>/data/KaraOne/*.tar.bz2`，只临时解压 `.cnt`、`epoch_inds.mat` 和
+`kinect_data/*.wav/*.txt`，写入 bundle 需要的 `../data/karaone/`，随后删除临时解压目录。
+最后会继续生成 trial 级 EnCodec latent cache：
 
 ```bash
-cp -r <repo>/data/processed/thinking_waveform_pairs/karaone ../data/karaone
-# 抽 trial 级 EnCodec 目标（trial-synchronous，每 trial 一条）
+cd /Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/server_bundle/feis_subject_aware_bundle/app
+conda activate feis_ssl
+
+bash prepare_karaone_v4.sh
+```
+
+只先处理少数受试或少量 target 做 smoke test：
+
+```bash
+KARAONE_SUBJECTS="MM05 MM08" TARGET_LIMIT=16 bash prepare_karaone_v4.sh
+```
+
+如果你已经有处理好的 KaraOne 目录，也可以手动放到 bundle，使其与 FEIS 同构：
+`../data/karaone/segments.csv`、`../data/karaone/subjects/`、`../data/karaone/audio/`。
+然后只抽 trial 级 EnCodec 目标：
+
+```bash
 python scripts/v3_extract_karaone_targets.py \
   --karaone-root ../data/karaone --codec-model ../models/encodec_24khz \
   --out ../artifacts/audio_targets/karaone_trial_encodec_latents.npz \
