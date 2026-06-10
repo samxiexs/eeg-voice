@@ -45,6 +45,7 @@ data/token_probe/
 data/retrieval/
 artifacts/
 results/
+server_bundle/paper-ref/
 
 server_bundle/models/
 server_bundle/data/
