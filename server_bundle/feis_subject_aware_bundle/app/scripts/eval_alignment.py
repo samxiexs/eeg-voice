@@ -106,6 +106,10 @@ def build_model(config: dict, dataset: FEISProtocolDataset) -> EEGSpeechAlignmen
         use_subject_demo_head=bool(cfg_model.get("use_subject_demo_head", False)),
         num_subjects=int(dataset.num_subjects),
         subject_embedding_dim=int(cfg_model.get("subject_embedding_dim", 64)),
+        use_codec_scale_head=bool(cfg_model.get("use_codec_scale_head", dataset.target_kind == TARGET_KIND_ENCODEC_LATENT)),
+        use_phoneme_head=bool(cfg_model.get("use_phoneme_head", False)),
+        num_phoneme_tokens=int(dataset.phoneme_vocab.size),
+        phoneme_steps=int(dataset.phoneme_vocab.max_steps),
     )
 
 
@@ -152,6 +156,7 @@ def predict_dataset(
     loader: DataLoader,
     device: torch.device,
     config: dict,
+    use_codec_scale_prediction: bool = True,
 ) -> dict[str, object]:
     losses = {
         "total": 0.0,
@@ -162,16 +167,23 @@ def predict_dataset(
         "embedding_mse": 0.0,
         "contrastive": 0.0,
         "prosody_loss": 0.0,
+        "codec_scale_loss": 0.0,
+        "codec_log_rms_mae": 0.0,
+        "phoneme_loss": 0.0,
+        "phoneme_acc": 0.0,
         "cls_acc": 0.0,
     }
     total = 0
     pred_sequences: list[np.ndarray] = []
     pred_summaries: list[np.ndarray] = []
     target_sequences: list[np.ndarray] = []
+    raw_target_sequences: list[np.ndarray] = []
     target_summaries: list[np.ndarray] = []
     target_masks: list[np.ndarray] = []
     target_waveforms: list[np.ndarray] = []
     decoder_scales: list[np.ndarray] = []
+    pred_log_rms_values: list[np.ndarray] = []
+    target_log_rms_values: list[np.ndarray] = []
     subject_ids: list[str] = []
     template_ids: list[str] = []
     labels: list[str] = []
@@ -196,6 +208,13 @@ def predict_dataset(
                 target_summary=target_summary,
                 pred_prosody=outputs.get("prosody"),
                 target_prosody=batch["prosody_target"].to(device) if "prosody_target" in batch else None,
+                pred_codec_log_rms=outputs.get("codec_log_rms") if use_codec_scale_prediction else None,
+                target_log_rms=batch["target_log_rms"].to(device) if "target_log_rms" in batch else None,
+                lambda_codec_scale=float(config["train"].get("lambda_codec_scale", 0.0)),
+                phoneme_logits=outputs.get("phoneme_logits"),
+                phoneme_ids=batch["phoneme_ids"].to(device) if "phoneme_ids" in batch else None,
+                phoneme_mask=batch["phoneme_mask"].to(device) if "phoneme_mask" in batch else None,
+                lambda_phoneme=float(config["train"].get("lambda_phoneme", 0.0)),
                 lambda_seq_cosine=float(config["train"].get("lambda_seq_cosine", config["train"].get("lambda_cosine", 1.0))),
                 lambda_seq_mse=float(config["train"].get("lambda_seq_mse", config["train"].get("lambda_mse", 0.5))),
                 lambda_contrastive=float(config["train"].get("lambda_contrastive", 1.0)),
@@ -216,10 +235,17 @@ def predict_dataset(
             pred_sequences.append(pred_sequence_np)
             pred_summaries.append(pred_summary_np)
             target_sequences.append(target_sequence_np)
+            raw_target_sequences.append(batch["raw_target_sequence"].cpu().numpy())
             target_summaries.append(target_summary_np)
             target_masks.append(batch["target_mask"].cpu().numpy())
             target_waveforms.append(batch["waveform"].cpu().numpy())
             decoder_scales.append(batch["decoder_scale"].cpu().numpy())
+            pred_log_rms_values.append(
+                outputs["codec_log_rms"].detach().cpu().numpy()
+                if "codec_log_rms" in outputs and use_codec_scale_prediction
+                else np.full((batch_size,), np.nan, dtype=np.float32)
+            )
+            target_log_rms_values.append(batch["target_log_rms"].cpu().numpy())
             subject_ids.extend(list(batch["subject_id"]))
             template_ids.extend(list(batch["template_id"]))
             labels.extend(list(batch["label"]))
@@ -244,10 +270,13 @@ def predict_dataset(
         "predicted_sequences": np.concatenate(pred_sequences, axis=0),
         "predicted_summaries": np.concatenate(pred_summaries, axis=0),
         "target_sequences": np.concatenate(target_sequences, axis=0),
+        "raw_target_sequences": np.concatenate(raw_target_sequences, axis=0),
         "target_summaries": np.concatenate(target_summaries, axis=0),
         "target_masks": np.concatenate(target_masks, axis=0),
         "target_waveforms": np.concatenate(target_waveforms, axis=0),
         "decoder_scales": np.concatenate(decoder_scales, axis=0) if decoder_scales else np.zeros((0,), dtype=np.float32),
+        "predicted_log_rms": np.concatenate(pred_log_rms_values, axis=0),
+        "target_log_rms": np.concatenate(target_log_rms_values, axis=0),
         "subject_ids": subject_ids,
         "template_ids": template_ids,
         "labels": labels,
@@ -269,6 +298,61 @@ def _resample_reconstruction(audio: np.ndarray, source_sr: int, target_sr: int, 
     return pad_or_crop_audio(audio, target_len=target_length)
 
 
+def _inverse_normalize_sequence(
+    sequence: np.ndarray,
+    target_mean: np.ndarray | None,
+    target_std: np.ndarray | None,
+) -> np.ndarray:
+    sequence = np.asarray(sequence, dtype=np.float32)
+    if target_mean is None or target_std is None:
+        return sequence
+    mean = np.asarray(target_mean, dtype=np.float32).reshape(1, -1)
+    std = np.asarray(target_std, dtype=np.float32).reshape(1, -1)
+    return (sequence * std + mean).astype(np.float32)
+
+
+def _match_log_rms(audio: np.ndarray, log_rms: float | None, max_gain: float = 30.0) -> np.ndarray:
+    audio = np.asarray(audio, dtype=np.float32)
+    if log_rms is None or not np.isfinite(float(log_rms)):
+        return audio
+    target_rms = float(np.exp(np.clip(float(log_rms), -12.0, -0.05)))
+    current_rms = float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)) + 1e-8)
+    gain = float(np.clip(target_rms / current_rms, 1.0 / max_gain, max_gain))
+    return (audio * gain).astype(np.float32)
+
+
+def _decoder_scale_for_sample(predictions: dict[str, object], idx: int, default_decoder_scales: np.ndarray | None) -> np.ndarray | None:
+    scales = np.asarray(predictions.get("decoder_scales", np.zeros((0,), dtype=np.float32)), dtype=np.float32)
+    if scales.ndim >= 2 and scales.shape[0] > idx and scales.shape[1] > 0:
+        return scales[idx]
+    if scales.ndim == 1 and scales.size > 0:
+        return scales
+    return default_decoder_scales
+
+
+def compute_latent_collapse_diagnostics(predicted_sequences: np.ndarray, target_sequences: np.ndarray) -> dict[str, float]:
+    predicted_sequences = np.asarray(predicted_sequences, dtype=np.float32)
+    target_sequences = np.asarray(target_sequences, dtype=np.float32)
+    pred_flat = predicted_sequences.reshape(-1, predicted_sequences.shape[-1])
+    target_flat = target_sequences.reshape(-1, target_sequences.shape[-1])
+    pred_std = pred_flat.std(axis=0)
+    target_std = target_flat.std(axis=0)
+    pred_frame_var = predicted_sequences.var(axis=1).mean()
+    target_frame_var = target_sequences.var(axis=1).mean()
+    pred_centered = pred_flat - pred_flat.mean(axis=0, keepdims=True)
+    target_centered = target_flat - target_flat.mean(axis=0, keepdims=True)
+    return {
+        "pred_sequence_std_mean": float(pred_std.mean()),
+        "target_sequence_std_mean": float(target_std.mean()),
+        "pred_target_std_ratio": float(pred_std.mean() / max(float(target_std.mean()), 1e-8)),
+        "pred_frame_variance_mean": float(pred_frame_var),
+        "target_frame_variance_mean": float(target_frame_var),
+        "frame_variance_ratio": float(pred_frame_var / max(float(target_frame_var), 1e-8)),
+        "pred_cov_trace": float(np.mean(np.square(pred_centered))),
+        "target_cov_trace": float(np.mean(np.square(target_centered))),
+    }
+
+
 def evaluate_policy(
     predictions: dict[str, object],
     bank,
@@ -278,6 +362,8 @@ def evaluate_policy(
     reconstruction_mode: str,
     codec_backend=None,
     default_decoder_scales: np.ndarray | None = None,
+    target_mean: np.ndarray | None = None,
+    target_std: np.ndarray | None = None,
 ) -> dict[str, object]:
     ensure_dir(output_dir)
     embedding_eval = evaluate_embedding_retrieval(
@@ -297,19 +383,42 @@ def evaluate_policy(
     )
     bank_index = {template_id: idx for idx, template_id in enumerate(bank.template_ids)}
     top1_template_ids = [candidates[0]["template_id"] for candidates in embedding_eval["ranked_candidates"]]
+    target_scale_oracle_waveforms: list[np.ndarray] = []
+    target_latent_oracle_waveforms: list[np.ndarray] = []
 
     if reconstruction_mode == "codec_decode":
         if codec_backend is None:
             raise ValueError("codec_backend is required for codec reconstruction")
-        reconstructed_waveforms = [
-            _resample_reconstruction(
-                codec_backend.decode(predictions["predicted_sequences"][idx], decoder_scales=default_decoder_scales),
+        reconstructed_waveforms = []
+        for idx in range(len(predictions["template_ids"])):
+            decoder_scales = _decoder_scale_for_sample(predictions, idx, default_decoder_scales)
+            raw_pred_sequence = _inverse_normalize_sequence(
+                predictions["predicted_sequences"][idx],
+                target_mean=target_mean,
+                target_std=target_std,
+            )
+            decoded = codec_backend.decode(raw_pred_sequence, decoder_scales=decoder_scales)
+            decoded = _resample_reconstruction(
+                decoded,
                 source_sr=int(codec_backend.sample_rate),
                 target_sr=int(sample_rate),
                 target_length=int(predictions["target_waveforms"][idx].shape[-1]),
             )
-            for idx in range(len(predictions["template_ids"]))
-        ]
+            pred_scaled = _match_log_rms(decoded, float(predictions["predicted_log_rms"][idx]))
+            target_scaled = _match_log_rms(decoded, float(predictions["target_log_rms"][idx]))
+            raw_target_sequence = predictions.get("raw_target_sequences", predictions["target_sequences"])[idx]
+            target_latent_decoded = codec_backend.decode(raw_target_sequence, decoder_scales=decoder_scales)
+            target_latent_decoded = _resample_reconstruction(
+                target_latent_decoded,
+                source_sr=int(codec_backend.sample_rate),
+                target_sr=int(sample_rate),
+                target_length=int(predictions["target_waveforms"][idx].shape[-1]),
+            )
+            reconstructed_waveforms.append(pred_scaled)
+            target_scale_oracle_waveforms.append(target_scaled)
+            target_latent_oracle_waveforms.append(
+                _match_log_rms(target_latent_decoded, float(predictions["target_log_rms"][idx]))
+            )
     else:
         reconstructed_waveforms = [bank.waveforms[bank_index[template_id]] for template_id in top1_template_ids]
 
@@ -330,6 +439,8 @@ def evaluate_policy(
         match_mode=bank.match_mode,
     )
     recon_dir = output_dir / "recon_wavs"
+    target_scale_dir = output_dir / "target_scale_oracle_wavs"
+    target_latent_dir = output_dir / "target_latent_oracle_wavs"
     target_distances: list[float] = []
     for idx, row in enumerate(sample_rows):
         save_path = recon_dir / (
@@ -337,6 +448,13 @@ def evaluate_policy(
             f"{predictions['trial_indices'][idx]:04d}_{reconstruction_mode}.wav"
         )
         save_wav(save_path, reconstructed_waveforms[idx], sample_rate)
+        target_scale_path = None
+        target_latent_path = None
+        if reconstruction_mode == "codec_decode":
+            target_scale_path = target_scale_dir / save_path.name.replace("_codec_decode.wav", "_target_scale_oracle.wav")
+            target_latent_path = target_latent_dir / save_path.name.replace("_codec_decode.wav", "_target_latent_oracle.wav")
+            save_wav(target_scale_path, target_scale_oracle_waveforms[idx], sample_rate)
+            save_wav(target_latent_path, target_latent_oracle_waveforms[idx], sample_rate)
         target_distance = stft_distance_single(
             torch.from_numpy(np.asarray(reconstructed_waveforms[idx], dtype=np.float32)),
             torch.from_numpy(np.asarray(predictions["target_waveforms"][idx], dtype=np.float32)),
@@ -351,12 +469,18 @@ def evaluate_policy(
                 "audio_path": predictions["audio_paths"][idx],
                 "embedding_cosine_to_target": predictions["rows"][idx]["embedding_cosine"],
                 "saved_wav_path": str(save_path),
+                "target_scale_oracle_wav_path": None if target_scale_path is None else str(target_scale_path),
+                "target_latent_oracle_wav_path": None if target_latent_path is None else str(target_latent_path),
                 "reconstruction_mode": reconstruction_mode,
                 "first_match_rank": first_match_ranks[idx],
                 "first_match_reciprocal_rank": None
                 if first_match_ranks[idx] is None
                 else float(1.0 / first_match_ranks[idx]),
                 "retrieved_target_stft_distance": float(target_distance),
+                "predicted_log_rms": None
+                if not np.isfinite(float(predictions["predicted_log_rms"][idx]))
+                else float(predictions["predicted_log_rms"][idx]),
+                "target_log_rms": float(predictions["target_log_rms"][idx]),
             }
         )
     np.savez_compressed(
@@ -364,8 +488,11 @@ def evaluate_policy(
         predicted_sequences=np.asarray(predictions["predicted_sequences"], dtype=np.float32),
         predicted_summaries=np.asarray(predictions["predicted_summaries"], dtype=np.float32),
         target_sequences=np.asarray(predictions["target_sequences"], dtype=np.float32),
+        raw_target_sequences=np.asarray(predictions["raw_target_sequences"], dtype=np.float32),
         target_summaries=np.asarray(predictions["target_summaries"], dtype=np.float32),
         target_masks=np.asarray(predictions["target_masks"], dtype=np.float32),
+        predicted_log_rms=np.asarray(predictions["predicted_log_rms"], dtype=np.float32),
+        target_log_rms=np.asarray(predictions["target_log_rms"], dtype=np.float32),
         template_ids=np.asarray(predictions["template_ids"]),
         labels=np.asarray(predictions["labels"]),
         subject_ids=np.asarray(predictions["subject_ids"]),
@@ -376,6 +503,10 @@ def evaluate_policy(
         **predictions["metrics"],
         **embedding_eval["metrics"],
         **waveform_eval["metrics"],
+        **compute_latent_collapse_diagnostics(
+            predicted_sequences=np.asarray(predictions["predicted_sequences"], dtype=np.float32),
+            target_sequences=np.asarray(predictions["target_sequences"], dtype=np.float32),
+        ),
         "retrieval_policy": bank.policy,
         "candidate_pool_size": bank.size,
         "target_kind": bank.target_kind,
@@ -520,6 +651,8 @@ def run_policy_eval(
     reconstruction_mode: str,
     codec_backend=None,
     default_decoder_scales: np.ndarray | None = None,
+    target_mean: np.ndarray | None = None,
+    target_std: np.ndarray | None = None,
 ) -> dict[str, object]:
     bank = build_retrieval_bank(dataset, policy=policy)
     policy_dir = output_root / "retrieval" / str(args.split) / bank.policy
@@ -532,6 +665,8 @@ def run_policy_eval(
         reconstruction_mode=reconstruction_mode,
         codec_backend=codec_backend,
         default_decoder_scales=default_decoder_scales,
+        target_mean=target_mean,
+        target_std=target_std,
     )
     controls = build_control_summaries(
         dataset=dataset,
@@ -576,9 +711,23 @@ def main() -> None:
         checkpoint_path = checkpoint_path / "checkpoints" / "best.pt"
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model = build_model(config, train_ds).to(device)
-    model.load_state_dict(checkpoint["model_state"])
+    missing_keys, unexpected_keys = model.load_state_dict(checkpoint["model_state"], strict=False)
+    if missing_keys or unexpected_keys:
+        print(
+            "Checkpoint loaded with non-strict compatibility: "
+            f"missing={len(missing_keys)} unexpected={len(unexpected_keys)}"
+        )
+    use_codec_scale_prediction = not any(str(key).startswith("codec_scale_head") for key in missing_keys)
+    if not use_codec_scale_prediction:
+        print("Codec scale head is not present in this checkpoint; primary codec decode will skip predicted RMS scaling.")
 
-    predictions = predict_dataset(model=model, loader=loader, device=device, config=config)
+    predictions = predict_dataset(
+        model=model,
+        loader=loader,
+        device=device,
+        config=config,
+        use_codec_scale_prediction=use_codec_scale_prediction,
+    )
     output_root = resolve_bundle_path(args.output_root or config["output"]["root"], BUNDLE_DIR) / build_run_name(config, args)
     resolved_policy = resolve_retrieval_policy(eval_ds.protocol, args.retrieval_policy)
     target_kind = str(eval_ds.target_kind)
@@ -606,6 +755,8 @@ def main() -> None:
             reconstruction_mode=reconstruction_mode,
             codec_backend=codec_backend,
             default_decoder_scales=eval_ds.target_cache.get("default_decoder_scales"),
+            target_mean=eval_ds.target_cache.get("target_mean"),
+            target_std=eval_ds.target_cache.get("target_std"),
         ),
     }
     if str(eval_ds.protocol).upper() == "U" and resolved_policy == "unseen_strict_seen_subjects":
@@ -620,6 +771,8 @@ def main() -> None:
             reconstruction_mode=reconstruction_mode,
             codec_backend=codec_backend,
             default_decoder_scales=eval_ds.target_cache.get("default_decoder_scales"),
+            target_mean=eval_ds.target_cache.get("target_mean"),
+            target_std=eval_ds.target_cache.get("target_std"),
         )
     metrics_path = output_root / "metrics" / f"{split}_evaluation.json"
     write_json(metrics_path, payload)

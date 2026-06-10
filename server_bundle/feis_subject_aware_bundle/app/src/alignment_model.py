@@ -21,9 +21,14 @@ class EEGSpeechAlignmentModel(nn.Module):
         use_subject_demo_head: bool = False,
         num_subjects: int | None = None,
         subject_embedding_dim: int = 64,
+        use_codec_scale_head: bool = False,
+        use_phoneme_head: bool = False,
+        num_phoneme_tokens: int = 0,
+        phoneme_steps: int = 0,
     ):
         super().__init__()
         self.target_steps = int(target_steps)
+        self.phoneme_steps = int(phoneme_steps)
         self.encoder = EEGEncoder(in_channels=n_channels_eeg, hidden_dim=hidden_dim)
         self.projector = nn.Sequential(
             nn.LayerNorm(hidden_dim),
@@ -54,6 +59,24 @@ class EEGSpeechAlignmentModel(nn.Module):
                 nn.Linear(latent_dim, latent_dim),
                 nn.GELU(),
                 nn.Linear(latent_dim, num_labels),
+            )
+        self.codec_scale_head = None
+        if use_codec_scale_head:
+            self.codec_scale_head = nn.Sequential(
+                nn.LayerNorm(latent_dim),
+                nn.Linear(latent_dim, max(latent_dim // 2, 1)),
+                nn.GELU(),
+                nn.Linear(max(latent_dim // 2, 1), 1),
+            )
+        self.phoneme_head = None
+        if use_phoneme_head:
+            if int(num_phoneme_tokens) <= 0 or int(phoneme_steps) <= 0:
+                raise ValueError("num_phoneme_tokens and phoneme_steps are required when use_phoneme_head=True")
+            self.phoneme_head = nn.Sequential(
+                nn.LayerNorm(latent_dim),
+                nn.Linear(latent_dim, latent_dim),
+                nn.GELU(),
+                nn.Linear(latent_dim, int(num_phoneme_tokens)),
             )
         self.subject_embedding = None
         self.subject_demo_head = None
@@ -107,6 +130,18 @@ class EEGSpeechAlignmentModel(nn.Module):
             outputs["prosody"] = self.prosody_head(neural_speech_latent)
         if self.label_head is not None:
             outputs["label_logits"] = self.label_head(neural_speech_latent)
+        if self.codec_scale_head is not None:
+            outputs["codec_log_rms"] = self.codec_scale_head(neural_speech_latent).squeeze(-1)
+        if self.phoneme_head is not None:
+            phoneme_latent = neural_step_latent
+            if phoneme_latent.shape[1] != self.phoneme_steps:
+                phoneme_latent = nn.functional.adaptive_avg_pool1d(
+                    phoneme_latent.transpose(1, 2),
+                    self.phoneme_steps,
+                ).transpose(1, 2)
+            outputs["phoneme_logits"] = self.phoneme_head(
+                phoneme_latent.reshape(batch_size * self.phoneme_steps, -1)
+            ).view(batch_size, self.phoneme_steps, -1)
         if self.subject_embedding is not None and self.subject_demo_head is not None and subject_indices is not None:
             subject_latent = self.subject_embedding(subject_indices.long())
             outputs["subject_conditioned_embedding"] = self.subject_demo_head(

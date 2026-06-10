@@ -45,6 +45,13 @@ def compute_alignment_losses(
     target_summary: torch.Tensor | None = None,
     pred_prosody: torch.Tensor | None = None,
     target_prosody: torch.Tensor | None = None,
+    pred_codec_log_rms: torch.Tensor | None = None,
+    target_log_rms: torch.Tensor | None = None,
+    lambda_codec_scale: float = 0.0,
+    phoneme_logits: torch.Tensor | None = None,
+    phoneme_ids: torch.Tensor | None = None,
+    phoneme_mask: torch.Tensor | None = None,
+    lambda_phoneme: float = 0.0,
     lambda_seq_cosine: float = 1.0,
     lambda_seq_mse: float = 0.5,
     lambda_contrastive: float = 1.0,
@@ -90,6 +97,16 @@ def compute_alignment_losses(
         prosody_loss = F.smooth_l1_loss(pred_prosody, target_prosody)
         total = total + float(lambda_prosody) * prosody_loss
 
+    codec_scale_loss = pred_sequence.new_tensor(0.0)
+    codec_log_rms_mae = pred_sequence.new_tensor(0.0)
+    if pred_codec_log_rms is not None and target_log_rms is not None and target_log_rms.numel() > 0:
+        target_log_rms = target_log_rms.to(device=pred_codec_log_rms.device, dtype=pred_codec_log_rms.dtype).view_as(
+            pred_codec_log_rms
+        )
+        codec_scale_loss = F.smooth_l1_loss(pred_codec_log_rms, target_log_rms)
+        codec_log_rms_mae = (pred_codec_log_rms - target_log_rms).abs().mean()
+        total = total + float(lambda_codec_scale) * codec_scale_loss
+
     cls_loss = pred_sequence.new_tensor(0.0)
     cls_acc = pred_sequence.new_tensor(0.0)
     if label_logits is not None and label_ids is not None:
@@ -97,6 +114,26 @@ def compute_alignment_losses(
         cls_pred = torch.argmax(label_logits, dim=-1)
         cls_acc = (cls_pred == label_ids.long()).float().mean()
         total = total + float(lambda_cls) * cls_loss
+
+    phoneme_loss = pred_sequence.new_tensor(0.0)
+    phoneme_acc = pred_sequence.new_tensor(0.0)
+    if phoneme_logits is not None and phoneme_ids is not None:
+        if phoneme_logits.ndim != 3:
+            raise ValueError(f"Expected phoneme_logits [B, P, V], got {tuple(phoneme_logits.shape)}")
+        phoneme_ids = phoneme_ids.to(device=phoneme_logits.device).long()
+        if phoneme_mask is None:
+            phoneme_mask = torch.ones_like(phoneme_ids, dtype=phoneme_logits.dtype)
+        else:
+            phoneme_mask = phoneme_mask.to(device=phoneme_logits.device, dtype=phoneme_logits.dtype)
+        flat_loss = F.cross_entropy(
+            phoneme_logits.reshape(-1, phoneme_logits.shape[-1]),
+            phoneme_ids.reshape(-1),
+            reduction="none",
+        ).view_as(phoneme_mask)
+        phoneme_loss = _masked_mean(flat_loss, phoneme_mask)
+        phoneme_pred = torch.argmax(phoneme_logits, dim=-1)
+        phoneme_acc = _masked_mean((phoneme_pred == phoneme_ids).to(phoneme_logits.dtype), phoneme_mask)
+        total = total + float(lambda_phoneme) * phoneme_loss
 
     return {
         "total": total,
@@ -108,6 +145,10 @@ def compute_alignment_losses(
         "embedding_mse": F.mse_loss(pred_summary, target_summary),
         "contrastive": contrastive,
         "prosody_loss": prosody_loss,
+        "codec_scale_loss": codec_scale_loss,
+        "codec_log_rms_mae": codec_log_rms_mae,
+        "phoneme_loss": phoneme_loss,
+        "phoneme_acc": phoneme_acc,
         "cls": cls_loss,
         "cls_acc": cls_acc,
     }

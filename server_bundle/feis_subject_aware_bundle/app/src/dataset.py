@@ -11,6 +11,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from .audio_features import TARGET_KIND_ENCODEC_LATENT
+from .phonemes import build_phoneme_vocab, encode_label_phonemes
 from .utils import load_wav_fixed, resolve_feis_root
 
 
@@ -255,6 +257,7 @@ class FEISProtocolDataset(Dataset):
         all_rows = self._load_stage_rows()
         self.label_vocab = sorted({row["label"] for row in all_rows})
         self.label_to_id = {label: idx for idx, label in enumerate(self.label_vocab)}
+        self.phoneme_vocab = build_phoneme_vocab(self.label_vocab)
 
         self.protocol_rows = self._select_protocol_rows(
             rows=all_rows,
@@ -478,26 +481,57 @@ class FEISProtocolDataset(Dataset):
         template_ids = payload["template_ids"].astype(str)
         index = {template_id: idx for idx, template_id in enumerate(template_ids.tolist())}
         if "target_sequences" in payload.files:
-            target_sequences = payload["target_sequences"].astype(np.float32)
+            raw_target_sequences = payload["target_sequences"].astype(np.float32)
         else:
-            target_sequences = payload["speech_embeddings"].astype(np.float32)[:, None, :]
+            raw_target_sequences = payload["speech_embeddings"].astype(np.float32)[:, None, :]
         if "target_masks" in payload.files:
             target_masks = payload["target_masks"].astype(np.float32)
         else:
-            target_masks = np.ones(target_sequences.shape[:2], dtype=np.float32)
+            target_masks = np.ones(raw_target_sequences.shape[:2], dtype=np.float32)
         if "target_summaries" in payload.files:
-            target_summaries = payload["target_summaries"].astype(np.float32)
+            raw_target_summaries = payload["target_summaries"].astype(np.float32)
         else:
-            target_summaries = payload["speech_embeddings"].astype(np.float32)
+            raw_target_summaries = payload["speech_embeddings"].astype(np.float32)
         prosody_targets = (
             payload["prosody_targets"].astype(np.float32)
             if "prosody_targets" in payload.files
-            else np.zeros((target_sequences.shape[0], 0), dtype=np.float32)
+            else np.zeros((raw_target_sequences.shape[0], 0), dtype=np.float32)
         )
         target_kind = (
             str(payload["target_kind"].item())
             if "target_kind" in payload.files
-            else ("hubert_pooled" if target_sequences.shape[1] == 1 else "unknown")
+            else ("hubert_pooled" if raw_target_sequences.shape[1] == 1 else "unknown")
+        )
+        target_mean = (
+            payload["target_mean"].astype(np.float32)
+            if "target_mean" in payload.files
+            else raw_target_sequences.mean(axis=(0, 1)).astype(np.float32)
+        )
+        target_std = (
+            payload["target_std"].astype(np.float32)
+            if "target_std" in payload.files
+            else raw_target_sequences.std(axis=(0, 1)).astype(np.float32)
+        )
+        target_std = np.maximum(target_std, 1e-6).astype(np.float32)
+        if target_kind == TARGET_KIND_ENCODEC_LATENT:
+            target_sequences = ((raw_target_sequences - target_mean.reshape(1, 1, -1)) / target_std.reshape(1, 1, -1)).astype(
+                np.float32
+            )
+            target_summaries = target_sequences.mean(axis=1).astype(np.float32)
+        else:
+            target_sequences = raw_target_sequences
+            target_summaries = raw_target_summaries
+        target_rms = (
+            payload["target_rms"].astype(np.float32)
+            if "target_rms" in payload.files
+            else np.exp(prosody_targets[:, 1]).astype(np.float32)
+            if prosody_targets.shape[1] > 1
+            else np.ones((target_sequences.shape[0],), dtype=np.float32)
+        )
+        target_log_rms = (
+            payload["target_log_rms"].astype(np.float32)
+            if "target_log_rms" in payload.files
+            else np.log(np.maximum(target_rms, 1e-8)).astype(np.float32)
         )
         return {
             "path": resolved_path,
@@ -509,6 +543,13 @@ class FEISProtocolDataset(Dataset):
             "target_sequences": target_sequences,
             "target_masks": target_masks,
             "target_summaries": target_summaries,
+            "raw_target_sequences": raw_target_sequences,
+            "raw_target_summaries": raw_target_summaries,
+            "target_mean": target_mean,
+            "target_std": target_std,
+            "targets_are_normalized": target_kind == TARGET_KIND_ENCODEC_LATENT,
+            "target_rms": target_rms,
+            "target_log_rms": target_log_rms,
             "prosody_targets": prosody_targets,
             "feature_backend": payload["feature_backend"].astype(str),
             "target_kind": target_kind,
@@ -552,7 +593,10 @@ class FEISProtocolDataset(Dataset):
             "target_sequence": self.target_cache["target_sequences"][idx],
             "target_mask": self.target_cache["target_masks"][idx],
             "target_summary": self.target_cache["target_summaries"][idx],
+            "raw_target_sequence": self.target_cache["raw_target_sequences"][idx],
+            "raw_target_summary": self.target_cache["raw_target_summaries"][idx],
             "prosody_target": self.target_cache["prosody_targets"][idx],
+            "target_log_rms": self.target_cache["target_log_rms"][idx],
             "decoder_scale": None if self.target_cache["decoder_scales"] is None else self.target_cache["decoder_scales"][idx],
         }
 
@@ -651,7 +695,10 @@ class FEISProtocolDataset(Dataset):
             target_sequence = np.zeros((0, 0), dtype=np.float32)
             target_mask = np.zeros((0,), dtype=np.float32)
             target_summary = np.zeros((0,), dtype=np.float32)
+            raw_target_sequence = np.zeros((0, 0), dtype=np.float32)
+            raw_target_summary = np.zeros((0,), dtype=np.float32)
             prosody_target = np.zeros((0,), dtype=np.float32)
+            target_log_rms = np.asarray(0.0, dtype=np.float32)
             decoder_scale = np.zeros((0,), dtype=np.float32)
             target_kind = "none"
         else:
@@ -660,13 +707,17 @@ class FEISProtocolDataset(Dataset):
             target_sequence = template_target["target_sequence"].astype(np.float32)
             target_mask = template_target["target_mask"].astype(np.float32)
             target_summary = template_target["target_summary"].astype(np.float32)
+            raw_target_sequence = template_target["raw_target_sequence"].astype(np.float32)
+            raw_target_summary = template_target["raw_target_summary"].astype(np.float32)
             prosody_target = template_target["prosody_target"].astype(np.float32)
+            target_log_rms = np.asarray(template_target["target_log_rms"], dtype=np.float32)
             decoder_scale = (
                 np.asarray(template_target["decoder_scale"], dtype=np.float32)
                 if template_target["decoder_scale"] is not None
                 else np.zeros((0,), dtype=np.float32)
             )
             target_kind = self.target_kind
+        phoneme_ids, phoneme_mask = encode_label_phonemes(entry.label, self.phoneme_vocab)
 
         return {
             "eeg": torch.from_numpy(eeg_np).float(),
@@ -682,8 +733,13 @@ class FEISProtocolDataset(Dataset):
             "target_sequence": torch.from_numpy(target_sequence).float(),
             "target_mask": torch.from_numpy(target_mask).float(),
             "target_summary": torch.from_numpy(target_summary).float(),
+            "raw_target_sequence": torch.from_numpy(raw_target_sequence).float(),
+            "raw_target_summary": torch.from_numpy(raw_target_summary).float(),
             "prosody_target": torch.from_numpy(prosody_target).float(),
+            "target_log_rms": torch.tensor(float(target_log_rms), dtype=torch.float32),
             "decoder_scale": torch.from_numpy(decoder_scale).float(),
+            "phoneme_ids": torch.from_numpy(phoneme_ids).long(),
+            "phoneme_mask": torch.from_numpy(phoneme_mask).float(),
             "target_kind": target_kind,
             "is_clean_subject": torch.tensor(float(entry.is_clean_subject), dtype=torch.float32),
             "split_name": entry.split_name,

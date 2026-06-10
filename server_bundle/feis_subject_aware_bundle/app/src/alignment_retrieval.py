@@ -357,6 +357,41 @@ def compute_mean_top1_similarity(
     return float(np.mean(scores))
 
 
+def compute_top1_collapse_metrics(
+    ranked_candidates: Sequence[Sequence[dict[str, object]]],
+    evaluation_mask: np.ndarray | None = None,
+) -> dict[str, float | int | None]:
+    if evaluation_mask is None:
+        evaluation_mask = np.ones(len(ranked_candidates), dtype=bool)
+    else:
+        evaluation_mask = np.asarray(evaluation_mask, dtype=bool)
+    top1_ids = [
+        str(candidates[0]["template_id"])
+        for idx, candidates in enumerate(ranked_candidates)
+        if evaluation_mask[idx] and candidates
+    ]
+    count = len(top1_ids)
+    if count == 0:
+        return {
+            "unique_top1_count": 0,
+            "unique_top1_rate": None,
+            "top1_entropy": None,
+            "top1_entropy_normalized": None,
+            "max_template_share": None,
+        }
+    _, counts = np.unique(np.asarray(top1_ids), return_counts=True)
+    probs = counts.astype(np.float64) / float(count)
+    entropy = float(-np.sum(probs * np.log(probs + 1e-12)))
+    max_entropy = float(np.log(max(len(counts), 1)))
+    return {
+        "unique_top1_count": int(len(counts)),
+        "unique_top1_rate": float(len(counts) / count),
+        "top1_entropy": entropy,
+        "top1_entropy_normalized": float(entropy / max(max_entropy, 1e-12)) if len(counts) > 1 else 0.0,
+        "max_template_share": float(np.max(probs)),
+    }
+
+
 def evaluate_embedding_retrieval(
     bank: RetrievalBank,
     target_template_ids: Sequence[str],
@@ -395,6 +430,12 @@ def evaluate_embedding_retrieval(
     metrics["mean_top1_cosine_similarity"] = compute_mean_top1_similarity(
         ranked_candidates=ranked["ranked_candidates"],
         evaluation_mask=effective_mask,
+    )
+    metrics.update(
+        compute_top1_collapse_metrics(
+            ranked_candidates=ranked["ranked_candidates"],
+            evaluation_mask=effective_mask,
+        )
     )
     return {
         **ranked,

@@ -20,6 +20,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--codec-eval", default=None)
     parser.add_argument("--waveform-eval", default=None)
     parser.add_argument("--space-summary", default=None)
+    parser.add_argument("--sequence-audio-qc", default=None)
+    parser.add_argument("--codec-audio-qc", default=None)
     parser.add_argument("--output-path", default=None)
     parser.add_argument("--protocol", default=None)
     parser.add_argument("--subject", default=None)
@@ -72,6 +74,23 @@ def _alignment_model_block(payload: dict | None) -> dict | None:
     block = payload.get("model")
     if isinstance(block, dict) and isinstance(block.get("model"), dict):
         return block["model"]
+    return None
+
+
+def _default_audio_qc_path(eval_payload: dict | None) -> Path | None:
+    if eval_payload is None:
+        return None
+    model = eval_payload.get("model", {})
+    predictions_path = model.get("predictions_path")
+    if not predictions_path:
+        return None
+    path = Path(str(predictions_path))
+    candidates = [path.parent / "audio_qc.json"]
+    if len(path.parents) >= 4:
+        candidates.append(path.parents[3] / "metrics" / "audio_qc.json")
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
     return None
 
 
@@ -140,6 +159,8 @@ def build_report(
     codec_eval: dict | None,
     waveform_eval: dict | None,
     space_summary: dict | None,
+    sequence_audio_qc: dict | None = None,
+    codec_audio_qc: dict | None = None,
 ) -> str:
     recommendation_title, recommendation_body = choose_recommendation(
         pooled_eval=pooled_eval,
@@ -177,6 +198,8 @@ def build_report(
                 f"- `MRR={fmt_metric(current_model.get('MRR'))}`, `mean_rank={fmt_metric(current_model.get('mean_rank'))}`",
                 f"- `{nta_key}={fmt_metric(current_model.get(nta_key))}`",
                 f"- mean waveform STFT distance to target: `{fmt_metric(current_model.get('mean_retrieved_target_stft_distance'))}`",
+                f"- unique top-1 templates: `{fmt_metric(current_model.get('unique_top1_count'))}`, max template share: `{fmt_metric(current_model.get('max_template_share'))}`",
+                f"- latent std ratio: `{fmt_metric(current_model.get('pred_target_std_ratio'))}`, frame variance ratio: `{fmt_metric(current_model.get('frame_variance_ratio'))}`",
             ]
         )
         if current.get("model", {}).get("alerts", {}).get("high_cosine_poor_retrieval"):
@@ -205,6 +228,24 @@ def build_report(
     ]:
         if row is not None:
             lines.append(row)
+    lines.extend(
+        [
+            "",
+            "## Waveform QC",
+            "",
+            "| System | Recon RMS | Target RMS | Recon Centroid Hz | Target Centroid Hz | Unique Top-1 | Max Template Share | Target-Latent Oracle RMS |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+    )
+    for name, qc in [("B. Sequence HuBERT retrieval", sequence_audio_qc), ("C. Codec latent reconstruction", codec_audio_qc)]:
+        if qc is None:
+            continue
+        lines.append(
+            f"| {name} | {fmt_metric(qc.get('recon_rms_mean'))} | {fmt_metric(qc.get('target_rms_mean'))} | "
+            f"{fmt_metric(qc.get('recon_spectral_centroid_hz_mean'))} | {fmt_metric(qc.get('target_spectral_centroid_hz_mean'))} | "
+            f"{fmt_metric(qc.get('unique_top1_count'))} | {fmt_metric(qc.get('max_template_share'))} | "
+            f"{fmt_metric(qc.get('target_latent_oracle_rms_mean'))} |"
+        )
     lines.extend(
         [
             "",
@@ -278,6 +319,8 @@ def main() -> None:
         codec_eval=codec_eval,
         waveform_eval=waveform_eval,
         space_summary=space_summary,
+        sequence_audio_qc=load_json(resolve_bundle_path(args.sequence_audio_qc, BUNDLE_DIR) if args.sequence_audio_qc else _default_audio_qc_path(sequence_eval)),
+        codec_audio_qc=load_json(resolve_bundle_path(args.codec_audio_qc, BUNDLE_DIR) if args.codec_audio_qc else _default_audio_qc_path(codec_eval)),
     )
     output_path = (
         resolve_bundle_path(args.output_path, BUNDLE_DIR)

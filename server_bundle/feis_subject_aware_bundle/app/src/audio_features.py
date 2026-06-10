@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from scipy.signal import stft
+from tqdm import tqdm
 
 from .utils import ensure_dir, load_wav_fixed, pad_or_crop_audio, read_csv_rows, resample_audio, resolve_feis_root
 
@@ -175,13 +176,17 @@ class _EncodecLatentBackend:
             )
             audio_codes = encoded.audio_codes
             audio_scales = encoded.audio_scales
-            embeddings = self.model.quantizer.decode(audio_codes.transpose(0, 1))
+            if audio_codes is None:
+                raise RuntimeError("EnCodec encode() returned no audio_codes")
+            if audio_codes.ndim != 4 or audio_codes.shape[0] != 1:
+                raise ValueError(f"Expected EnCodec audio_codes shape [1, B, Q, T], got {tuple(audio_codes.shape)}")
+            frame_codes = audio_codes[0]
+            embeddings = self.model.quantizer.decode(frame_codes.transpose(0, 1))
         sequence = embeddings.squeeze(0).transpose(0, 1).cpu().numpy().astype(np.float32)
         summary = sequence.mean(axis=0).astype(np.float32)
-        if audio_scales is None:
-            decoder_scales = np.ones((1,), dtype=np.float32)
-        else:
-            decoder_scales = audio_scales.squeeze(0).cpu().numpy().astype(np.float32)
+        decoder_scales = np.ones((1,), dtype=np.float32)
+        if audio_scales is not None and len(audio_scales) > 0 and audio_scales[0] is not None:
+            decoder_scales = audio_scales[0].reshape(-1).cpu().numpy().astype(np.float32)
         return {
             "target_sequence": sequence,
             "target_mask": np.ones(sequence.shape[0], dtype=np.float32),
@@ -292,10 +297,12 @@ def extract_template_audio_features(
     target_masks: list[np.ndarray] = []
     target_summaries: list[np.ndarray] = []
     prosody_targets: list[np.ndarray] = []
+    target_rms_values: list[float] = []
+    target_log_rms_values: list[float] = []
     feature_backend: list[str] = []
     decoder_scales: list[np.ndarray] = []
 
-    for row in template_rows:
+    for row in tqdm(template_rows, desc=f"extract {config.target_kind}", unit="template"):
         relpath = str(row["audio_path"])
         audio = load_wav_fixed(
             root / relpath,
@@ -305,6 +312,7 @@ def extract_template_audio_features(
             target_rms=config.target_rms,
             max_gain=config.max_gain,
         )
+        audio_rms = float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)) + 1e-8)
         target = _extract_target_from_audio(backend_name=backend_name, backend=backend, audio=audio, config=config)
         prosody = compute_prosody_target(audio, sample_rate=config.sample_rate)
         template_ids.append(str(row["template_id"]))
@@ -316,6 +324,8 @@ def extract_template_audio_features(
         target_summaries.append(np.asarray(target["target_summary"], dtype=np.float32))
         speech_embeddings.append(np.asarray(target["target_summary"], dtype=np.float32))
         prosody_targets.append(np.asarray(prosody, dtype=np.float32))
+        target_rms_values.append(audio_rms)
+        target_log_rms_values.append(float(np.log(audio_rms + 1e-8)))
         feature_backend.append(backend_name)
         if "decoder_scales" in target:
             decoder_scales.append(np.asarray(target["decoder_scales"], dtype=np.float32))
@@ -328,6 +338,10 @@ def extract_template_audio_features(
     mask_shape = {tuple(item.shape) for item in target_masks}
     if len(mask_shape) != 1:
         raise ValueError(f"Expected a fixed target mask shape across templates, got {sorted(mask_shape)}")
+    stacked_sequences = np.stack(target_sequences, axis=0).astype(np.float32)
+    target_mean = stacked_sequences.mean(axis=(0, 1)).astype(np.float32)
+    target_std = stacked_sequences.std(axis=(0, 1)).astype(np.float32)
+    target_std = np.maximum(target_std, 1e-6).astype(np.float32)
 
     payload: dict[str, np.ndarray] = {
         "template_ids": np.asarray(template_ids),
@@ -335,10 +349,14 @@ def extract_template_audio_features(
         "labels": np.asarray(labels),
         "audio_paths": np.asarray(audio_paths),
         "speech_embeddings": np.stack(speech_embeddings, axis=0).astype(np.float32),
-        "target_sequences": np.stack(target_sequences, axis=0).astype(np.float32),
+        "target_sequences": stacked_sequences,
         "target_masks": np.stack(target_masks, axis=0).astype(np.float32),
         "target_summaries": np.stack(target_summaries, axis=0).astype(np.float32),
         "prosody_targets": np.stack(prosody_targets, axis=0).astype(np.float32),
+        "target_mean": target_mean,
+        "target_std": target_std,
+        "target_rms": np.asarray(target_rms_values, dtype=np.float32),
+        "target_log_rms": np.asarray(target_log_rms_values, dtype=np.float32),
         "feature_backend": np.asarray(feature_backend),
         "target_kind": np.asarray(str(config.target_kind)),
         "target_steps": np.asarray(int(target_sequences[0].shape[0]), dtype=np.int32),
@@ -374,6 +392,10 @@ def extract_template_audio_features(
         "codec_bandwidth": config.codec_bandwidth,
         "local_files_only": config.local_files_only,
         "default_decoder_scales": None if default_decoder_scales is None else default_decoder_scales.tolist(),
+        "target_mean_shape": list(target_mean.shape),
+        "target_std_min": float(target_std.min()) if target_std.size else None,
+        "target_std_max": float(target_std.max()) if target_std.size else None,
+        "target_rms_mean": float(np.mean(target_rms_values)) if target_rms_values else None,
     }
     metadata_path = output_path.with_suffix(".json")
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
 
+os.environ.setdefault("XDG_CACHE_HOME", "/tmp/feis-cache")
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-feis")
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -214,6 +217,9 @@ def main() -> None:
     payload = load_target_cache(target_cache_path)
     output_root = resolve_bundle_path(args.output_root or config["output"]["root"], BUNDLE_DIR) / "template_space"
     cache_stem = Path(target_cache_path).stem
+    run_tag = os.environ.get("FEIS_RUN_TAG", "").strip()
+    if run_tag:
+        cache_stem = f"{cache_stem}_{run_tag}"
     output_dir = ensure_dir(output_root / cache_stem)
 
     coords = pca_projection(payload["speech_embeddings"], n_components=2)

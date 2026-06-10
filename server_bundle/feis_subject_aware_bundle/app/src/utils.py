@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import random
 from pathlib import Path
 
 import numpy as np
+os.environ.setdefault("XDG_CACHE_HOME", "/tmp/feis-cache")
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-feis")
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -141,6 +144,9 @@ def build_protocol_run_name(
         if holdout_subject_id is None:
             raise ValueError("holdout_subject_id is required for Protocol U run names")
         run_name += f"_holdout_{holdout_subject_id}"
+    run_tag = os.environ.get("FEIS_RUN_TAG", "").strip()
+    if run_tag:
+        run_name += f"_{run_tag}"
     return run_name
 
 

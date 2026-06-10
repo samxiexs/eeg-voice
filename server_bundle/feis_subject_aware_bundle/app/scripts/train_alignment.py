@@ -17,6 +17,7 @@ if str(BUNDLE_DIR) not in sys.path:
 from src.alignment_losses import compute_alignment_losses
 from src.alignment_model import EEGSpeechAlignmentModel
 from src.alignment_retrieval import build_retrieval_bank, evaluate_embedding_retrieval
+from src.audio_features import TARGET_KIND_ENCODEC_LATENT
 from src.dataset import FEISProtocolDataset
 from src.utils import build_protocol_run_name, ensure_dir, load_simple_yaml, resolve_bundle_path, set_seed, write_json
 
@@ -31,6 +32,10 @@ ALIGNMENT_KEYS = (
     "embedding_mse",
     "contrastive",
     "prosody_loss",
+    "codec_scale_loss",
+    "codec_log_rms_mae",
+    "phoneme_loss",
+    "phoneme_acc",
     "cls",
     "cls_acc",
 )
@@ -101,6 +106,10 @@ def build_model(config: dict, dataset: FEISProtocolDataset) -> EEGSpeechAlignmen
         use_subject_demo_head=bool(cfg_model.get("use_subject_demo_head", False)),
         num_subjects=int(dataset.num_subjects),
         subject_embedding_dim=int(cfg_model.get("subject_embedding_dim", 64)),
+        use_codec_scale_head=bool(cfg_model.get("use_codec_scale_head", dataset.target_kind == TARGET_KIND_ENCODEC_LATENT)),
+        use_phoneme_head=bool(cfg_model.get("use_phoneme_head", False)),
+        num_phoneme_tokens=int(dataset.phoneme_vocab.size),
+        phoneme_steps=int(dataset.phoneme_vocab.max_steps),
     )
 
 
@@ -136,6 +145,13 @@ def evaluate(
                 target_summary=target_summary,
                 pred_prosody=outputs.get("prosody"),
                 target_prosody=batch["prosody_target"].to(device) if "prosody_target" in batch else None,
+                pred_codec_log_rms=outputs.get("codec_log_rms"),
+                target_log_rms=batch["target_log_rms"].to(device) if "target_log_rms" in batch else None,
+                lambda_codec_scale=float(config["train"].get("lambda_codec_scale", 0.0)),
+                phoneme_logits=outputs.get("phoneme_logits"),
+                phoneme_ids=batch["phoneme_ids"].to(device) if "phoneme_ids" in batch else None,
+                phoneme_mask=batch["phoneme_mask"].to(device) if "phoneme_mask" in batch else None,
+                lambda_phoneme=float(config["train"].get("lambda_phoneme", 0.0)),
                 lambda_seq_cosine=float(config["train"].get("lambda_seq_cosine", config["train"].get("lambda_cosine", 1.0))),
                 lambda_seq_mse=float(config["train"].get("lambda_seq_mse", config["train"].get("lambda_mse", 0.5))),
                 lambda_contrastive=float(config["train"].get("lambda_contrastive", 1.0)),
@@ -247,6 +263,13 @@ def main() -> None:
                 target_summary=target_summary,
                 pred_prosody=outputs.get("prosody"),
                 target_prosody=batch["prosody_target"].to(device) if "prosody_target" in batch else None,
+                pred_codec_log_rms=outputs.get("codec_log_rms"),
+                target_log_rms=batch["target_log_rms"].to(device) if "target_log_rms" in batch else None,
+                lambda_codec_scale=float(config["train"].get("lambda_codec_scale", 0.0)),
+                phoneme_logits=outputs.get("phoneme_logits"),
+                phoneme_ids=batch["phoneme_ids"].to(device) if "phoneme_ids" in batch else None,
+                phoneme_mask=batch["phoneme_mask"].to(device) if "phoneme_mask" in batch else None,
+                lambda_phoneme=float(config["train"].get("lambda_phoneme", 0.0)),
                 lambda_seq_cosine=float(config["train"].get("lambda_seq_cosine", config["train"].get("lambda_cosine", 1.0))),
                 lambda_seq_mse=float(config["train"].get("lambda_seq_mse", config["train"].get("lambda_mse", 0.5))),
                 lambda_contrastive=float(config["train"].get("lambda_contrastive", 1.0)),
@@ -288,6 +311,8 @@ def main() -> None:
                     "target_kind": train_ds.target_kind,
                     "target_steps": train_ds.target_sequence_steps,
                     "target_dim": train_ds.target_sequence_dim,
+                    "phoneme_tokens": train_ds.phoneme_vocab.tokens,
+                    "phoneme_steps": train_ds.phoneme_vocab.max_steps,
                 },
                 best_ckpt,
             )

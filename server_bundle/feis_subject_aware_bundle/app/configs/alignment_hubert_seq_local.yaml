@@ -30,6 +30,8 @@ model:
   use_label_head: false
   use_prosody_head: false
   use_subject_demo_head: false
+  use_codec_scale_head: false
+  use_phoneme_head: true
   subject_embedding_dim: 64
 
 train:
@@ -43,6 +45,8 @@ train:
   lambda_seq_cosine: 1.0
   lambda_seq_mse: 0.5
   lambda_contrastive: 1.0
+  lambda_codec_scale: 0.0
+  lambda_phoneme: 0.2
   lambda_prosody: 0.0
   lambda_cls: 0.0
   contrastive_temperature: 0.07
