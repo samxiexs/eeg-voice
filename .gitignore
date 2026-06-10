@@ -47,9 +47,7 @@ artifacts/
 results/
 server_bundle/paper-ref/
 
-server_bundle/models/
-server_bundle/data/
-server_bundle/feis_subject_aware_bundle/app/outputs_waveform_protocol/
+eeg2wave_server_bundle/
 
 # Probe artifacts: reports are OK, saved remote snippets/binaries stay local
 outputs/probe_artifacts/
