@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -48,6 +49,9 @@ def build_run_name(config: dict, args: argparse.Namespace) -> str:
         run_name += f"_holdout_{args.holdout_subject or config['data'].get('holdout_subject_id')}"
     if config["model"].get("use_subject_conditioning", False):
         run_name += "_subject_conditioned"
+    run_tag = os.environ.get("FEIS_RUN_TAG", "").strip()
+    if run_tag:
+        run_name += f"_{run_tag}"
     return run_name
 
 

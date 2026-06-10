@@ -11,8 +11,24 @@ RUN_BASELINES="${RUN_BASELINES:-0}"
 RUN_WAVEFORM="${RUN_WAVEFORM:-${RUN_BASELINES}}"
 RUN_POOLED="${RUN_POOLED:-${RUN_BASELINES}}"
 REFRESH_TARGETS="${REFRESH_TARGETS:-0}"
+RUN_TAG="${RUN_TAG:-${FEIS_RUN_TAG:-$(date +%Y%m%d_%H%M)}}"
+export FEIS_RUN_TAG="${RUN_TAG}"
 
 ENCODEC_MODEL_DIR="../models/encodec_24khz"
+TAG_SUFFIX="_${RUN_TAG}"
+G_SEQ_RUN="g_thinking_none_hubert_seq_t16${TAG_SUFFIX}"
+S_SEQ_RUN="s_thinking_none_hubert_seq_t16_subject_${SUBJECT}${TAG_SUFFIX}"
+U_SEQ_RUN="u_thinking_none_hubert_seq_t16_holdout_${HOLDOUT}${TAG_SUFFIX}"
+G_CODEC_RUN="g_thinking_none_encodec_latent${TAG_SUFFIX}"
+S_CODEC_RUN="s_thinking_none_encodec_latent_subject_${SUBJECT}${TAG_SUFFIX}"
+U_CODEC_RUN="u_thinking_none_encodec_latent_holdout_${HOLDOUT}${TAG_SUFFIX}"
+G_POOLED_RUN="g_thinking_none${TAG_SUFFIX}"
+S_POOLED_RUN="s_thinking_none_subject_${SUBJECT}${TAG_SUFFIX}"
+U_POOLED_RUN="u_thinking_none_holdout_${HOLDOUT}${TAG_SUFFIX}"
+G_WAVEFORM_RUN="g_thinking_none${TAG_SUFFIX}"
+S_WAVEFORM_RUN="s_thinking_none_subject_${SUBJECT}${TAG_SUFFIX}"
+U_WAVEFORM_RUN="u_thinking_none_holdout_${HOLDOUT}${TAG_SUFFIX}"
+HUBERT_SPACE_RUN="feis_subject_templates_hubert_seq_t16${TAG_SUFFIX}"
 
 step() {
   printf "\n===== %s =====\n" "$1"
@@ -31,6 +47,7 @@ echo "RUN_WAVEFORM=${RUN_WAVEFORM}"
 echo "RUN_POOLED=${RUN_POOLED}"
 echo "RUN_ENCODEC=${RUN_ENCODEC}"
 echo "REFRESH_TARGETS=${REFRESH_TARGETS}"
+echo "RUN_TAG=${RUN_TAG}"
 
 step "Extract target caches"
 extract_if_needed() {
@@ -99,33 +116,33 @@ fi
 step "B. Sequence HuBERT / Protocol G"
 run_python python scripts/train_alignment.py --config configs/alignment_hubert_seq_local.yaml --protocol G
 run_python python scripts/eval_alignment.py --config configs/alignment_hubert_seq_local.yaml --protocol G --split test
-run_python python scripts/audit_recon_audio.py --eval-json ../artifacts/outputs_alignment/g_thinking_none_hubert_seq_t16/metrics/test_evaluation.json --output-dir ../artifacts/outputs_alignment/g_thinking_none_hubert_seq_t16/metrics
+run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/${G_SEQ_RUN}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/${G_SEQ_RUN}/metrics"
 
 step "B. Sequence HuBERT / Protocol S"
 run_python python scripts/train_alignment.py --config configs/alignment_hubert_seq_local.yaml --protocol S --subject "${SUBJECT}"
 run_python python scripts/eval_alignment.py --config configs/alignment_hubert_seq_local.yaml --protocol S --subject "${SUBJECT}" --split test
-run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/s_thinking_none_hubert_seq_t16_subject_${SUBJECT}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/s_thinking_none_hubert_seq_t16_subject_${SUBJECT}/metrics"
+run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/${S_SEQ_RUN}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/${S_SEQ_RUN}/metrics"
 
 step "B. Sequence HuBERT / Protocol U"
 run_python python scripts/train_alignment.py --config configs/alignment_hubert_seq_local.yaml --protocol U --holdout-subject "${HOLDOUT}"
 run_python python scripts/eval_alignment.py --config configs/alignment_hubert_seq_local.yaml --protocol U --holdout-subject "${HOLDOUT}" --split test
-run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/u_thinking_none_hubert_seq_t16_holdout_${HOLDOUT}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/u_thinking_none_hubert_seq_t16_holdout_${HOLDOUT}/metrics"
+run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/${U_SEQ_RUN}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/${U_SEQ_RUN}/metrics"
 
 if [[ "${RUN_ENCODEC}" == "1" ]]; then
   step "C. EnCodec latent / Protocol G"
   run_python python scripts/train_alignment.py --config configs/alignment_encodec_local.yaml --protocol G
   run_python python scripts/eval_alignment.py --config configs/alignment_encodec_local.yaml --protocol G --split test
-  run_python python scripts/audit_recon_audio.py --eval-json ../artifacts/outputs_alignment/g_thinking_none_encodec_latent/metrics/test_evaluation.json --output-dir ../artifacts/outputs_alignment/g_thinking_none_encodec_latent/metrics
+  run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/${G_CODEC_RUN}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/${G_CODEC_RUN}/metrics"
 
   step "C. EnCodec latent / Protocol S"
   run_python python scripts/train_alignment.py --config configs/alignment_encodec_local.yaml --protocol S --subject "${SUBJECT}"
   run_python python scripts/eval_alignment.py --config configs/alignment_encodec_local.yaml --protocol S --subject "${SUBJECT}" --split test
-  run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/s_thinking_none_encodec_latent_subject_${SUBJECT}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/s_thinking_none_encodec_latent_subject_${SUBJECT}/metrics"
+  run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/${S_CODEC_RUN}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/${S_CODEC_RUN}/metrics"
 
   step "C. EnCodec latent / Protocol U"
   run_python python scripts/train_alignment.py --config configs/alignment_encodec_local.yaml --protocol U --holdout-subject "${HOLDOUT}"
   run_python python scripts/eval_alignment.py --config configs/alignment_encodec_local.yaml --protocol U --holdout-subject "${HOLDOUT}" --split test
-  run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/u_thinking_none_encodec_latent_holdout_${HOLDOUT}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/u_thinking_none_encodec_latent_holdout_${HOLDOUT}/metrics"
+  run_python python scripts/audit_recon_audio.py --eval-json "../artifacts/outputs_alignment/${U_CODEC_RUN}/metrics/test_evaluation.json" --output-dir "../artifacts/outputs_alignment/${U_CODEC_RUN}/metrics"
 fi
 
 append_if_exists() {
@@ -145,13 +162,13 @@ REPORT_G=(
   --config configs/alignment_hubert_seq_local.yaml
   --protocol G
   --split test
-  --sequence-eval ../artifacts/outputs_alignment/g_thinking_none_hubert_seq_t16/metrics/test_evaluation.json
-  --space-summary ../artifacts/outputs_alignment/template_space/feis_subject_templates_hubert_seq_t16/space_summary.json
-  --output-path ../artifacts/outputs_alignment/g_thinking_none_hubert_seq_t16/metrics/test_phase_report_compare_all.md
+  --sequence-eval "../artifacts/outputs_alignment/${G_SEQ_RUN}/metrics/test_evaluation.json"
+  --space-summary "../artifacts/outputs_alignment/template_space/${HUBERT_SPACE_RUN}/space_summary.json"
+  --output-path "../artifacts/outputs_alignment/${G_SEQ_RUN}/metrics/test_phase_report_compare_all.md"
 )
-append_if_exists REPORT_G --alignment-eval ../artifacts/outputs_alignment/g_thinking_none/metrics/test_evaluation.json
-append_if_exists REPORT_G --codec-eval ../artifacts/outputs_alignment/g_thinking_none_encodec_latent/metrics/test_evaluation.json
-append_if_exists REPORT_G --waveform-eval ../artifacts/outputs_waveform_protocol/g_thinking_none/metrics/test_metrics.json
+append_if_exists REPORT_G --alignment-eval "../artifacts/outputs_alignment/${G_POOLED_RUN}/metrics/test_evaluation.json"
+append_if_exists REPORT_G --codec-eval "../artifacts/outputs_alignment/${G_CODEC_RUN}/metrics/test_evaluation.json"
+append_if_exists REPORT_G --waveform-eval "../artifacts/outputs_waveform_protocol/${G_WAVEFORM_RUN}/metrics/test_metrics.json"
 run_python "${REPORT_G[@]}"
 
 step "Combined report / Protocol S"
@@ -161,13 +178,13 @@ REPORT_S=(
   --protocol S
   --subject "${SUBJECT}"
   --split test
-  --sequence-eval "../artifacts/outputs_alignment/s_thinking_none_hubert_seq_t16_subject_${SUBJECT}/metrics/test_evaluation.json"
-  --space-summary ../artifacts/outputs_alignment/template_space/feis_subject_templates_hubert_seq_t16/space_summary.json
-  --output-path "../artifacts/outputs_alignment/s_thinking_none_hubert_seq_t16_subject_${SUBJECT}/metrics/test_phase_report_compare_all.md"
+  --sequence-eval "../artifacts/outputs_alignment/${S_SEQ_RUN}/metrics/test_evaluation.json"
+  --space-summary "../artifacts/outputs_alignment/template_space/${HUBERT_SPACE_RUN}/space_summary.json"
+  --output-path "../artifacts/outputs_alignment/${S_SEQ_RUN}/metrics/test_phase_report_compare_all.md"
 )
-append_if_exists REPORT_S --alignment-eval "../artifacts/outputs_alignment/s_thinking_none_subject_${SUBJECT}/metrics/test_evaluation.json"
-append_if_exists REPORT_S --codec-eval "../artifacts/outputs_alignment/s_thinking_none_encodec_latent_subject_${SUBJECT}/metrics/test_evaluation.json"
-append_if_exists REPORT_S --waveform-eval "../artifacts/outputs_waveform_protocol/s_thinking_none_subject_${SUBJECT}/metrics/test_metrics.json"
+append_if_exists REPORT_S --alignment-eval "../artifacts/outputs_alignment/${S_POOLED_RUN}/metrics/test_evaluation.json"
+append_if_exists REPORT_S --codec-eval "../artifacts/outputs_alignment/${S_CODEC_RUN}/metrics/test_evaluation.json"
+append_if_exists REPORT_S --waveform-eval "../artifacts/outputs_waveform_protocol/${S_WAVEFORM_RUN}/metrics/test_metrics.json"
 run_python "${REPORT_S[@]}"
 
 step "Combined report / Protocol U"
@@ -177,13 +194,13 @@ REPORT_U=(
   --protocol U
   --holdout-subject "${HOLDOUT}"
   --split test
-  --sequence-eval "../artifacts/outputs_alignment/u_thinking_none_hubert_seq_t16_holdout_${HOLDOUT}/metrics/test_evaluation.json"
-  --space-summary ../artifacts/outputs_alignment/template_space/feis_subject_templates_hubert_seq_t16/space_summary.json
-  --output-path "../artifacts/outputs_alignment/u_thinking_none_hubert_seq_t16_holdout_${HOLDOUT}/metrics/test_phase_report_compare_all.md"
+  --sequence-eval "../artifacts/outputs_alignment/${U_SEQ_RUN}/metrics/test_evaluation.json"
+  --space-summary "../artifacts/outputs_alignment/template_space/${HUBERT_SPACE_RUN}/space_summary.json"
+  --output-path "../artifacts/outputs_alignment/${U_SEQ_RUN}/metrics/test_phase_report_compare_all.md"
 )
-append_if_exists REPORT_U --alignment-eval "../artifacts/outputs_alignment/u_thinking_none_holdout_${HOLDOUT}/metrics/test_evaluation.json"
-append_if_exists REPORT_U --codec-eval "../artifacts/outputs_alignment/u_thinking_none_encodec_latent_holdout_${HOLDOUT}/metrics/test_evaluation.json"
-append_if_exists REPORT_U --waveform-eval "../artifacts/outputs_waveform_protocol/u_thinking_none_holdout_${HOLDOUT}/metrics/test_metrics.json"
+append_if_exists REPORT_U --alignment-eval "../artifacts/outputs_alignment/${U_POOLED_RUN}/metrics/test_evaluation.json"
+append_if_exists REPORT_U --codec-eval "../artifacts/outputs_alignment/${U_CODEC_RUN}/metrics/test_evaluation.json"
+append_if_exists REPORT_U --waveform-eval "../artifacts/outputs_waveform_protocol/${U_WAVEFORM_RUN}/metrics/test_metrics.json"
 run_python "${REPORT_U[@]}"
 
 step "Done"

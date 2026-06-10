@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -163,6 +164,9 @@ def main() -> None:
         run_name += f"_holdout_{args.holdout_subject or config['data'].get('holdout_subject_id')}"
     if subject_conditioning:
         run_name += "_subject_conditioned"
+    run_tag = os.environ.get("FEIS_RUN_TAG", "").strip()
+    if run_tag:
+        run_name += f"_{run_tag}"
     output_root = resolve_bundle_path(args.output_root or config["output"]["root"], BUNDLE_DIR)
     run_root = ensure_dir(output_root / run_name)
     ckpt_dir = ensure_dir(run_root / "checkpoints")
