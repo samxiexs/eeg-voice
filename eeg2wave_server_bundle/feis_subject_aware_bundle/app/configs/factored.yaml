@@ -1,0 +1,43 @@
+# Factored FEIS model: content(16) x speaker(21) grid, hold-out-cell generalisation.
+data:
+  root: ../data/feis
+  target_cache: ../artifacts/audio_targets/feis_subject_templates_encodec_latents.npz
+  stages: stimuli,thinking        # hear + imagine（听 + 想象）
+  include_anomalous: false        # 排除异常被试 05
+  holdout_offset: 0               # Latin-square 留格子偏移
+  holdout_random: false           # true=随机留格子，堵掉 zero-EEG 对确定性排布的 gaming
+
+model:
+  n_channels_eeg: 14
+  d_model: 256
+  cond_dim: 32                    # FiLM 条件 = 阶段(听/想象)，不是 subject
+  content_dim: 128
+  speaker_dim: 64
+  num_blocks: 5
+  kernel_size: 5
+  channel_dropout: 0.2            # 小数据，重正则
+  dropout: 0.2
+  adv_lambda: 1.0                 # 梯度反转强度（内容↔说话人解耦）
+
+train:
+  batch_size: 64
+  lr: 0.0003
+  weight_decay: 0.001
+  epochs: 120
+  grad_clip: 1.0
+  num_workers: 0
+  seed: 7
+  # 目标函数（内容从 EEG 解、嗓音从 subject 取、组合生成）
+  lambda_supcon: 1.0              # 目标感知监督对比（同 label 为正，修假负）
+  lambda_content_ce: 0.5         # 16 类内容分类
+  lambda_proto: 0.5              # 内容向说话人无关原型对齐
+  lambda_recon_cos: 1.0          # 重建：预测 latent vs 该格目标
+  lambda_recon_mse: 0.25         # v2: 从 1.0 下调，减少均值平均化
+  lambda_speaker: 0.5            # 嗓音 embedding 向音频 speaker 原型对齐（ECAPA 可替换）
+  lambda_adv: 0.3               # 对抗解耦：content 不许预测出 subject（GRL）
+  lambda_log_rms: 0.2           # v2: 能量/响度监督，修"小声"（17% RMS）
+  lambda_std: 0.0               # v2: 可选反塌缩 std-match（默认关；会刷自身指标，仅诊断时再开）
+  supcon_temperature: 0.1
+
+output:
+  root: ../artifacts/outputs_factored

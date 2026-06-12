@@ -47,7 +47,41 @@ artifacts/
 results/
 server_bundle/paper-ref/
 
-eeg2wave_server_bundle/
+# Server bundle: keep code/config/docs, keep data/models/generated outputs local.
+eeg2wave_server_bundle/**
+!eeg2wave_server_bundle/
+!eeg2wave_server_bundle/paper-ref/
+!eeg2wave_server_bundle/paper-ref/**/
+!eeg2wave_server_bundle/paper-ref/**/*.md
+!eeg2wave_server_bundle/paper-ref/**/*.bib
+!eeg2wave_server_bundle/feis_subject_aware_bundle/
+!eeg2wave_server_bundle/feis_subject_aware_bundle/*.md
+!eeg2wave_server_bundle/feis_subject_aware_bundle/*.json
+!eeg2wave_server_bundle/feis_subject_aware_bundle/app/
+!eeg2wave_server_bundle/feis_subject_aware_bundle/app/**/
+!eeg2wave_server_bundle/feis_subject_aware_bundle/app/**/*.py
+!eeg2wave_server_bundle/feis_subject_aware_bundle/app/**/*.sh
+!eeg2wave_server_bundle/feis_subject_aware_bundle/app/**/*.yaml
+!eeg2wave_server_bundle/feis_subject_aware_bundle/app/**/*.yml
+!eeg2wave_server_bundle/feis_subject_aware_bundle/app/**/*.md
+!eeg2wave_server_bundle/feis_subject_aware_bundle/app/**/*.txt
+!eeg2wave_server_bundle/feis_subject_aware_bundle/report_0611/
+!eeg2wave_server_bundle/feis_subject_aware_bundle/report_0611/**/
+!eeg2wave_server_bundle/feis_subject_aware_bundle/report_0611/**/*.md
+!eeg2wave_server_bundle/feis_subject_aware_bundle/report_0611/**/*.py
+!eeg2wave_server_bundle/feis_subject_aware_bundle/report_0611/assets/
+!eeg2wave_server_bundle/feis_subject_aware_bundle/report_0611/assets/*.png
+!eeg2wave_server_bundle/feis_subject_aware_bundle/reports/
+!eeg2wave_server_bundle/feis_subject_aware_bundle/reports/*.json
+eeg2wave_server_bundle/**/.DS_Store
+eeg2wave_server_bundle/**/__pycache__/
+eeg2wave_server_bundle/**/*.pyc
+eeg2wave_server_bundle/**/data/
+eeg2wave_server_bundle/**/models/
+eeg2wave_server_bundle/**/artifacts/
+eeg2wave_server_bundle/**/outputs/
+eeg2wave_server_bundle/**/outputs*/
+eeg2wave_server_bundle/**/checkpoints/
 
 # Probe artifacts: reports are OK, saved remote snippets/binaries stay local
 outputs/probe_artifacts/

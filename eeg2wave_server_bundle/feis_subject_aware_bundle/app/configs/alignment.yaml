@@ -1,0 +1,46 @@
+data:
+  root: data/feis
+  stage: thinking
+  protocol: G
+  subject_id: 01
+  holdout_subject_id: 21
+  include_anomalous: false
+  ablation_mode: none
+
+audio:
+  sample_rate: 16000
+  duration_sec: 1.0
+  normalize: rms
+  target_rms: 0.08
+  max_gain: 10.0
+
+targets:
+  cache_path: outputs/audio_targets/feis_subject_templates.npz
+  backend: auto
+  ssl_model_name_or_path: facebook/hubert-base-ls960
+  local_files_only: true
+  spectral_bins: 48
+
+model:
+  n_channels_eeg: 14
+  hidden_dim: 96
+  latent_dim: 192
+  use_label_head: true
+  use_subject_demo_head: false
+  subject_embedding_dim: 64
+
+train:
+  batch_size: 32
+  lr: 0.0002
+  weight_decay: 0.0001
+  epochs: 80
+  grad_clip: 1.0
+  num_workers: 0
+  seed: 7
+  lambda_cosine: 1.0
+  lambda_mse: 0.5
+  lambda_prosody: 0.25
+  lambda_cls: 0.2
+
+output:
+  root: outputs_alignment

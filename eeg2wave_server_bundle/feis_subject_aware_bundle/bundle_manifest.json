@@ -1,0 +1,20 @@
+{
+  "bundle_root": "/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/feis_subject_aware_bundle",
+  "data_root": "/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/feis_subject_aware_bundle/data/feis",
+  "ssl_model": {
+    "path": "/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/feis_subject_aware_bundle/models/hubert-base-ls960",
+    "exists": true,
+    "has_weight_file": true,
+    "missing_soft_files": [],
+    "looks_valid": true
+  },
+  "copied_artifacts": [
+    "artifacts/audio_targets",
+    "artifacts/outputs_alignment",
+    "artifacts/outputs_waveform_protocol",
+    "artifacts/outputs-0603-v1",
+    "artifacts/outputs-0603-v2",
+    "artifacts/outputs-0603-v3"
+  ],
+  "app_config": "/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/feis_subject_aware_bundle/app/configs/alignment_ssl_local.yaml"
+}

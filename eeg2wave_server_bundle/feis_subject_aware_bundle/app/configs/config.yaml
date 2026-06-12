@@ -1,0 +1,43 @@
+data:
+  root: ../data/feis
+  stage: thinking
+  train_ratio: 0.8
+  val_ratio: 0.1
+
+audio:
+  sample_rate: 16000
+  duration_sec: 1.0
+  n_samples: 16000
+  normalize: rms
+  target_rms: 0.08
+  max_gain: 10.0
+
+model:
+  n_channels_eeg: 14
+  eeg_len: 1280
+  hidden_dim: 96
+  t_latent: 40
+  codebook_size: 64
+  vq_beta: 0.25
+  vq_decay: 0.95
+
+train:
+  batch_size: 32
+  lr: 0.0002
+  weight_decay: 0.0001
+  epochs: 100
+  use_early_stop: false
+  min_epochs: 15
+  early_stop_patience: 15
+  lambda_stft: 0.75
+  lambda_log_stft: 0.2
+  lambda_rms: 0.8
+  lambda_envelope: 1.5
+  lambda_vq: 0.1
+  lambda_cls: 0.25
+  grad_clip: 1.0
+  num_workers: 0
+  seed: 7
+
+output:
+  root: outputs
