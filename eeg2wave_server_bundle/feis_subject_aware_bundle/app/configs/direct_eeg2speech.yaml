@@ -1,12 +1,10 @@
 # EEG-only direct speech reconstruction.
-# No subject id is allowed as model input; subject remains metadata for metrics.
+# Valid model inputs: EEG and stage index only.
 data:
   root: ../data/feis
-  target_cache: ../artifacts/audio_targets/feis_subject_templates_encodec_latents.npz
+  target_cache: ../artifacts/audio_targets/feis_templates_encodec_latents.npz
   stages: stimuli,thinking
   include_anomalous: false
-  holdout_offset: 0
-  holdout_random: true
 
 model:
   n_channels_eeg: 14
@@ -17,6 +15,14 @@ model:
   ff_mult: 4
   num_blocks: 5
   kernel_size: 5
+  use_channel_moe: true
+  moe_num_experts: 4
+  moe_top_k: 2
+  use_latent_diffusion: true
+  diffusion_num_steps: 200
+  diffusion_sample_steps: 24
+  diffusion_layers: 2
+  diffusion_time_dim: 128
   channel_dropout: 0.2
   dropout: 0.2
 
@@ -31,11 +37,18 @@ train:
   lambda_recon_cos: 1.0
   lambda_recon_smoothl1: 0.5
   lambda_delta: 0.25
+  lambda_delta2: 0.1
+  lambda_temporal_envelope: 0.15
   lambda_content_ce: 0.75
   lambda_log_rms: 0.2
   lambda_std: 0.2
   lambda_diversity: 0.2
   lambda_mean_margin: 0.1
+  lambda_moe_load_balance: 0.05
+  lambda_moe_sparsity: 0.005
+  lambda_moe_route_entropy: 0.01
+  lambda_moe_cluster: 0.05
+  lambda_latent_diffusion: 0.5
   mean_margin: 0.25
 
 output:

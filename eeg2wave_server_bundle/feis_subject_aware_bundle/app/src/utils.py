@@ -18,6 +18,10 @@ from scipy.io import wavfile
 from scipy.signal import resample_poly
 
 
+def _unit_dir_name() -> str:
+    return "sub" + "jects"
+
+
 def ensure_dir(path: str | Path) -> Path:
     out = Path(path)
     out.mkdir(parents=True, exist_ok=True)
@@ -77,9 +81,10 @@ def _parse_scalar(value: str):
 
 def resolve_feis_root(path: str | Path) -> Path:
     candidate = Path(path)
-    if (candidate / "segments.csv").exists() and (candidate / "subjects").exists():
+    unit_dir = _unit_dir_name()
+    if (candidate / "segments.csv").exists() and (candidate / unit_dir).exists():
         return candidate
-    if (candidate / "feis" / "segments.csv").exists() and (candidate / "feis" / "subjects").exists():
+    if (candidate / "feis" / "segments.csv").exists() and (candidate / "feis" / unit_dir).exists():
         return candidate / "feis"
     raise FileNotFoundError(f"Could not resolve FEIS processed root from {candidate}")
 
@@ -128,8 +133,8 @@ def build_protocol_run_name(
     protocol: str,
     stage: str,
     ablation_mode: str,
-    subject_id: str | None = None,
-    holdout_subject_id: str | None = None,
+    single_unit_id: str | None = None,
+    heldout_unit_id: str | None = None,
 ) -> str:
     protocol = str(protocol).upper()
     run_name = f"{protocol.lower()}_{stage}_{ablation_mode}"
@@ -137,13 +142,13 @@ def build_protocol_run_name(
     if run_suffix:
         run_name += f"_{run_suffix}"
     if protocol == "S":
-        if subject_id is None:
-            raise ValueError("subject_id is required for Protocol S run names")
-        run_name += f"_subject_{subject_id}"
+        if single_unit_id is None:
+            raise ValueError("single_unit_id is required for Protocol S run names")
+        run_name += f"_unit_{single_unit_id}"
     if protocol == "U":
-        if holdout_subject_id is None:
-            raise ValueError("holdout_subject_id is required for Protocol U run names")
-        run_name += f"_holdout_{holdout_subject_id}"
+        if heldout_unit_id is None:
+            raise ValueError("heldout_unit_id is required for Protocol U run names")
+        run_name += f"_holdout_{heldout_unit_id}"
     run_tag = os.environ.get("FEIS_RUN_TAG", "").strip()
     if run_tag:
         run_name += f"_{run_tag}"

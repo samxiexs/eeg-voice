@@ -18,9 +18,8 @@ if str(BUNDLE_DIR) not in sys.path:
 
 from src.direct_eeg2speech.eval import evaluate_direct
 from src.direct_eeg2speech.model import DirectEEG2Speech, DirectEEG2SpeechConfig
-from src.feis_factored.data import FactoredFEISDataset
-from src.feis_factored.synth import build_codec_backend, denormalize_latent
-from src.feis_factored.targets import FactoredTargets
+from src.direct_eeg2speech.data import DirectFEISDataset, DirectTargets, resolve_direct_target_path
+from src.direct_eeg2speech.synth import build_codec_backend, denormalize_latent
 from src.utils import ensure_dir, load_simple_yaml, load_wav_fixed, resolve_bundle_path, resolve_feis_root, save_wav, write_json
 
 
@@ -31,6 +30,7 @@ def parse_args():
     p.add_argument("--split", default="test_holdout")
     p.add_argument("--qc-cells", type=int, default=24)
     p.add_argument("--save-wav", type=int, default=12)
+    p.add_argument("--sample-steps", type=int, default=None)
     p.add_argument("--device", default=None)
     p.add_argument("--out-dir", default=None)
     return p.parse_args()
@@ -65,16 +65,14 @@ def main():
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
 
-    targets = FactoredTargets(resolve_bundle_path(cfg["data"]["target_cache"], BUNDLE_DIR))
+    targets = DirectTargets(resolve_direct_target_path(cfg["data"]["target_cache"], BUNDLE_DIR))
     feis_root = resolve_feis_root(resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR))
-    ds = FactoredFEISDataset(
+    ds = DirectFEISDataset(
         data_root=resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR),
         targets=targets,
         split=args.split,
         stages=tuple(str(s).strip() for s in ckpt["stages"] if str(s).strip()),
         include_anomalous=bool(cfg["data"].get("include_anomalous", False)),
-        holdout_offset=int(ckpt.get("holdout_offset", cfg["data"].get("holdout_offset", 0))),
-        holdout_random=bool(ckpt.get("holdout_random", cfg["data"].get("holdout_random", True))),
     )
     model = DirectEEG2Speech(DirectEEG2SpeechConfig(**ckpt["model_config"])).to(device)
     model.load_state_dict(ckpt["model_state"], strict=True)
@@ -91,8 +89,7 @@ def main():
     bs = int(cfg["train"].get("batch_size", 64))
     metrics = evaluate_direct(model, ds, targets, device=device, batch_size=bs)
     backend = build_codec_backend(
-        str(resolve_bundle_path("../models/encodec_24khz", BUNDLE_DIR)),
-        duration_sec=1.0,
+        str(resolve_bundle_path("../models/encodec_24khz", BUNDLE_DIR))
     )
     sr = backend.sample_rate
     mean_wav = backend.decode(targets.global_mean_raw_seq().astype(np.float32), decoder_scales=default_scales)
@@ -100,38 +97,41 @@ def main():
     seen_cells = []
     seen_keys = set()
     for idx, e in enumerate(ds.entries):
-        if (e.subject, e.label) in seen_keys:
+        if e.target_key in seen_keys:
             continue
-        seen_keys.add((e.subject, e.label))
-        seen_cells.append((e.subject, e.label, idx))
+        seen_keys.add(e.target_key)
+        seen_cells.append((e.target_key, idx))
         if len(seen_cells) >= args.qc_cells:
             break
 
     rows = []
-    for save_idx, (sub, lab, idx) in enumerate(seen_cells):
+    for save_idx, (target_key, idx) in enumerate(seen_cells):
         item = ds[idx]
+        e = ds.entries[idx]
+        lab = str(item["label"])
         with torch.no_grad():
             pred_latent, pred_log_rms = model.generate_full(
                 item["eeg"].unsqueeze(0).to(device),
                 item["stage_idx"].view(1).to(device),
+                sample_steps=args.sample_steps,
             )
         pred_norm = pred_latent.squeeze(0).cpu().numpy()
         pred_rms = float(np.exp(float(pred_log_rms.item())))
         orig = load_wav_fixed(
-            feis_root / targets.cell_audio_path(sub, lab),
+            feis_root / targets.audio_path_for_key(target_key),
             sample_rate=sr,
             n_samples=int(sr * 1.0),
             normalize="rms",
             target_rms=0.08,
         )
         oracle = backend.decode(
-            targets.cell_raw_target(sub, lab).astype(np.float32),
-            decoder_scales=targets.cell_decoder_scale(sub, lab),
+            targets.raw_target_for_key(target_key).astype(np.float32),
+            decoder_scales=targets.scale_for_key(target_key),
         )
         pred_unscaled = backend.decode(denormalize_latent(pred_norm, mean, std), decoder_scales=default_scales)
         pred_scaled = _scale_to_rms(pred_unscaled, pred_rms)
         row = {
-            "subject": sub,
+            "sample_key": e.sample_key,
             "label": lab,
             "stage": item["stage"],
             "split": args.split,
@@ -141,7 +141,7 @@ def main():
             "pred_unscaled_rms": _rms(pred_unscaled),
             "pred_scaled_rms": _rms(pred_scaled),
             "pred_target_rms": pred_rms,
-            "cell_target_rms": targets.cell_rms(sub, lab),
+            "cell_target_rms": targets.rms_for_key(target_key),
             "oracle_to_orig_stft": _stft_dist(oracle, orig),
             "mean_to_orig_stft": _stft_dist(mean_wav, orig),
             "pred_to_orig_stft": _stft_dist(pred_scaled, orig),
@@ -149,7 +149,7 @@ def main():
         }
         rows.append(row)
         if save_idx < args.save_wav:
-            tag = f"{sub}_{lab}_{item['stage']}"
+            tag = f"{e.sample_key}_{lab}_{item['stage']}"
             save_wav(wav_dir / f"{tag}_original_ref.wav", orig, sr)
             save_wav(wav_dir / f"{tag}_target_oracle.wav", oracle, sr)
             save_wav(wav_dir / f"{tag}_mean_latent.wav", mean_wav, sr)
@@ -197,7 +197,7 @@ def main():
         "latent_metrics": metrics,
         "audio_qc": audio_qc,
         "collapse": collapse,
-        "no_subject_id": True,
+        "identity_free": True,
     })
     with (out_dir / "recon_pairs.csv").open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
@@ -205,9 +205,9 @@ def main():
         writer.writerows(rows)
     with (out_dir / "listening_manifest.csv").open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
-        writer.writerow(["subject", "label", "stage", "wav_type", "rel_path", "rms"])
+        writer.writerow(["sample_key", "label", "stage", "wav_type", "rel_path", "rms"])
         for row in rows[:args.save_wav]:
-            tag = f"{row['subject']}_{row['label']}_{row['stage']}"
+            tag = f"{row['sample_key']}_{row['label']}_{row['stage']}"
             for kind, rms_key in [
                 ("original_ref", "orig_rms"),
                 ("target_oracle", "oracle_rms"),
@@ -215,7 +215,7 @@ def main():
                 ("pred_unscaled", "pred_unscaled_rms"),
                 ("pred_scaled", "pred_scaled_rms"),
             ]:
-                writer.writerow([row["subject"], row["label"], row["stage"], kind,
+                writer.writerow([row["sample_key"], row["label"], row["stage"], kind,
                                  f"wav/{tag}_{kind}.wav", row[rms_key]])
     print(f"[codec QC] {audio_qc['verdict']} oracle_stft={audio_qc['oracle_to_orig_stft_median']:.3f} "
           f"mean_stft={audio_qc['mean_to_orig_stft_median']:.3f} pred_stft={audio_qc['pred_to_orig_stft_median']:.3f}")

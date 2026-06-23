@@ -52,7 +52,7 @@ def evaluate_refiner(base_model, refiner, dataset, device, batch_size: int) -> d
         subject_idx = batch["subject_idx"].to(device)
         stage_idx = batch["stage_idx"].to(device)
         target = batch["target_seq"].to(device)
-        base_pred, _ = base_model.generate_full(eeg, subject_idx, stage_idx)
+        base_pred, _ = base_model.generate_full(eeg, subject_idx, stage_idx, batch["eeg_valid_len"].to(device))
         level = torch.zeros(base_pred.shape[0], device=device)
         refined = refiner(base_pred, level)
         b = int(eeg.shape[0])
@@ -115,6 +115,7 @@ def main() -> None:
                     batch["eeg"].to(device),
                     batch["subject_idx"].to(device),
                     batch["stage_idx"].to(device),
+                    batch["eeg_valid_len"].to(device),
                 )
             target = batch["target_seq"].to(device)
             level = torch.rand(base_pred.shape[0], device=device) * float(args.noise_std)

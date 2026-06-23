@@ -45,15 +45,15 @@ train:
   lambda_recon_cos: 1.0
   lambda_recon_mse: 0.5
   lambda_content_ce: 0.5
-  lambda_subject_ce: 0.05
   lambda_supcon: 0.5
   lambda_proto: 0.25
-  lambda_subject_proto: 0.25
   lambda_log_rms: 0.2
   lambda_std: 0.0
   lambda_router_balance: 0.01
   lambda_channel_balance: 0.01
+  lambda_clip: 0.5            # EEG<->audio contrastive alignment (Defossez 2022); set 0 to disable
   supcon_temperature: 0.1
+  clip_temperature: 0.07
 
 output:
   root: ../artifacts/outputs_karaone

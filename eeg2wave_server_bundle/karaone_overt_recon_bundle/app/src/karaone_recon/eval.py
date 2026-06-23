@@ -80,9 +80,10 @@ def evaluate(
         eeg = batch["eeg"].to(device)
         subject_idx = batch["subject_idx"].to(device)
         stage_idx = batch["stage_idx"].to(device)
+        valid_len = batch["eeg_valid_len"].to(device)
         target = batch["target_seq"].to(device)
-        out = model(eeg, subject_idx, stage_idx)
-        zero_out = model(torch.zeros_like(eeg), subject_idx, stage_idx)
+        out = model(eeg, subject_idx, stage_idx, valid_len)
+        zero_out = model(torch.zeros_like(eeg), subject_idx, stage_idx, valid_len)
         pred = out["pred_latent"]
         zero_pred = zero_out["pred_latent"]
         b = int(eeg.shape[0])
@@ -94,7 +95,6 @@ def evaluate(
         zero_mse = F.mse_loss(zero_pred, target, reduction="none").mean(dim=(1, 2))
         mean_mse = F.mse_loss(global_mean.unsqueeze(0).expand_as(target), target, reduction="none").mean(dim=(1, 2))
         content_acc = (out["content_logits"].argmax(dim=-1).cpu() == batch["label_idx"]).float()
-        subject_acc = (out["subject_logits"].argmax(dim=-1).cpu() == batch["subject_idx"]).float()
 
         metrics = {
             "pred_recon_cos": pred_cos.detach().cpu().numpy(),
@@ -104,7 +104,6 @@ def evaluate(
             "zeroeeg_recon_mse": zero_mse.detach().cpu().numpy(),
             "mean_recon_mse": mean_mse.detach().cpu().numpy(),
             "content_acc": content_acc.numpy(),
-            "subject_acc": subject_acc.numpy(),
         }
         for name, values in metrics.items():
             totals[name] += float(values.sum())

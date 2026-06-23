@@ -119,15 +119,15 @@ def main() -> None:
             "lambda_recon_cos": 1.0,
             "lambda_recon_mse": 0.5,
             "lambda_content_ce": 0.5,
-            "lambda_subject_ce": 0.05,
             "lambda_supcon": 0.5,
             "lambda_proto": 0.25,
-            "lambda_subject_proto": 0.25,
             "lambda_log_rms": 0.2,
             "lambda_std": 0.0,
             "lambda_router_balance": 0.01,
             "lambda_channel_balance": 0.01,
+            "lambda_clip": 0.5,
             "supcon_temperature": 0.1,
+            "clip_temperature": 0.07,
         }.items()
     }
 
@@ -144,7 +144,6 @@ def main() -> None:
         "train_recon_cos",
         "train_recon_mse",
         "train_content_acc",
-        "train_subject_acc",
         "train_std_ratio",
         "val_pred_cos",
         "val_zero_cos",
@@ -177,14 +176,17 @@ def main() -> None:
         seen = 0
         steps = 0
         for batch in loader:
-            out = model(batch["eeg"].to(device), batch["subject_idx"].to(device), batch["stage_idx"].to(device))
+            out = model(
+                batch["eeg"].to(device),
+                batch["subject_idx"].to(device),
+                batch["stage_idx"].to(device),
+                batch["eeg_valid_len"].to(device),
+            )
             losses = compute_losses(
                 out,
                 batch["target_seq"].to(device),
                 batch["label_idx"].to(device),
-                batch["subject_idx"].to(device),
                 batch["content_proto"].to(device),
-                batch["subject_proto"].to(device),
                 batch["target_log_rms"].to(device),
                 **loss_kwargs,
             )
@@ -206,7 +208,7 @@ def main() -> None:
         print(
             f"epoch {epoch:03d} total={train_metrics['total']:.3f} "
             f"recon_cos={train_metrics['recon_cos']:.3f} mse={train_metrics['recon_mse']:.3f} "
-            f"content_acc={train_metrics['content_acc']:.3f} subject_acc={train_metrics['subject_acc']:.3f} "
+            f"content_acc={train_metrics['content_acc']:.3f} "
             f"std={train_metrics['std_ratio']:.3f} | val pred={val_metrics['pred_recon_cos']:.3f} "
             f"zero={val_metrics['zeroeeg_recon_cos']:.3f} gain={gain:+.3f}"
         )
@@ -220,7 +222,6 @@ def main() -> None:
                     train_metrics["recon_cos"],
                     train_metrics["recon_mse"],
                     train_metrics["content_acc"],
-                    train_metrics["subject_acc"],
                     train_metrics["std_ratio"],
                     val_metrics["pred_recon_cos"],
                     val_metrics["zeroeeg_recon_cos"],

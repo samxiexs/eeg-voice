@@ -1,7 +1,7 @@
 """Direct EEG-only -> EnCodec latent model.
 
-Unlike the factored model, this path does not accept subject ids or learned
-speaker embeddings. Content and voice/style information must be carried by EEG.
+The model accepts only EEG and stage indices. Any talker/style information must
+be carried by the neural signal itself.
 """
 
 from __future__ import annotations
@@ -11,7 +11,8 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from src.feis_factored.encoder import SpatialTemporalEEGEncoder
+from src.direct_eeg2speech.diffusion import LatentDiffusion
+from src.direct_eeg2speech.encoder import SpatialTemporalEEGEncoder
 
 
 @dataclass
@@ -30,6 +31,14 @@ class DirectEEG2SpeechConfig:
     num_transformer_layers: int = 3
     num_heads: int = 8
     ff_mult: int = 4
+    use_channel_moe: bool = False
+    moe_num_experts: int = 4
+    moe_top_k: int = 2
+    use_latent_diffusion: bool = False
+    diffusion_num_steps: int = 200
+    diffusion_sample_steps: int = 24
+    diffusion_layers: int = 2
+    diffusion_time_dim: int = 128
 
 
 class DirectEEG2Speech(nn.Module):
@@ -50,6 +59,9 @@ class DirectEEG2Speech(nn.Module):
             kernel_size=cfg.kernel_size,
             channel_dropout=cfg.channel_dropout,
             dropout=cfg.dropout,
+            use_channel_moe=cfg.use_channel_moe,
+            moe_num_experts=cfg.moe_num_experts,
+            moe_top_k=cfg.moe_top_k,
         )
         enc_layer = nn.TransformerEncoderLayer(
             d_model=cfg.d_model,
@@ -81,29 +93,80 @@ class DirectEEG2Speech(nn.Module):
             nn.GELU(),
             nn.Linear(cfg.d_model, 1),
         )
+        self.diffusion = (
+            LatentDiffusion(
+                latent_dim=cfg.target_dim,
+                cond_dim=cfg.d_model,
+                d_model=cfg.d_model,
+                num_steps=cfg.diffusion_num_steps,
+                num_layers=cfg.diffusion_layers,
+                num_heads=cfg.num_heads,
+                ff_mult=cfg.ff_mult,
+                dropout=cfg.dropout,
+                time_dim=cfg.diffusion_time_dim,
+            )
+            if cfg.use_latent_diffusion
+            else None
+        )
 
-    def forward(self, eeg: torch.Tensor, stage_idx: torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(
+        self,
+        eeg: torch.Tensor,
+        stage_idx: torch.Tensor,
+        *,
+        target_seq: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
         cond = self.stage_embedding(stage_idx.long())
-        seq = self.encoder(eeg, cond).transpose(1, 2)  # [B, T, d_model]
+        enc, enc_aux = self.encoder(eeg, cond)
+        seq = enc.transpose(1, 2)  # [B, T, d_model]
         seq = self.sequence_model(seq)
         pooled = seq.mean(dim=1)
         pred_latent = self.latent_head(seq)
-        return {
+        out = {
             "pred_latent": pred_latent,
             "pred_log_rms": self.log_rms_head(pooled).squeeze(-1),
             "content_logits": self.content_classifier(pooled),
-            # Metadata-only voice diagnostics use the generated latent summary.
-            # No subject id or separate subject-supervised head is used.
-            "voice_embed": pred_latent.mean(dim=1),
+            "latent_summary": pred_latent.mean(dim=1),
             "pooled": pooled,
             "seq": seq,
         }
+        out.update(enc_aux)
+        if self.diffusion is not None and target_seq is not None:
+            out.update(
+                self.diffusion.training_losses(
+                    target_seq,
+                    cond_seq=seq,
+                    coarse_latent=pred_latent,
+                )
+            )
+        return out
 
     @torch.no_grad()
-    def generate(self, eeg: torch.Tensor, stage_idx: torch.Tensor) -> torch.Tensor:
-        return self.forward(eeg, stage_idx)["pred_latent"]
-
-    @torch.no_grad()
-    def generate_full(self, eeg: torch.Tensor, stage_idx: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def generate(self, eeg: torch.Tensor, stage_idx: torch.Tensor, sample_steps: int | None = None) -> torch.Tensor:
         out = self.forward(eeg, stage_idx)
-        return out["pred_latent"], out["pred_log_rms"]
+        if self.diffusion is None:
+            return out["pred_latent"]
+        return self.diffusion.sample_ddim(
+            tuple(out["pred_latent"].shape),
+            cond_seq=out["seq"],
+            coarse_latent=out["pred_latent"],
+            sample_steps=sample_steps or self.cfg.diffusion_sample_steps,
+        )
+
+    @torch.no_grad()
+    def generate_full(
+        self,
+        eeg: torch.Tensor,
+        stage_idx: torch.Tensor,
+        sample_steps: int | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        out = self.forward(eeg, stage_idx)
+        pred_latent = out["pred_latent"]
+        if self.diffusion is not None:
+            pred_latent = self.diffusion.sample_ddim(
+                tuple(pred_latent.shape),
+                cond_seq=out["seq"],
+                coarse_latent=pred_latent,
+                sample_steps=sample_steps or self.cfg.diffusion_sample_steps,
+            )
+        return pred_latent, out["pred_log_rms"]

@@ -39,6 +39,8 @@ models/encodec_24khz/
 reports/
   karaone_data_analysis.md
   karaone_data_summary.json
+METHOD.md      # how reconstruction + EEG/audio alignment work, and the optimizations
+RUN_SERVER.md  # step-by-step runbook
 ```
 
 The raw 23GB KaraOne `.tar.bz2` archives are not included.
@@ -54,28 +56,40 @@ The raw 23GB KaraOne `.tar.bz2` archives are not included.
 
 ## Mainline model
 
-The first production baseline is:
-
 ```text
 EEG [62 x L]
-  -> stage/subject-conditioned spatial-temporal encoder
-  -> latent generator
+  -> channel-MoE front-end (selects/clusters channels)   # only with --model moe
+  -> stage-conditioned spatial-temporal encoder           # NO subject ID
+  -> valid-length masked time pooling -> utterance embedding
+  -> latent head (content + EEG-derived global/voice)
   -> EnCodec latent [T,128]
   -> frozen EnCodec decoder
-  -> wav
+  -> wav (loudness rescaled by a predicted log-RMS head)
 ```
 
-Set `--model moe` to use a 4-expert mixture-of-experts generator. The second
-stage `train_karaone_refiner.py` trains a residual denoising latent refiner on
-top of a frozen baseline/MoE checkpoint.
+Key properties (see [METHOD.md](METHOD.md) for the full story):
+
+- **Subject-agnostic.** The model takes *only* EEG (+ task `stage`). There is no
+  per-subject lookup table; the output is bit-identical across subject ids. This
+  is deliberate — we want generation *from the EEG*, not from an id prior.
+- **Channel-MoE encoder** (`--model moe`): a learned per-channel gate + soft
+  clustering of channels into experts, i.e. "not every channel is useful" made
+  explicit. Plain spatial conv with `--model baseline`.
+- **Two training signals for alignment**: frame-wise regression to the EnCodec
+  latent *plus* a cross-modal contrastive loss (Defossez 2022) that pulls each
+  trial's EEG embedding toward its own audio and away from other trials'.
+- **Refiner is NOT diffusion.** `train_karaone_refiner.py` is an optional
+  single-step residual post-filter on a frozen checkpoint. See `refiner.py`.
 
 ## Metrics to trust
 
 Always compare prediction against:
 
-- `zeroeeg`: same subject/stage with EEG set to zero
+- `zeroeeg`: EEG set to zero (now a global constant, since there is no subject id)
 - `mean_latent`: global target latent mean
-- `oracle_codec`: true target latent decoded by EnCodec
+- `oracle_codec`: true target latent decoded by EnCodec (the quality ceiling)
 
 The headline number is `pred_over_zero_cos_gain`, not raw reconstruction cosine.
+Because the model is subject-agnostic, this gain is a clean measure of how much
+the EEG actually contributes over a content-free baseline.
 

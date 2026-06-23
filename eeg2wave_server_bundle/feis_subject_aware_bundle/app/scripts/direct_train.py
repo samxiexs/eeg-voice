@@ -1,7 +1,6 @@
 """Train EEG-only direct EEG -> EnCodec-latent speech reconstruction.
 
-This is the no-subject-id route. The model receives only EEG and stage index;
-subject is used only as dataset metadata and for post-hoc diagnostics.
+The model receives only EEG and stage index.
 
   python scripts/direct_train.py --config configs/direct_eeg2speech.yaml
   python scripts/direct_train.py --config configs/direct_eeg2speech.yaml --max-steps 2
@@ -27,8 +26,12 @@ if str(BUNDLE_DIR) not in sys.path:
 from src.direct_eeg2speech.eval import evaluate_direct
 from src.direct_eeg2speech.losses import compute_direct_losses
 from src.direct_eeg2speech.model import DirectEEG2Speech, DirectEEG2SpeechConfig
-from src.feis_factored.data import FactoredFEISDataset
-from src.feis_factored.targets import FactoredTargets
+from src.direct_eeg2speech.data import (
+    DirectFEISDataset,
+    DirectTargets,
+    assert_identity_free_keys,
+    resolve_direct_target_path,
+)
 from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, set_seed, write_json
 
 
@@ -43,7 +46,7 @@ def parse_args():
     return p.parse_args()
 
 
-def _mean_latent_norm(targets: FactoredTargets) -> np.ndarray:
+def _mean_latent_norm(targets: DirectTargets) -> np.ndarray:
     return ((targets.global_mean_raw_seq() - targets.target_mean.reshape(1, -1))
             / targets.target_std.reshape(1, -1)).astype(np.float32)
 
@@ -70,20 +73,17 @@ def main():
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     stages = tuple(s.strip() for s in (args.stages or cfg["data"].get("stages", "stimuli,thinking")).split(",") if s.strip())
-    targets = FactoredTargets(resolve_bundle_path(cfg["data"]["target_cache"], BUNDLE_DIR))
+    targets = DirectTargets(resolve_direct_target_path(cfg["data"]["target_cache"], BUNDLE_DIR))
     common = dict(
         data_root=resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR),
         targets=targets,
         stages=stages,
         include_anomalous=bool(cfg["data"].get("include_anomalous", False)),
-        holdout_offset=int(cfg["data"].get("holdout_offset", 0)),
-        holdout_random=bool(cfg["data"].get("holdout_random", True)),
-        seed=int(ct.get("seed", 7)),
     )
-    train_ds = FactoredFEISDataset(split="train", **common)
-    val_seen = FactoredFEISDataset(split="val_seen", **common)
-    test_seen = FactoredFEISDataset(split="test_seen", **common)
-    test_holdout = FactoredFEISDataset(split="test_holdout", **common)
+    train_ds = DirectFEISDataset(split="train", **common)
+    val_seen = DirectFEISDataset(split="val_seen", **common)
+    test_seen = DirectFEISDataset(split="test_seen", **common)
+    test_holdout = DirectFEISDataset(split="test_holdout", **common)
     print(f"[data] EEG-only stages={stages} train={len(train_ds)} val={len(val_seen)} "
           f"test_seen={len(test_seen)} test_holdout={len(test_holdout)}")
 
@@ -102,7 +102,20 @@ def main():
         num_transformer_layers=int(cm.get("num_transformer_layers", 3)),
         num_heads=int(cm.get("num_heads", 8)),
         ff_mult=int(cm.get("ff_mult", 4)),
+        use_channel_moe=bool(cm.get("use_channel_moe", True)),
+        moe_num_experts=int(cm.get("moe_num_experts", 4)),
+        moe_top_k=int(cm.get("moe_top_k", 2)),
+        use_latent_diffusion=bool(cm.get("use_latent_diffusion", True)),
+        diffusion_num_steps=int(cm.get("diffusion_num_steps", 200)),
+        diffusion_sample_steps=int(cm.get("diffusion_sample_steps", 24)),
+        diffusion_layers=int(cm.get("diffusion_layers", 2)),
+        diffusion_time_dim=int(cm.get("diffusion_time_dim", 128)),
     )).to(device)
+    print(
+        f"[model] EEG-conditioned EnCodec latent generation, "
+        f"channel_moe={model.cfg.use_channel_moe} experts={model.cfg.moe_num_experts} top_k={model.cfg.moe_top_k}, "
+        f"latent_diffusion={model.cfg.use_latent_diffusion} steps={model.cfg.diffusion_num_steps}"
+    )
 
     epochs = args.epochs or int(ct.get("epochs", 100))
     opt = torch.optim.AdamW(
@@ -123,11 +136,18 @@ def main():
         lambda_recon_cos=float(ct.get("lambda_recon_cos", 1.0)),
         lambda_recon_smoothl1=float(ct.get("lambda_recon_smoothl1", 0.5)),
         lambda_delta=float(ct.get("lambda_delta", 0.25)),
+        lambda_delta2=float(ct.get("lambda_delta2", 0.1)),
+        lambda_temporal_envelope=float(ct.get("lambda_temporal_envelope", 0.15)),
         lambda_content_ce=float(ct.get("lambda_content_ce", 0.75)),
         lambda_log_rms=float(ct.get("lambda_log_rms", 0.2)),
         lambda_std=float(ct.get("lambda_std", 0.2)),
         lambda_diversity=float(ct.get("lambda_diversity", 0.2)),
         lambda_mean_margin=float(ct.get("lambda_mean_margin", 0.1)),
+        lambda_moe_load_balance=float(ct.get("lambda_moe_load_balance", 0.05)),
+        lambda_moe_sparsity=float(ct.get("lambda_moe_sparsity", 0.005)),
+        lambda_moe_route_entropy=float(ct.get("lambda_moe_route_entropy", 0.01)),
+        lambda_moe_cluster=float(ct.get("lambda_moe_cluster", 0.05)),
+        lambda_latent_diffusion=float(ct.get("lambda_latent_diffusion", 0.5)),
         mean_margin=float(ct.get("mean_margin", 0.25)),
     )
     mean_latent = torch.from_numpy(_mean_latent_norm(targets)).to(device)
@@ -139,7 +159,10 @@ def main():
     hist_csv = run_dir / "metrics" / "history.csv"
     hist_jsonl.write_text("", encoding="utf-8")
     csv_fields = ["epoch", "train_total", "train_content_acc", "train_recon_cos",
-                  "train_std_ratio", "train_mean_distance", "val_top1", "val_recon_cos",
+                  "train_delta2", "train_temporal_envelope", "train_std_ratio",
+                  "train_mean_distance", "train_moe_gate_mean", "train_moe_usage_min",
+                  "train_moe_usage_max", "train_moe_active_channels", "train_diffusion_loss",
+                  "train_diffusion_x0_mse", "val_top1", "val_recon_cos",
                   "val_std_ratio", "val_pred_corr", "val_score"]
     with hist_csv.open("w", newline="", encoding="utf-8") as fh:
         csv.writer(fh).writerow(csv_fields)
@@ -153,10 +176,15 @@ def main():
             "target_mean": targets.target_mean,
             "target_std": targets.target_std,
             "default_decoder_scales": targets.default_decoder_scales,
-            "holdout_offset": int(cfg["data"].get("holdout_offset", 0)),
-            "holdout_random": bool(cfg["data"].get("holdout_random", True)),
             "selection_score": float(score),
-            "no_subject_id": True,
+            "identity_free": True,
+            "uses_latent_diffusion": bool(model.cfg.use_latent_diffusion),
+            "method": (
+                "eeg_conditioned_latent_diffusion_with_direct_aux"
+                if model.cfg.use_latent_diffusion
+                else "direct_eeg_to_encodec_latent_regression"
+            ),
+            "model_inputs": ["eeg", "stage_idx"],
         }, path)
 
     best_score = -1e9
@@ -165,10 +193,16 @@ def main():
         model.train()
         agg, cnt, steps = {}, 0, 0
         for batch in loader:
-            out = model(batch["eeg"].to(device), batch["stage_idx"].to(device))
+            assert_identity_free_keys(tuple(batch.keys()))
+            target_seq = batch["target_seq"].to(device)
+            out = model(
+                batch["eeg"].to(device),
+                batch["stage_idx"].to(device),
+                target_seq=target_seq,
+            )
             losses = compute_direct_losses(
                 out,
-                batch["target_seq"].to(device),
+                target_seq,
                 batch["label_idx"].to(device),
                 target_log_rms=batch["target_log_rms"].to(device),
                 mean_latent=mean_latent,
@@ -192,7 +226,11 @@ def main():
         score = _selection_score(ev)
         print(f"epoch {epoch:03d} | total {tr['total']:.3f} content_acc "
               f"{tr['content_acc']:.3f} recon_cos {tr['recon_cos']:.3f} "
-              f"std {tr['std_ratio']:.3f} mean_dist {tr.get('mean_distance',0):.3f} | "
+              f"env {tr['temporal_envelope']:.3f} std {tr['std_ratio']:.3f} "
+              f"mean_dist {tr.get('mean_distance',0):.3f} "
+              f"moe_gate {tr.get('moe_gate_mean',0):.3f} "
+              f"moe_usage {tr.get('moe_usage_min',0):.2f}-{tr.get('moe_usage_max',0):.2f} "
+              f"diff {tr.get('diffusion_loss',0):.3f} | "
               f"val top1 {ev['content_top1']:.3f} recon {ev['latent_recon_cos']:.3f} "
               f"std {ev['pred_std_ratio_median']:.3f} corr {ev['pred_pairwise_corr_median']:.3f} "
               f"score {score:+.3f}")
@@ -201,7 +239,11 @@ def main():
                                  "selection_score": score}) + "\n")
         with hist_csv.open("a", newline="", encoding="utf-8") as fh:
             csv.writer(fh).writerow([epoch, tr["total"], tr["content_acc"], tr["recon_cos"],
+                                     tr["delta2"], tr["temporal_envelope"],
                                      tr["std_ratio"], tr.get("mean_distance", 0.0),
+                                     tr.get("moe_gate_mean", 0.0), tr.get("moe_usage_min", 0.0),
+                                     tr.get("moe_usage_max", 0.0), tr.get("moe_active_channels", 0.0),
+                                     tr.get("diffusion_loss", 0.0), tr.get("diffusion_x0_mse", 0.0),
                                      ev["content_top1"], ev["latent_recon_cos"],
                                      ev["pred_std_ratio_median"], ev["pred_pairwise_corr_median"], score])
         if score > best_score:
@@ -220,7 +262,8 @@ def main():
         "selection": {
             "criterion": "composite(content above chance + recon + anti-collapse)",
             "best_score": best_score,
-            "no_subject_id": True,
+            "identity_free": True,
+            "uses_latent_diffusion": bool(best_model.cfg.use_latent_diffusion),
         },
         "test_seen": evaluate_direct(best_model, test_seen, targets, device=device, batch_size=bs),
         "test_holdout": evaluate_direct(best_model, test_holdout, targets, device=device, batch_size=bs),
@@ -231,8 +274,7 @@ def main():
             continue
         print(f"[{split}] top1={metrics['content_top1']:.4f} chance={metrics['content_chance']:.4f} "
               f"recon={metrics['latent_recon_cos']:.3f} std={metrics['pred_std_ratio_median']:.3f} "
-              f"corr={metrics['pred_pairwise_corr_median']:.3f} voice_gap="
-              f"{metrics['speaker_retrieval_same_subject_gap']:.3f}")
+              f"corr={metrics['pred_pairwise_corr_median']:.3f}")
     print(f"[done] {run_dir}")
 
 

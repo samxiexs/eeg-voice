@@ -68,6 +68,9 @@ Output run:
 
 ## 5. MoE overt reconstruction
 
+`--model moe` turns on the channel-selecting/clustering MoE inside the EEG
+encoder (see [METHOD.md](METHOD.md) §3.3).
+
 ```bash
 python scripts/train_karaone_recon.py \
   --config configs/karaone.yaml \
@@ -75,6 +78,17 @@ python scripts/train_karaone_recon.py \
   --model moe \
   --epochs 120
 ```
+
+### Ablations worth running
+
+The model is subject-agnostic and trained with a frame-wise regression **plus**
+a cross-modal contrastive loss (Defossez 2022). To measure each piece, compare
+`val_gain` / `pred_over_zero_cos_gain` across:
+
+- `--model baseline` vs `--model moe` (encoder channel-MoE)
+- contrastive on vs off: add `lambda_clip: 0.0` under `train:` in the config to disable
+
+Only trust `pred_over_zero_cos_gain`, not raw `pred_recon_cos`.
 
 ## 6. Thinking fine-tune
 

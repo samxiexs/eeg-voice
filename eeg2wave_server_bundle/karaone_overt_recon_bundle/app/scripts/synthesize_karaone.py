@@ -78,15 +78,18 @@ def main() -> None:
         item = ds[idx]
         entry = ds.entries[idx]
         with torch.no_grad():
+            valid_len = item["eeg_valid_len"].view(1).to(device)
             pred_latent, pred_log_rms = model.generate_full(
                 item["eeg"].unsqueeze(0).to(device),
                 item["subject_idx"].view(1).to(device),
                 item["stage_idx"].view(1).to(device),
+                valid_len,
             )
             zero_latent, zero_log_rms = model.generate_full(
                 torch.zeros_like(item["eeg"]).unsqueeze(0).to(device),
                 item["subject_idx"].view(1).to(device),
                 item["stage_idx"].view(1).to(device),
+                valid_len,
             )
         pred = pred_latent.squeeze(0).cpu().numpy()
         zero = zero_latent.squeeze(0).cpu().numpy()
