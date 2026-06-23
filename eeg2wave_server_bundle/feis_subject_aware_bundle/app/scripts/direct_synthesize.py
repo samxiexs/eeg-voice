@@ -36,6 +36,8 @@ def parse_args():
     p.add_argument("--out-dir", default=None)
     p.add_argument("--limit", type=int, default=24)
     p.add_argument("--sample-steps", type=int, default=None)
+    p.add_argument("--diverse-units", action="store_true",
+                   help="Pick at most one output sample per source unit for listening/QC diversity.")
     p.add_argument("--device", default=None)
     return p.parse_args()
 
@@ -80,8 +82,21 @@ def main():
     ))
     mean_wav = backend.decode(targets.global_mean_raw_seq().astype(np.float32), decoder_scales=default_scales)
 
+    if args.diverse_units:
+        indices = []
+        seen_units = set()
+        for idx, entry in enumerate(ds.entries):
+            if entry.unit in seen_units:
+                continue
+            seen_units.add(entry.unit)
+            indices.append(idx)
+            if len(indices) >= args.limit:
+                break
+    else:
+        indices = list(range(min(args.limit, len(ds))))
+
     manifest = []
-    for i in range(min(args.limit, len(ds))):
+    for i in indices:
         item = ds[i]
         e = ds.entries[i]
         lab, stg = item["label"], item["stage"]
@@ -108,7 +123,7 @@ def main():
         pred_unscaled = backend.decode(denormalize_latent(pred, mean, std), decoder_scales=default_scales)
         pred_scaled = _scale_to_rms(pred_unscaled, pred_rms)
 
-        tag = f"{e.sample_key}_{lab}_{stg}"
+        tag = f"unit{e.unit}_{e.sample_key}_{lab}_{stg}" if args.diverse_units else f"{e.sample_key}_{lab}_{stg}"
         for kind, wav in {
             "original_ref": orig,
             "target_oracle": oracle,
@@ -118,13 +133,13 @@ def main():
         }.items():
             file_name = f"{tag}_{kind}.wav"
             save_wav(out_dir / file_name, wav, sr)
-            manifest.append([e.sample_key, lab, stg, args.split, kind, file_name, _rms(wav)])
+            manifest.append([e.unit, e.sample_key, lab, stg, args.split, kind, file_name, _rms(wav)])
 
     with (out_dir / "listening_manifest.csv").open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
-        writer.writerow(["sample_key", "label", "stage", "split", "wav_type", "file", "rms"])
+        writer.writerow(["source_unit", "sample_key", "label", "stage", "split", "wav_type", "file", "rms"])
         writer.writerows(manifest)
-    print(f"[done] wrote {min(args.limit, len(ds))} EEG-only samples x 5 wavs to {out_dir}")
+    print(f"[done] wrote {len(indices)} EEG-only samples x 5 wavs to {out_dir}")
 
 
 if __name__ == "__main__":
