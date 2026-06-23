@@ -231,6 +231,13 @@ def main() -> None:
         if gain > best_gain:
             best_gain = gain
             save_ckpt(run_dir / "checkpoints" / "best.pt", best_gain)
+        # Live training curves: regenerate the PNG each epoch (never break training on a plot error).
+        try:
+            from src.karaone_recon.plotting import plot_history
+
+            plot_history(history_jsonl, run_dir / "metrics" / "training_curves.png", title=run)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[plot] skipped ({exc})")
         if args.max_steps:
             break
 
