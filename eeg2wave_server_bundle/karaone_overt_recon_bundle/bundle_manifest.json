@@ -1,0 +1,39 @@
+{
+  "bundle_name": "karaone_overt_recon_bundle",
+  "purpose": "KaraOne-first EEG-to-waveform reconstruction mainline",
+  "primary_task": "overt_like EEG -> same-trial overt wav",
+  "secondary_task": "thinking EEG -> same-trial overt wav",
+  "data_root": "data/karaone",
+  "target_cache": "artifacts/audio_targets/karaone_trial_encodec_latents.npz",
+  "codec_model": "models/encodec_24khz",
+  "config": "app/configs/karaone.yaml",
+  "data_summary": {
+    "subjects": 14,
+    "trials": 1913,
+    "segments": 7652,
+    "labels": 11,
+    "eeg_channels": 62,
+    "eeg_sample_rate_hz": 256,
+    "audio_sample_rate_hz": 16000,
+    "stages": [
+      "clearing",
+      "stimulus_like",
+      "thinking",
+      "overt_like"
+    ]
+  },
+  "entrypoints": {
+    "analyze": "app/scripts/analyze_karaone_data.py",
+    "extract_targets": "app/scripts/extract_karaone_targets.py",
+    "train": "app/scripts/train_karaone_recon.py",
+    "eval": "app/scripts/eval_karaone_recon.py",
+    "synthesize": "app/scripts/synthesize_karaone.py",
+    "refiner": "app/scripts/train_karaone_refiner.py"
+  },
+  "notes": [
+    "Raw KaraOne tar.bz2 archives are intentionally excluded.",
+    "All runtime paths are relative to the bundle app directory.",
+    "The default trusted headline metric is pred_over_zero_cos_gain."
+  ]
+}
+

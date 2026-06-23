@@ -1,0 +1,58 @@
+# KaraOne trial-synchronous EEG -> waveform reconstruction.
+data:
+  root: ../data/karaone
+  target_cache: ../artifacts/audio_targets/karaone_trial_encodec_latents.npz
+  stages: overt_like
+  split_protocol: trial
+  heldout_subjects: [P02, MM21]
+  eeg_len: 1280
+
+audio:
+  sample_rate: 16000
+  duration_sec: 2.0
+  normalize: rms
+  target_rms: 0.08
+  max_gain: 10.0
+
+targets:
+  backend: encodec_latent
+  target_kind: encodec_latent
+  codec_model_name_or_path: ../models/encodec_24khz
+  codec_bandwidth: 6.0
+  local_files_only: true
+
+model:
+  n_channels_eeg: 62
+  d_model: 256
+  cond_dim: 64
+  content_dim: 128
+  speaker_dim: 64
+  num_blocks: 6
+  kernel_size: 5
+  channel_dropout: 0.15
+  dropout: 0.15
+  num_experts: 1
+
+train:
+  batch_size: 48
+  lr: 0.0003
+  weight_decay: 0.001
+  epochs: 120
+  grad_clip: 1.0
+  num_workers: 0
+  seed: 7
+  lambda_recon_cos: 1.0
+  lambda_recon_mse: 0.5
+  lambda_content_ce: 0.5
+  lambda_subject_ce: 0.05
+  lambda_supcon: 0.5
+  lambda_proto: 0.25
+  lambda_subject_proto: 0.25
+  lambda_log_rms: 0.2
+  lambda_std: 0.0
+  lambda_router_balance: 0.01
+  supcon_temperature: 0.1
+
+output:
+  root: ../artifacts/outputs_karaone
+

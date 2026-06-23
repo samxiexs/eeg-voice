@@ -73,6 +73,20 @@ eeg2wave_server_bundle/**
 !eeg2wave_server_bundle/feis_subject_aware_bundle/report_0611/assets/*.png
 !eeg2wave_server_bundle/feis_subject_aware_bundle/reports/
 !eeg2wave_server_bundle/feis_subject_aware_bundle/reports/*.json
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/*.md
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/*.json
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/app/
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/app/**/
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/app/**/*.py
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/app/**/*.sh
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/app/**/*.yaml
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/app/**/*.yml
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/app/**/*.md
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/app/**/*.txt
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/reports/
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/reports/*.md
+!eeg2wave_server_bundle/karaone_overt_recon_bundle/reports/*.json
 eeg2wave_server_bundle/**/.DS_Store
 eeg2wave_server_bundle/**/__pycache__/
 eeg2wave_server_bundle/**/*.pyc
@@ -82,6 +96,13 @@ eeg2wave_server_bundle/**/artifacts/
 eeg2wave_server_bundle/**/outputs/
 eeg2wave_server_bundle/**/outputs*/
 eeg2wave_server_bundle/**/checkpoints/
+eeg2wave_server_bundle/**/wav_*/
+eeg2wave_server_bundle/**/*.wav
+eeg2wave_server_bundle/**/*.npz
+eeg2wave_server_bundle/**/*.pt
+eeg2wave_server_bundle/**/*.pth
+eeg2wave_server_bundle/**/*.ckpt
+eeg2wave_server_bundle/**/*.safetensors
 
 # Probe artifacts: reports are OK, saved remote snippets/binaries stay local
 outputs/probe_artifacts/

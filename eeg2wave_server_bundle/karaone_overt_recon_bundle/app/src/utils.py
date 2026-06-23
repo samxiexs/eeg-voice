@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import random
 from pathlib import Path
 
 import numpy as np
+os.environ.setdefault("XDG_CACHE_HOME", "/tmp/feis-cache")
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-feis")
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
+import torch.nn.functional as F
 from scipy.io import wavfile
 from scipy.signal import resample_poly
 
@@ -119,6 +123,33 @@ def count_trainable_parameters(module: torch.nn.Module) -> int:
     return sum(param.numel() for param in module.parameters() if param.requires_grad)
 
 
+def build_protocol_run_name(
+    config: dict,
+    protocol: str,
+    stage: str,
+    ablation_mode: str,
+    subject_id: str | None = None,
+    holdout_subject_id: str | None = None,
+) -> str:
+    protocol = str(protocol).upper()
+    run_name = f"{protocol.lower()}_{stage}_{ablation_mode}"
+    run_suffix = str(config.get("output", {}).get("run_suffix", "") or "").strip()
+    if run_suffix:
+        run_name += f"_{run_suffix}"
+    if protocol == "S":
+        if subject_id is None:
+            raise ValueError("subject_id is required for Protocol S run names")
+        run_name += f"_subject_{subject_id}"
+    if protocol == "U":
+        if holdout_subject_id is None:
+            raise ValueError("holdout_subject_id is required for Protocol U run names")
+        run_name += f"_holdout_{holdout_subject_id}"
+    run_tag = os.environ.get("FEIS_RUN_TAG", "").strip()
+    if run_tag:
+        run_name += f"_{run_tag}"
+    return run_name
+
+
 def mean_pool_masked(sequence: torch.Tensor, valid_steps: torch.Tensor | None = None) -> torch.Tensor:
     if valid_steps is None:
         return sequence.mean(dim=-1)
@@ -130,6 +161,21 @@ def mean_pool_masked(sequence: torch.Tensor, valid_steps: torch.Tensor | None = 
     mask = mask.unsqueeze(1).to(sequence.dtype)
     denom = mask.sum(dim=-1).clamp_min(1.0)
     return (sequence * mask).sum(dim=-1) / denom
+
+
+def adaptive_avg_pool_masked(sequence: torch.Tensor, target_steps: int, valid_steps: torch.Tensor | None = None) -> torch.Tensor:
+    if sequence.ndim != 3:
+        raise ValueError(f"Expected [B, C, T], got {tuple(sequence.shape)}")
+    target_steps = int(target_steps)
+    if target_steps <= 0:
+        raise ValueError(f"target_steps must be positive, got {target_steps}")
+    if valid_steps is None:
+        return F.adaptive_avg_pool1d(sequence, target_steps)
+    valid_steps = valid_steps.long().clamp_min(1).clamp_max(sequence.shape[-1])
+    pooled = []
+    for idx in range(sequence.shape[0]):
+        pooled.append(F.adaptive_avg_pool1d(sequence[idx : idx + 1, :, : int(valid_steps[idx].item())], target_steps))
+    return torch.cat(pooled, dim=0)
 
 
 def cosine_similarity_batch(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:

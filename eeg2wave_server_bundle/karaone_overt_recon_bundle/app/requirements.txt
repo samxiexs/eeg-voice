@@ -12,3 +12,7 @@ tqdm>=4.66,<5.0
 matplotlib>=3.8,<4.0
 transformers>=4.53,<5.0
 huggingface_hub>=0.33,<1.0
+pandas>=2.2,<3.0
+mne>=1.8,<2.0
+soundfile>=0.12,<1.0
+pyyaml>=6.0,<7.0
