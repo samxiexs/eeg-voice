@@ -37,6 +37,7 @@ def compute_losses(
     lambda_log_rms: float = 0.2,
     lambda_std: float = 0.0,
     lambda_router_balance: float = 0.01,
+    lambda_channel_balance: float = 0.01,
     supcon_temperature: float = 0.1,
 ) -> dict[str, torch.Tensor]:
     pred = out["pred_latent"]
@@ -70,6 +71,9 @@ def compute_losses(
         uniform = torch.full_like(mean_probs, 1.0 / mean_probs.numel())
         router_balance = F.mse_loss(mean_probs, uniform)
 
+    # Encoder channel-MoE load balance (keeps channel clusters from collapsing).
+    channel_balance = out.get("channel_balance", pred.new_tensor(0.0))
+
     total = (
         lambda_recon_cos * recon_cos
         + lambda_recon_mse * recon_mse
@@ -81,6 +85,7 @@ def compute_losses(
         + lambda_log_rms * log_rms_loss
         + lambda_std * std_match
         + lambda_router_balance * router_balance
+        + lambda_channel_balance * channel_balance
     )
     return {
         "total": total,
@@ -97,5 +102,6 @@ def compute_losses(
         "std_match": std_match.detach(),
         "std_ratio": std_ratio,
         "router_balance": router_balance.detach(),
+        "channel_balance": channel_balance.detach() if torch.is_tensor(channel_balance) else pred.new_tensor(0.0),
     }
 

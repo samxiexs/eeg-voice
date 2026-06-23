@@ -31,7 +31,8 @@ model:
   kernel_size: 5
   channel_dropout: 0.15
   dropout: 0.15
-  num_experts: 1
+  num_experts: 1            # output head: 1 = plain MLP (MoE moved to encoder)
+  num_channel_experts: 4    # encoder channel-selection/clustering MoE (used by --model moe)
 
 train:
   batch_size: 48
@@ -51,6 +52,7 @@ train:
   lambda_log_rms: 0.2
   lambda_std: 0.0
   lambda_router_balance: 0.01
+  lambda_channel_balance: 0.01
   supcon_temperature: 0.1
 
 output:

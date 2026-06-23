@@ -22,7 +22,12 @@ from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, set_see
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train second-stage KaraOne latent residual refiner.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train second-stage KaraOne latent residual refiner (a single-step "
+            "deterministic post-filter, NOT a diffusion sampler; see refiner.py)."
+        )
+    )
     parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "karaone.yaml"))
     parser.add_argument("--checkpoint", required=True, help="Base KaraOne reconstruction checkpoint")
     parser.add_argument("--epochs", type=int, default=60)

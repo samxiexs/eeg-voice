@@ -62,6 +62,85 @@ def _channel_dropout(eeg: torch.Tensor, p: float, training: bool) -> torch.Tenso
     return eeg * keep
 
 
+class ChannelMoEFrontend(nn.Module):
+    """Channel-selecting + channel-clustering MoE front-end for raw EEG.
+
+    Motivation: EEG has many channels and not all are informative, and several
+    channels carry redundant/correlated signal. This module replaces a plain
+    ``Conv1d(C -> d_model, kernel=1)`` spatial mixer with a mixture-of-experts
+    that operates *on the channel axis*, where channel identity still exists
+    (before any spatial collapse):
+
+    * **Selection (gate).** A per-channel, input-dependent gate ``g in [0,1]``
+      learns which channels are useful for the current trial. It generalizes the
+      random ``_channel_dropout`` into a learned, data-driven filter.
+    * **Clustering (soft assignment).** Each channel gets a small descriptor from
+      its temporal statistics; channels are softly assigned to ``E`` expert
+      clusters by similarity to learned expert prototypes, so channels carrying
+      similar signal land in the same expert.
+    * **Routing (experts).** Each expert mixes only its (gated, assigned) cluster
+      of channels into a ``d_model // E`` sub-embedding; expert outputs are
+      concatenated to form the ``d_model`` spatial embedding.
+
+    ``forward`` returns the spatial embedding plus an ``aux`` dict (gate,
+    assignment, and a load-balance term) for regularization and analysis.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        d_model: int,
+        num_experts: int = 4,
+        desc_dim: int = 16,
+        cluster_temp: float = 0.5,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        if d_model % num_experts != 0:
+            raise ValueError(f"d_model ({d_model}) must be divisible by num_experts ({num_experts})")
+        self.in_channels = int(in_channels)
+        self.num_experts = int(num_experts)
+        self.cluster_temp = float(cluster_temp)
+        per_expert = d_model // num_experts
+
+        # Per-channel temporal descriptor: depthwise conv keeps channels separate,
+        # then we summarize each channel by (mean, std) over time -> [B, C, 2].
+        self.desc_conv = nn.Conv1d(in_channels, in_channels, kernel_size=7, padding=3, groups=in_channels)
+        self.gate_mlp = nn.Sequential(nn.Linear(2, desc_dim), nn.GELU(), nn.Linear(desc_dim, 1))
+        self.channel_bias = nn.Parameter(torch.zeros(in_channels))  # learned static channel importance
+        self.channel_embed = nn.Sequential(nn.Linear(2, desc_dim), nn.GELU(), nn.Linear(desc_dim, desc_dim))
+        self.expert_query = nn.Parameter(torch.randn(num_experts, desc_dim) * 0.02)
+        self.experts = nn.ModuleList(
+            [nn.Conv1d(in_channels, per_expert, kernel_size=1) for _ in range(num_experts)]
+        )
+        self.proj = nn.Sequential(
+            nn.GroupNorm(num_groups=min(8, d_model), num_channels=d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, eeg: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        # eeg: [B, C, T]
+        desc = self.desc_conv(eeg)
+        stats = torch.stack([desc.mean(dim=-1), desc.std(dim=-1)], dim=-1)  # [B, C, 2]
+
+        gate = torch.sigmoid(self.gate_mlp(stats).squeeze(-1) + self.channel_bias)  # [B, C]
+
+        emb = F.normalize(self.channel_embed(stats), dim=-1)  # [B, C, desc_dim]
+        query = F.normalize(self.expert_query, dim=-1)  # [E, desc_dim]
+        assign = torch.softmax((emb @ query.t()) / max(self.cluster_temp, 1e-4), dim=-1)  # [B, C, E]
+
+        weight = gate.unsqueeze(-1) * assign  # [B, C, E]
+        expert_outputs = [expert(eeg * weight[:, :, e : e + 1]) for e, expert in enumerate(self.experts)]
+        h = self.proj(torch.cat(expert_outputs, dim=1))  # [B, d_model, T]
+
+        # Load balance: discourage dead experts so clusters stay distinct.
+        importance = assign.mean(dim=(0, 1))  # [E]
+        uniform = torch.full_like(importance, 1.0 / self.num_experts)
+        balance = F.mse_loss(importance, uniform)
+        return h, {"channel_gate": gate, "channel_assign": assign, "channel_balance": balance}
+
+
 class SpatialTemporalEEGEncoder(nn.Module):
     def __init__(
         self,
@@ -73,14 +152,26 @@ class SpatialTemporalEEGEncoder(nn.Module):
         kernel_size: int = 5,
         channel_dropout: float = 0.15,
         dropout: float = 0.15,
+        num_channel_experts: int = 1,
     ):
         super().__init__()
         self.channel_dropout_p = float(channel_dropout)
-        self.spatial = nn.Sequential(
-            nn.Conv1d(in_channels, d_model, kernel_size=1),
-            nn.GroupNorm(num_groups=min(8, d_model), num_channels=d_model),
-            nn.GELU(),
-        )
+        self.num_channel_experts = int(num_channel_experts)
+        if self.num_channel_experts > 1:
+            # Channel-selecting + channel-clustering MoE spatial front-end.
+            self.spatial = ChannelMoEFrontend(
+                in_channels=in_channels,
+                d_model=d_model,
+                num_experts=self.num_channel_experts,
+                dropout=dropout,
+            )
+        else:
+            # Plain spatial mixer (baseline): collapses channels in one 1x1 conv.
+            self.spatial = nn.Sequential(
+                nn.Conv1d(in_channels, d_model, kernel_size=1),
+                nn.GroupNorm(num_groups=min(8, d_model), num_channels=d_model),
+                nn.GELU(),
+            )
         self.spatial_film = FiLM(cond_dim, d_model)
         strides = [2, 2, 2, 2] + [1] * max(0, num_blocks - 4)
         dilations = [1, 1, 2, 4] + [8] * max(0, num_blocks - 4)
@@ -97,13 +188,18 @@ class SpatialTemporalEEGEncoder(nn.Module):
         )
         self.target_steps = int(target_steps)
 
-    def forward(self, eeg: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, eeg: torch.Tensor, cond: torch.Tensor
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         x = _channel_dropout(eeg, self.channel_dropout_p, self.training)
-        x = self.spatial(x)
+        if self.num_channel_experts > 1:
+            x, aux = self.spatial(x)
+        else:
+            x, aux = self.spatial(x), {}
         x = self.spatial_film(x, cond)
         for block in self.blocks:
             x = block(x, cond)
         if x.shape[-1] != self.target_steps:
             x = F.adaptive_avg_pool1d(x, self.target_steps)
-        return x
+        return x, aux
 

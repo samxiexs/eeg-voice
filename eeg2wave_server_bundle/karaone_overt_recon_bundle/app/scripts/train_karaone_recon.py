@@ -67,7 +67,12 @@ def main() -> None:
         f"subject_test={len(subject_test)} subjects={train_ds.num_subjects} labels={train_ds.num_labels}"
     )
 
-    num_experts = 1 if args.model == "baseline" else max(4, int(model_cfg.get("num_experts", 4)))
+    # The MoE lives in the EEG encoder (channel selection/clustering). The `moe`
+    # model turns on the channel-experts front-end; the output head stays a plain
+    # MLP (num_experts=1) since channel filtering belongs at the encoder, not here.
+    num_channel_experts = (
+        1 if args.model == "baseline" else max(4, int(model_cfg.get("num_channel_experts", 4)))
+    )
     model = KaraOneEEG2Codec(
         KaraOneConfig(
             n_channels_eeg=int(model_cfg.get("n_channels_eeg", 62)),
@@ -84,7 +89,8 @@ def main() -> None:
             kernel_size=int(model_cfg.get("kernel_size", 5)),
             channel_dropout=float(model_cfg.get("channel_dropout", 0.15)),
             dropout=float(model_cfg.get("dropout", 0.15)),
-            num_experts=num_experts,
+            num_experts=int(model_cfg.get("num_experts", 1)),
+            num_channel_experts=num_channel_experts,
         )
     ).to(device)
     if args.init_from:
@@ -120,6 +126,7 @@ def main() -> None:
             "lambda_log_rms": 0.2,
             "lambda_std": 0.0,
             "lambda_router_balance": 0.01,
+            "lambda_channel_balance": 0.01,
             "supcon_temperature": 0.1,
         }.items()
     }

@@ -17,12 +17,27 @@ class RefinerConfig:
 
 
 class ResidualDenoisingRefiner(nn.Module):
-    """Second-stage latent residual refiner.
+    """Second-stage latent residual refiner. NOTE: this is *not* a diffusion model.
 
     The base model predicts a normalized EnCodec latent. This module receives a
-    noisy version of that prediction and learns a residual correction toward the
-    target latent. It is deliberately small and stable; it can later be replaced
-    by a fuller diffusion schedule without changing the bundle interfaces.
+    lightly noised version of that prediction (the scalar `noise_level` is only a
+    small augmentation, sampled in [0, noise_std]) and learns a single-step
+    residual correction toward the target latent, trained with MSE + cosine. At
+    inference `noise_level=0` and it runs one forward pass, i.e. it is a learned
+    deterministic post-filter, not a generative sampler.
+
+    Why it is not diffusion (and must not be described as such): a real diffusion
+    model would (1) define a forward process that interpolates the *target* toward
+    pure noise over a schedule, (2) train a network to reverse it (predict noise /
+    score / x0 across all noise levels), and (3) generate by *iterative* sampling
+    from noise. That models the conditional distribution p(latent | EEG) and lets
+    you draw samples instead of regressing to the conditional mean.
+
+    Important caveat: because both stages here regress to a single deterministic
+    target with MSE, they are mean-seeking. For audio this yields an over-smoothed
+    "average voice" (see synth's `mean_latent` baseline). Escaping that blur is the
+    actual reason to adopt diffusion / discrete-token autoregression — but only a
+    *real* schedule with iterative sampling buys that; this refiner does not.
     """
 
     def __init__(self, cfg: RefinerConfig):

@@ -25,6 +25,7 @@ class KaraOneConfig:
     channel_dropout: float = 0.15
     dropout: float = 0.15
     num_experts: int = 1
+    num_channel_experts: int = 1
 
 
 class KaraOneEEG2Codec(nn.Module):
@@ -45,6 +46,7 @@ class KaraOneEEG2Codec(nn.Module):
             kernel_size=cfg.kernel_size,
             channel_dropout=cfg.channel_dropout,
             dropout=cfg.dropout,
+            num_channel_experts=cfg.num_channel_experts,
         )
         d = cfg.d_model
         self.content_seq_head = nn.Sequential(
@@ -62,6 +64,10 @@ class KaraOneEEG2Codec(nn.Module):
         nn.init.normal_(self.speaker_embedding.weight, std=0.02)
         self.speaker_to_proto = nn.Linear(cfg.speaker_dim, cfg.target_dim)
 
+        # Output projection head (content+speaker -> latent). With num_experts=1
+        # this is a plain MLP; the channel-selecting MoE now lives in the encoder
+        # (ChannelMoEFrontend), which is where channel filtering/clustering belongs.
+        # num_experts>1 keeps an optional soft output mixture for ablation only.
         expert_in = cfg.content_dim + cfg.speaker_dim
         self.experts = nn.ModuleList(
             [
@@ -91,7 +97,8 @@ class KaraOneEEG2Codec(nn.Module):
 
     def forward(self, eeg: torch.Tensor, subject_idx: torch.Tensor, stage_idx: torch.Tensor) -> dict[str, torch.Tensor]:
         cond = self.stage_embedding(stage_idx.long()) + self.subject_condition(subject_idx.long())
-        seq = self.encoder(eeg, cond).transpose(1, 2)
+        encoded, channel_aux = self.encoder(eeg, cond)
+        seq = encoded.transpose(1, 2)
         pooled = seq.mean(dim=1)
         content_seq = self.content_seq_head(seq)
         content_embed = self.content_embed_head(pooled)
@@ -106,7 +113,7 @@ class KaraOneEEG2Codec(nn.Module):
         pred_latent = (expert_outputs * router_probs[:, None, :, None]).sum(dim=2)
 
         pred_log_rms = self.log_rms_head(torch.cat([content_seq.mean(dim=1), speaker], dim=-1)).squeeze(-1)
-        return {
+        out = {
             "pred_latent": pred_latent,
             "pred_log_rms": pred_log_rms,
             "content_embed": content_embed,
@@ -117,6 +124,8 @@ class KaraOneEEG2Codec(nn.Module):
             "router_probs": router_probs,
             "pooled": pooled,
         }
+        out.update(channel_aux)  # channel_gate, channel_assign, channel_balance (if encoder MoE on)
+        return out
 
     @torch.no_grad()
     def generate_full(self, eeg: torch.Tensor, subject_idx: torch.Tensor, stage_idx: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
