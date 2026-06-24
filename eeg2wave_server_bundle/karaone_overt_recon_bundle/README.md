@@ -39,9 +39,19 @@ models/encodec_24khz/
 reports/
   karaone_data_analysis.md
   karaone_data_summary.json
-METHOD.md      # how reconstruction + EEG/audio alignment work, and the optimizations
-RUN_SERVER.md  # step-by-step runbook
+METHOD.md         # how reconstruction + EEG/audio alignment work, and the optimizations
+DIFFUSION_PLAN.md # generative (latent-diffusion) path design — escapes mean-collapse
+RUN_SERVER.md     # step-by-step runbook
 ```
+
+## Two model paths
+
+- **Regression** (`KaraOneEEG2Codec`, `train_karaone_recon.py`): EEG -> EnCodec
+  latent by regression. Fast, but collapses to the mean voice on this data
+  (std-ratio ~0.15, sample pairwise-corr ~0.94). Good as an honest baseline.
+- **Diffusion** (`EEGLatentDiffusion`, `train_karaone_diffusion.py`): EEG-conditioned
+  latent diffusion that *samples* `p(latent | EEG)`, so it does not collapse. See
+  [DIFFUSION_PLAN.md](DIFFUSION_PLAN.md) and [METHOD.md](METHOD.md) §4.
 
 The raw 23GB KaraOne `.tar.bz2` archives are not included.
 

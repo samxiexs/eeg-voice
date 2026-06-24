@@ -55,6 +55,22 @@ train:
   supcon_temperature: 0.1
   clip_temperature: 0.07
 
+# Generative path: EEG-conditioned latent diffusion (escapes the regression
+# model's mean-collapse). Used by train/synthesize_karaone_diffusion.py.
+diffusion:
+  hidden: 256
+  num_blocks: 6
+  cond_ch: 128
+  timesteps: 1000
+  ddim_steps: 50         # sampling steps at synthesis time
+  eval_steps: 20         # fewer steps during per-epoch eval (speed)
+  schedule: cosine
+  x0_clip: 8.0
+  num_channel_experts: 4  # encoder channel-MoE when --model moe
+  lr: 0.0003
+  weight_decay: 0.0001
+  epochs: 60
+
 output:
   root: ../artifacts/outputs_karaone
 

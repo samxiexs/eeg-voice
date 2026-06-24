@@ -92,14 +92,36 @@ non-invasive brain recordings"**，以及视觉解码主线（NICE/ATM/UBP，见
 
 ---
 
-## 4. 没有做什么（避免过度复杂）
-- 没有引入真正的 diffusion 采样器（见 `refiner.py` 注释中关于"为什么"和"怎么做"）。
-- 没有做显式时间对齐（DTW/CTC/cross-attention）——留作后续；当前用"均匀池化 + 有效长度掩码"。
-- 没有引入额外的冻结语音大模型（wav2vec2/HuBERT）；对比对齐直接用现成的 EnCodec 目标潜在作为音频侧表征。
+## 4. 生成式路径：条件潜在扩散（摆脱"均值塌缩"）
 
-## 5. 怎么验证优化有效
-对比 `--model baseline` 与 `--model moe`、以及 `lambda_clip=0` 与 `lambda_clip=0.5`，
-**只看 `pred_over_zero_cos_gain`**（不是原始 cosine）。具体命令见 [RUN_SERVER.md](RUN_SERVER.md)。
+回归模型（§1–§3）实测会**塌缩到均值**：`pred_std_ratio≈0.15`、不同 trial 预测两两相关
+`0.94`、`pred−mean` 增益仅 `0.02`，即对任何 EEG 都输出几乎相同的"平均声"。
+根因是回归确定目标=求条件均值。为此新增**真正的生成式**路径（设计见
+[DIFFUSION_PLAN.md](DIFFUSION_PLAN.md)）：
+
+- 模块 [`diffusion.py`](app/src/karaone_recon/diffusion.py) 的 `EEGLatentDiffusion`：
+  以 **ε 预测 + cosine 噪声调度** 学习 `p(latent | EEG)`，用 **DDIM 迭代采样**生成。
+  EEG 经 `SpatialTemporalEEGEncoder` 得到逐帧条件，拼进 1D 去噪器（timestep 做 FiLM）。
+- **为什么不塌缩**：推理从噪声采样再去噪，输出是分布的**样本**，方差天然保留
+  （`std_ratio→≈1`、样本两两相关大幅下降），不再是灰糊均值。
+- **诚实局限**：扩散不会凭空造出 EEG 里没有的信息——EEG 弱时样本是"像语音但未必对的词"，
+  把"灰糊"换成了"多样但保真有限"。评估同时看保真（gain）和多样性（pairwise corr）。
+- 训练/采样：[`train_karaone_diffusion.py`](app/scripts/train_karaone_diffusion.py)、
+  [`synthesize_karaone_diffusion.py`](app/scripts/synthesize_karaone_diffusion.py)；配置见 `diffusion:` 段。
+- 这也**取代**了之前那个"假 diffusion"的 `refiner.py`（单步残差后处理）。
+
+## 5. 没有做什么（避免过度复杂）
+- 扩散 v1 **不做** classifier-free guidance（条件 dropout + 引导采样）——它能提升 EEG 利用率，列为后续。
+- 没有做离散 token 自回归（DeWave/AudioLM 路线）——作为 §2 表中的备选 B 留待后续。
+- 没有做显式时间对齐（DTW/CTC/cross-attention）；当前用"均匀池化 + 有效长度掩码"。
+- 没有引入额外冻结语音大模型（wav2vec2/HuBERT）；对比对齐直接用 EnCodec 目标潜在作音频侧表征。
+
+## 6. 怎么验证有效
+- **回归模型**：对比 `--model baseline`/`moe`、`lambda_clip` 开/关，**只看 `pred_over_mean_cos_gain`**
+  （不是原始 cosine，也不要用 `pred_over_zero`——后者早期会被零基线未训而虚高）。
+- **扩散模型**：看两类指标——保真（`pred_over_mean_cos_gain`、retrieval top-1）+ **抗塌缩**
+  （`pred_std_ratio_median` 应趋近 1.0、`pred_pairwise_corr_median` 应远低于回归的 0.94）。
+- 具体命令见 [RUN_SERVER.md](RUN_SERVER.md)。
 
 ## 参考文献（见 `paper-ref/`）
 - Défossez et al. 2022, *Decoding speech perception from non-invasive brain recordings* — 跨模态对比对齐。

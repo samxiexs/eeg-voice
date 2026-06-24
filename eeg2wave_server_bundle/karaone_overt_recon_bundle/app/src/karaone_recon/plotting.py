@@ -124,6 +124,71 @@ def plot_history(jsonl_path: str | Path, out_png: str | Path, title: str | None 
     return out_png
 
 
+def plot_diffusion_history(jsonl_path: str | Path, out_png: str | Path, title: str | None = None) -> Path:
+    """Render training curves for the diffusion model. The headline panels are the
+    anti-collapse diagnostics: std-ratio (should rise toward 1.0) and pairwise
+    correlation of samples (should stay low, vs ~0.94 for the collapsed regression)."""
+    rows = _load_history(jsonl_path)
+    out_png = Path(out_png)
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+    _panel(axes[0, 0], rows, "Train diffusion loss (eps MSE)", [("train", "loss", "eps MSE")], ylabel="loss")
+    _panel(
+        axes[0, 1],
+        rows,
+        "Val reconstruction cosine (sampled)",
+        [
+            ("val", "pred_recon_cos", "sample"),
+            ("val", "mean_recon_cos", "mean-latent"),
+            ("val", "zeroeeg_recon_cos", "zero-EEG"),
+        ],
+        ylabel="cosine",
+    )
+    _panel(
+        axes[0, 2],
+        rows,
+        "Val gain over baselines (honest)",
+        [
+            ("val", "pred_over_mean_cos_gain", "sample - mean"),
+            ("val", "pred_over_zero_cos_gain", "sample - zero"),
+        ],
+        ylabel="cosine gain",
+        hline=0.0,
+    )
+    _panel(
+        axes[1, 0],
+        rows,
+        "Std ratio — ANTI-COLLAPSE (target 1.0)",
+        [("val", "pred_std_ratio_median", "sample")],
+        ylabel="std ratio",
+        hline=1.0,
+    )
+    _panel(
+        axes[1, 1],
+        rows,
+        "Pairwise corr of samples (lower=diverse)",
+        [("val", "pred_pairwise_corr_median", "sample")],
+        ylabel="|corr|",
+        hline=0.0,
+    )
+    _panel(
+        axes[1, 2],
+        rows,
+        "Within-subject retrieval top-1",
+        [
+            ("val", "pred_within_subject_label_top1", "label"),
+            ("val", "pred_within_subject_trial_top1", "trial"),
+        ],
+        ylabel="top-1",
+        hline=1.0 / 11.0,
+    )
+    fig.suptitle(title or out_png.parent.parent.name, fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+    return out_png
+
+
 if __name__ == "__main__":
     import argparse
 
