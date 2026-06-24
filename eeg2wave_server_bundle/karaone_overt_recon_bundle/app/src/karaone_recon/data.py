@@ -109,8 +109,13 @@ class KaraOneTrialDataset(Dataset):
         return entries
 
     def _assign_trial_split(self, rows: list[dict]) -> list[KaraOneEntry]:
+        # Reserve heldout subjects for the subject_holdout protocol ONLY. If they were
+        # left in the trial split, they would be in trial-train AND in subject_test,
+        # leaking training data into the cross-subject eval (inflating its metrics).
         grouped: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
         for row in rows:
+            if row["subject"] in self.heldout_subjects:
+                continue
             grouped[(row["subject"], row["label"], row["stage"])].append(row)
         for group in grouped.values():
             group.sort(key=lambda item: int(item["trial_index"]))

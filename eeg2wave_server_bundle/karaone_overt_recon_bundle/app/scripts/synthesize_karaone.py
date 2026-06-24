@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--split", default="test", choices=["train", "val", "test", "subject_test"])
     parser.add_argument("--out-dir", default=None)
-    parser.add_argument("--limit", type=int, default=24)
+    parser.add_argument("--limit", type=int, default=24, help="number of trials; <=0 means ALL trials in the split")
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -73,7 +73,8 @@ def main() -> None:
                 n_mels=int(tgt_cfg.get("n_mels", 80)),
                 mel_n_fft=int(tgt_cfg.get("mel_n_fft", 1024)),
                 mel_hop=int(tgt_cfg.get("mel_hop", 256)),
-                griffinlim_iters=int(cfg.get("vocoder", {}).get("griffinlim_iters", 60)),
+                griffinlim_iters=int(cfg.get("vocoder", {}).get("griffinlim_iters", 100)),
+                griffinlim_momentum=float(cfg.get("vocoder", {}).get("griffinlim_momentum", 0.99)),
             )
         )
     else:
@@ -90,8 +91,10 @@ def main() -> None:
         or (Path(args.checkpoint).resolve().parents[1] / f"wav_{args.split}_{time.strftime('%Y%m%d_%H%M%S')}")
     )
     mean_wav = backend.decode(targets.global_mean_raw.astype(np.float32), decoder_scales=targets.default_decoder_scales)
+    n_out = len(ds) if int(args.limit) <= 0 else min(int(args.limit), len(ds))
+    print(f"[synth] reconstructing {n_out}/{len(ds)} trials of split={args.split}")
     manifest = []
-    for idx in range(min(int(args.limit), len(ds))):
+    for idx in range(n_out):
         item = ds[idx]
         entry = ds.entries[idx]
         with torch.no_grad():

@@ -190,7 +190,7 @@ def main() -> None:
                 "target_mean": targets.target_mean,
                 "target_std": targets.target_std,
                 "default_decoder_scales": targets.default_decoder_scales,
-                "val_pred_over_zero_cos_gain": float(val_gain),
+                "val_pred_over_mean_cos_gain": float(val_gain),
                 "model_kind": args.model,
                 "target_kind": target_kind,
             },
@@ -249,13 +249,15 @@ def main() -> None:
         sched.step()
         train_metrics = {name: value / max(seen, 1) for name, value in agg.items()}
         val_metrics = evaluate(model, val_ds, targets, device=device, batch_size=batch_size)
-        gain = float(val_metrics["pred_over_zero_cos_gain"])
+        # Select on gain vs the STABLE global-mean baseline (pred_over_mean), not vs the
+        # zero-EEG baseline: the latter is noisy/untrained early and was selecting epoch ~1.
+        gain = float(val_metrics["pred_over_mean_cos_gain"])
         print(
             f"epoch {epoch:03d} total={train_metrics['total']:.3f} "
             f"recon_cos={train_metrics['recon_cos']:.3f} mse={train_metrics['recon_mse']:.3f} "
             f"content_acc={train_metrics['content_acc']:.3f} "
             f"std={train_metrics['std_ratio']:.3f} | val pred={val_metrics['pred_recon_cos']:.3f} "
-            f"zero={val_metrics['zeroeeg_recon_cos']:.3f} gain={gain:+.3f}"
+            f"mean={val_metrics['mean_recon_cos']:.3f} gain(vs mean)={gain:+.3f}"
         )
         with history_jsonl.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"epoch": epoch, "train": train_metrics, "val": val_metrics}) + "\n")
@@ -288,7 +290,7 @@ def main() -> None:
 
     save_ckpt(run_dir / "checkpoints" / "last.pt", best_gain)
     final = {
-        "selection": {"criterion": "val pred_recon_cos - zeroeeg_recon_cos", "best_val_gain": best_gain},
+        "selection": {"criterion": "val pred_over_mean_cos_gain", "best_val_gain": best_gain},
         "test": evaluate(model, test_ds, targets, device=device, batch_size=batch_size),
         "subject_test": evaluate(model, subject_test, targets, device=device, batch_size=batch_size),
     }

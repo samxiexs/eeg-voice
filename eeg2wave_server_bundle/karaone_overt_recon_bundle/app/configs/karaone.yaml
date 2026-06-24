@@ -33,7 +33,8 @@ target:
 
 vocoder:
   kind: griffinlim           # griffinlim (mel) | encodec (latent)
-  griffinlim_iters: 60
+  griffinlim_iters: 100      # fast (momentum) Griffin-Lim; more iters = fewer "bubbling" artifacts
+  griffinlim_momentum: 0.99
 
 model:
   n_channels_eeg: 62

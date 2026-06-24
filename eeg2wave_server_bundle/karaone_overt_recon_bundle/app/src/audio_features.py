@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,8 @@ class AudioFeatureConfig:
     mel_hop: int = 256
     mel_fmin: float = 0.0
     mel_fmax: float = 8000.0
-    griffinlim_iters: int = 60
+    griffinlim_iters: int = 100
+    griffinlim_momentum: float = 0.99
 
 
 def _normalize_subject_id(subject_id: str | int) -> str:
@@ -141,6 +143,7 @@ class MelTransform:
         self.hop = int(config.mel_hop)
         self.n_mels = int(config.n_mels)
         self.iters = int(config.griffinlim_iters)
+        self.momentum = float(config.griffinlim_momentum)
         self.eps = 1e-5
         self.fb = mel_filterbank(self.sr, self.n_fft, self.n_mels, config.mel_fmin, config.mel_fmax)
         self.fb_inv = np.linalg.pinv(self.fb).astype(np.float32)  # [n_freqs, n_mels]
@@ -151,6 +154,19 @@ class MelTransform:
             nfft=self.n_fft, boundary=None, padded=False,
         )
         return spec  # complex [n_freqs, frames]
+
+    def _istft(self, spec: np.ndarray, target_len: int) -> np.ndarray:
+        # boundary=False matches our stft(boundary=None) so frames line up. scipy warns
+        # about NOLA at the very edges (no boundary padding); the interior overlap-add is
+        # exact (hann @ 75% overlap) and the affected region is ~n_fft/2 samples per side,
+        # negligible vs the 2 s clip — so we silence that specific edge warning.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*NOLA.*")
+            _, audio = istft(
+                spec, fs=self.sr, nperseg=self.n_fft, noverlap=self.n_fft - self.hop,
+                nfft=self.n_fft, boundary=False,
+            )
+        return self._fix_len(np.asarray(audio, dtype=np.float64), target_len)
 
     def to_mel(self, audio: np.ndarray) -> np.ndarray:
         """audio -> log-mel [frames, n_mels]."""
@@ -177,24 +193,29 @@ class MelTransform:
         return np.pad(spec, ((0, 0), (0, n_frames - spec.shape[1])), mode="edge")
 
     def decode(self, log_mel: np.ndarray, decoder_scales: np.ndarray | None = None) -> np.ndarray:
-        """log-mel [frames, n_mels] -> waveform via mel-pinv + Griffin-Lim phase recon."""
+        """log-mel [frames, n_mels] -> waveform via mel-pinv + Fast Griffin-Lim.
+
+        Uses the accelerated (momentum) Griffin-Lim of Perraudin et al. 2013, which
+        converges to a far more consistent phase than vanilla GL and markedly reduces
+        the watery/"bubbling" artifacts of phase-blind mel inversion."""
         del decoder_scales  # unused for mel; kept for backend-signature parity
-        mel = np.exp(np.asarray(log_mel, dtype=np.float32).T)  # [n_mels, frames]
-        mag = np.maximum(self.fb_inv @ mel, 0.0).astype(np.float32)  # [n_freqs, frames]
+        mel = np.exp(np.asarray(log_mel, dtype=np.float64).T)  # [n_mels, frames]
+        mag = np.maximum(self.fb_inv @ mel, 0.0)  # [n_freqs, frames]
         n_frames = mag.shape[1]
         target_len = (n_frames - 1) * self.hop + self.n_fft  # canonical length for n_frames
         rng = np.random.default_rng(0)
-        phase = np.exp(2j * np.pi * rng.random(mag.shape)).astype(np.complex64)
-        spec = mag * phase
-        audio = np.zeros(target_len, dtype=np.float32)
+        angles = np.exp(2j * np.pi * rng.random(mag.shape))
+        spec = mag * angles
+        prev_proj = np.zeros_like(spec)
+        m = self.momentum
         for _ in range(max(1, self.iters)):
-            _, audio = istft(spec, fs=self.sr, nperseg=self.n_fft, noverlap=self.n_fft - self.hop, nfft=self.n_fft)
-            audio = self._fix_len(np.asarray(audio, dtype=np.float32), target_len)
-            new_spec = self._coerce_frames(self._stft(audio), n_frames)
-            phase = np.exp(1j * np.angle(new_spec))  # keep estimated magnitude, take reconstructed phase
-            spec = mag * phase
-        _, audio = istft(spec, fs=self.sr, nperseg=self.n_fft, noverlap=self.n_fft - self.hop, nfft=self.n_fft)
-        return self._fix_len(np.asarray(audio, dtype=np.float32), target_len)
+            audio = self._istft(spec, target_len)
+            proj = self._coerce_frames(self._stft(audio), n_frames)  # P_C: consistency projection
+            step = proj + m * (proj - prev_proj)                     # momentum acceleration
+            angles = step / (np.abs(step) + 1e-8)
+            spec = mag * angles                                       # P_A: re-impose target magnitude
+            prev_proj = proj
+        return self._istft(spec, target_len).astype(np.float32)
 
 
 def compute_prosody_target(audio: np.ndarray, sample_rate: int) -> np.ndarray:
