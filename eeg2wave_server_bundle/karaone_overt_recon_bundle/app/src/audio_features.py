@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn.functional as F
-from scipy.signal import stft
+from scipy.signal import istft, stft
 from tqdm import tqdm
 
 from .utils import ensure_dir, load_wav_fixed, pad_or_crop_audio, read_csv_rows, resample_audio, resolve_feis_root
@@ -17,6 +17,7 @@ from .utils import ensure_dir, load_wav_fixed, pad_or_crop_audio, read_csv_rows,
 TARGET_KIND_HUBERT_POOLED = "hubert_pooled"
 TARGET_KIND_HUBERT_SEQUENCE = "hubert_sequence"
 TARGET_KIND_ENCODEC_LATENT = "encodec_latent"
+TARGET_KIND_MEL = "mel"
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,13 @@ class AudioFeatureConfig:
     spectral_bins: int = 48
     sequence_target_steps: int = 16
     codec_bandwidth: float = 6.0
+    # mel target / Griffin-Lim vocoder
+    n_mels: int = 80
+    mel_n_fft: int = 1024
+    mel_hop: int = 256
+    mel_fmin: float = 0.0
+    mel_fmax: float = 8000.0
+    griffinlim_iters: int = 60
 
 
 def _normalize_subject_id(subject_id: str | int) -> str:
@@ -57,8 +65,12 @@ def estimate_pitch_hz(audio: np.ndarray, sample_rate: int, fmin: float = 60.0, f
     centered = audio.astype(np.float64) - float(np.mean(audio))
     if np.sqrt(np.mean(centered**2)) < 1e-5:
         return 0.0
-    corr = np.correlate(centered, centered, mode="full")
-    corr = corr[corr.size // 2 :]
+    # FFT-based autocorrelation (O(n log n)); equivalent to the one-sided part of
+    # np.correlate(centered, centered, 'full') but ~100x faster on long windows.
+    n = centered.size
+    fsize = 1 << int(2 * n - 1).bit_length()
+    spec = np.fft.rfft(centered, fsize)
+    corr = np.fft.irfft(spec * np.conj(spec), fsize)[:n]
     min_lag = max(1, int(sample_rate / fmax))
     max_lag = min(len(corr) - 1, int(sample_rate / fmin))
     if max_lag <= min_lag:
@@ -91,6 +103,98 @@ def compute_spectral_embedding(audio: np.ndarray, sample_rate: int, spectral_bin
         axis=0,
     )
     return pooled.astype(np.float32)
+
+
+def _hz_to_mel(hz: np.ndarray) -> np.ndarray:
+    return 2595.0 * np.log10(1.0 + hz / 700.0)
+
+
+def _mel_to_hz(mel: np.ndarray) -> np.ndarray:
+    return 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
+
+
+def mel_filterbank(sample_rate: int, n_fft: int, n_mels: int, fmin: float, fmax: float) -> np.ndarray:
+    """Triangular HTK-style mel filterbank, shape [n_mels, n_fft//2+1]."""
+    n_freqs = n_fft // 2 + 1
+    fft_freqs = np.linspace(0.0, sample_rate / 2.0, n_freqs)
+    mel_pts = np.linspace(_hz_to_mel(np.array(fmin)), _hz_to_mel(np.array(fmax)), n_mels + 2)
+    hz_pts = _mel_to_hz(mel_pts)
+    fb = np.zeros((n_mels, n_freqs), dtype=np.float32)
+    for m in range(1, n_mels + 1):
+        lo, ctr, hi = hz_pts[m - 1], hz_pts[m], hz_pts[m + 1]
+        left = (fft_freqs - lo) / max(ctr - lo, 1e-8)
+        right = (hi - fft_freqs) / max(hi - ctr, 1e-8)
+        fb[m - 1] = np.clip(np.minimum(left, right), 0.0, None)
+    return fb
+
+
+class MelTransform:
+    """Log-mel spectrogram (scipy STFT, numpy mel filterbank) + Griffin-Lim inverse.
+
+    Pure scipy/numpy so it runs offline with no torchaudio/librosa. Used as the
+    `mel` acoustic target backend and its vocoder.
+    """
+
+    def __init__(self, config: "AudioFeatureConfig"):
+        self.sr = int(config.sample_rate)
+        self.n_fft = int(config.mel_n_fft)
+        self.hop = int(config.mel_hop)
+        self.n_mels = int(config.n_mels)
+        self.iters = int(config.griffinlim_iters)
+        self.eps = 1e-5
+        self.fb = mel_filterbank(self.sr, self.n_fft, self.n_mels, config.mel_fmin, config.mel_fmax)
+        self.fb_inv = np.linalg.pinv(self.fb).astype(np.float32)  # [n_freqs, n_mels]
+
+    def _stft(self, audio: np.ndarray) -> np.ndarray:
+        _, _, spec = stft(
+            audio, fs=self.sr, nperseg=self.n_fft, noverlap=self.n_fft - self.hop,
+            nfft=self.n_fft, boundary=None, padded=False,
+        )
+        return spec  # complex [n_freqs, frames]
+
+    def to_mel(self, audio: np.ndarray) -> np.ndarray:
+        """audio -> log-mel [frames, n_mels]."""
+        mag = np.abs(self._stft(audio)).astype(np.float32)  # [n_freqs, frames]
+        mel = self.fb @ mag  # [n_mels, frames]
+        log_mel = np.log(np.maximum(mel, self.eps))
+        return log_mel.T.astype(np.float32)  # [frames, n_mels]
+
+    @property
+    def sample_rate(self) -> int:
+        return self.sr
+
+    def _fix_len(self, audio: np.ndarray, target_len: int) -> np.ndarray:
+        if len(audio) >= target_len:
+            return audio[:target_len]
+        return np.pad(audio, (0, target_len - len(audio)))
+
+    def _coerce_frames(self, spec: np.ndarray, n_frames: int) -> np.ndarray:
+        # pad/truncate the STFT along the time axis so frame counts stay aligned
+        if spec.shape[1] == n_frames:
+            return spec
+        if spec.shape[1] > n_frames:
+            return spec[:, :n_frames]
+        return np.pad(spec, ((0, 0), (0, n_frames - spec.shape[1])), mode="edge")
+
+    def decode(self, log_mel: np.ndarray, decoder_scales: np.ndarray | None = None) -> np.ndarray:
+        """log-mel [frames, n_mels] -> waveform via mel-pinv + Griffin-Lim phase recon."""
+        del decoder_scales  # unused for mel; kept for backend-signature parity
+        mel = np.exp(np.asarray(log_mel, dtype=np.float32).T)  # [n_mels, frames]
+        mag = np.maximum(self.fb_inv @ mel, 0.0).astype(np.float32)  # [n_freqs, frames]
+        n_frames = mag.shape[1]
+        target_len = (n_frames - 1) * self.hop + self.n_fft  # canonical length for n_frames
+        rng = np.random.default_rng(0)
+        phase = np.exp(2j * np.pi * rng.random(mag.shape)).astype(np.complex64)
+        spec = mag * phase
+        audio = np.zeros(target_len, dtype=np.float32)
+        for _ in range(max(1, self.iters)):
+            _, audio = istft(spec, fs=self.sr, nperseg=self.n_fft, noverlap=self.n_fft - self.hop, nfft=self.n_fft)
+            audio = self._fix_len(np.asarray(audio, dtype=np.float32), target_len)
+            new_spec = self._coerce_frames(self._stft(audio), n_frames)
+            phase = np.exp(1j * np.angle(new_spec))  # keep estimated magnitude, take reconstructed phase
+            spec = mag * phase
+        _, audio = istft(spec, fs=self.sr, nperseg=self.n_fft, noverlap=self.n_fft - self.hop, nfft=self.n_fft)
+        return self._fix_len(np.asarray(audio, dtype=np.float32), target_len)
 
 
 def compute_prosody_target(audio: np.ndarray, sample_rate: int) -> np.ndarray:
@@ -207,6 +311,8 @@ class _EncodecLatentBackend:
 def build_audio_feature_backend(config: AudioFeatureConfig) -> tuple[str, Any]:
     target_kind = str(config.target_kind)
     backend = str(config.backend)
+    if target_kind == TARGET_KIND_MEL or backend == "mel":
+        return "mel", MelTransform(config)
     if target_kind == TARGET_KIND_ENCODEC_LATENT or backend == "encodec_latent":
         return "encodec_latent", _EncodecLatentBackend(
             model_name_or_path=config.codec_model_name_or_path,
@@ -229,6 +335,11 @@ def load_codec_backend(config: AudioFeatureConfig) -> _EncodecLatentBackend:
     if backend_name != "encodec_latent" or backend is None:
         raise ValueError("AudioFeatureConfig does not resolve to an EnCodec backend")
     return backend
+
+
+def load_mel_vocoder(config: AudioFeatureConfig) -> MelTransform:
+    """Resolve a Griffin-Lim mel vocoder (mel -> waveform), offline / scipy-only."""
+    return MelTransform(config)
 
 
 def load_template_rows(feis_root: str | Path) -> list[dict[str, str]]:
@@ -254,6 +365,15 @@ def _extract_target_from_audio(
     config: AudioFeatureConfig,
 ) -> dict[str, np.ndarray]:
     target_kind = str(config.target_kind)
+    if target_kind == TARGET_KIND_MEL:
+        if backend is None or not isinstance(backend, MelTransform):
+            raise RuntimeError("Mel targets require a MelTransform backend")
+        sequence = backend.to_mel(audio)
+        return {
+            "target_sequence": sequence,
+            "target_mask": np.ones(sequence.shape[0], dtype=np.float32),
+            "target_summary": sequence.mean(axis=0).astype(np.float32),
+        }
     if target_kind == TARGET_KIND_HUBERT_SEQUENCE:
         if backend is None or not isinstance(backend, _LocalSSLModelEmbedder):
             raise RuntimeError("Sequence-level HuBERT targets require a local SSL backend")

@@ -133,6 +133,13 @@ def evaluate(
     target_matrix = np.concatenate(target_flat, axis=0)
     pred_std = pred_matrix.std(axis=0)
     target_std = target_matrix.std(axis=0)
+    # Per-sample Pearson correlation over the whole spectrogram/latent (mel-PCC, as in
+    # Park 2025 / FESDE). Reflects whole time-freq similarity, not just per-frame cosine.
+    pm = pred_matrix - pred_matrix.mean(axis=1, keepdims=True)
+    tm = target_matrix - target_matrix.mean(axis=1, keepdims=True)
+    pcc = (pm * tm).sum(axis=1) / (
+        np.sqrt((pm * pm).sum(axis=1)) * np.sqrt((tm * tm).sum(axis=1)) + 1e-8
+    )
     out_metrics.update(
         {
             "n": int(count),
@@ -140,6 +147,7 @@ def evaluate(
             "pred_over_mean_cos_gain": out_metrics["pred_recon_cos"] - out_metrics["mean_recon_cos"],
             "pred_std_ratio_median": float(np.median(pred_std / np.maximum(target_std, 1e-6))),
             "pred_pairwise_corr_median": _corr_median(pred_matrix),
+            "pred_pcc": float(np.mean(pcc)),
         }
     )
     out_metrics.update({f"pred_{k}": v for k, v in _retrieval_stats(pred_summary, subjects, labels, trials, targets).items()})

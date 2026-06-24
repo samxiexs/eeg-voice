@@ -13,11 +13,12 @@ BUNDLE_DIR = Path(__file__).resolve().parents[1]
 if str(BUNDLE_DIR) not in sys.path:
     sys.path.insert(0, str(BUNDLE_DIR))
 
+from src.audio_features import AudioFeatureConfig, load_mel_vocoder
 from src.karaone_recon.data import KaraOneTrialDataset
 from src.karaone_recon.diffusion import DiffusionConfig, EEGLatentDiffusion
 from src.karaone_recon.synth import build_codec_backend, denormalize_latent
 from src.karaone_recon.targets import KaraOneTargets
-from src.utils import ensure_dir, load_simple_yaml, load_wav_fixed, resolve_bundle_path, save_wav
+from src.utils import ensure_dir, load_simple_yaml, load_wav_fixed, resolve_bundle_path, resolve_target_cache, save_wav
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,7 +53,9 @@ def main() -> None:
     steps = int(args.steps or ckpt.get("ddim_steps", 50))
 
     root = resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR)
-    targets = KaraOneTargets(resolve_bundle_path(cfg["data"]["target_cache"], BUNDLE_DIR), data_root=root)
+    target_kind = str(ckpt.get("target_kind", cfg.get("target", {}).get("kind", "encodec_latent")))
+    _, cache = resolve_target_cache(cfg, BUNDLE_DIR, target_kind)
+    targets = KaraOneTargets(cache, data_root=root)
     split_protocol = "subject_holdout" if args.split == "subject_test" else str(cfg["data"].get("split_protocol", "trial"))
     ds = KaraOneTrialDataset(
         data_root=root,
@@ -64,13 +67,27 @@ def main() -> None:
         eeg_len=int(cfg["data"].get("eeg_len", 1280)),
     )
     duration_sec = float(cfg["audio"].get("duration_sec", 2.0))
-    backend = build_codec_backend(
-        str(resolve_bundle_path(cfg["targets"]["codec_model_name_or_path"], BUNDLE_DIR)),
-        duration_sec=duration_sec,
-        bandwidth=float(cfg["targets"].get("codec_bandwidth", 6.0)),
-        local_files_only=bool(cfg["targets"].get("local_files_only", True)),
-    )
+    audio_cfg = cfg.get("audio", {})
+    tgt_cfg = cfg.get("target", {})
+    if target_kind == "mel":
+        backend = load_mel_vocoder(
+            AudioFeatureConfig(
+                sample_rate=int(audio_cfg.get("sample_rate", 16000)),
+                n_mels=int(tgt_cfg.get("n_mels", 80)),
+                mel_n_fft=int(tgt_cfg.get("mel_n_fft", 1024)),
+                mel_hop=int(tgt_cfg.get("mel_hop", 256)),
+                griffinlim_iters=int(cfg.get("vocoder", {}).get("griffinlim_iters", 60)),
+            )
+        )
+    else:
+        backend = build_codec_backend(
+            str(resolve_bundle_path(cfg["targets"]["codec_model_name_or_path"], BUNDLE_DIR)),
+            duration_sec=duration_sec,
+            bandwidth=float(cfg["targets"].get("codec_bandwidth", 6.0)),
+            local_files_only=bool(cfg["targets"].get("local_files_only", True)),
+        )
     sample_rate = int(backend.sample_rate)
+    print(f"[synth] target={target_kind} vocoder={'griffinlim' if target_kind=='mel' else 'encodec'} sr={sample_rate}")
     target_rms = float(cfg["audio"].get("target_rms", 0.08))
     out_dir = ensure_dir(
         args.out_dir or (Path(args.checkpoint).resolve().parents[1] / f"wav_diff_{args.split}_{time.strftime('%Y%m%d_%H%M%S')}")

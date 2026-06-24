@@ -91,6 +91,20 @@ def resolve_bundle_path(path: str | Path, base_dir: str | Path) -> Path:
     return Path(base_dir) / candidate
 
 
+def resolve_target_cache(cfg: dict, base_dir: str | Path, kind: str | None = None) -> tuple[str, Path]:
+    """Resolve the acoustic-target cache path for the selected target kind.
+
+    Returns (kind, path). `mel` -> target.cache_mel; otherwise the EnCodec-latent
+    cache (target.cache_encodec or legacy data.target_cache)."""
+    tgt = cfg.get("target", {})
+    kind = kind or str(tgt.get("kind", "encodec_latent"))
+    if kind == "mel":
+        path = tgt.get("cache_mel", "../artifacts/audio_targets/karaone_trial_mel.npz")
+    else:
+        path = tgt.get("cache_encodec", cfg["data"]["target_cache"])
+    return kind, resolve_bundle_path(path, base_dir)
+
+
 def resolve_stage_output_root(path: str | Path, base_dir: str | Path, stage: str, explicit: bool = False) -> Path:
     root = resolve_bundle_path(path, base_dir)
     if explicit:

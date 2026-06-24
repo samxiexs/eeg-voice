@@ -15,7 +15,7 @@ from src.karaone_recon.data import KaraOneTrialDataset
 from src.karaone_recon.eval import evaluate
 from src.karaone_recon.model import KaraOneConfig, KaraOneEEG2Codec
 from src.karaone_recon.targets import KaraOneTargets
-from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, write_json
+from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, resolve_target_cache, write_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,7 +36,9 @@ def main() -> None:
     model = KaraOneEEG2Codec(KaraOneConfig(**ckpt["model_config"])).to(device)
     model.load_state_dict(ckpt["model_state"], strict=True)
     root = resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR)
-    targets = KaraOneTargets(resolve_bundle_path(cfg["data"]["target_cache"], BUNDLE_DIR), data_root=root)
+    target_kind = str(ckpt.get("target_kind", cfg.get("target", {}).get("kind", "encodec_latent")))
+    _, cache = resolve_target_cache(cfg, BUNDLE_DIR, target_kind)
+    targets = KaraOneTargets(cache, data_root=root)
     split_protocol = "subject_holdout" if args.split == "subject_test" else str(cfg["data"].get("split_protocol", "trial"))
     ds = KaraOneTrialDataset(
         data_root=root,

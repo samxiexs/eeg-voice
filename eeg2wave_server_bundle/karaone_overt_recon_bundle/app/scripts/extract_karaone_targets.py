@@ -18,10 +18,11 @@ from src.utils import ensure_dir, load_simple_yaml, load_wav_fixed, resolve_bund
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Extract trial-level KaraOne EnCodec latent targets.")
+    parser = argparse.ArgumentParser(description="Extract trial-level KaraOne acoustic targets (mel or EnCodec latent).")
     parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "karaone.yaml"))
     parser.add_argument("--karaone-root", default=None)
     parser.add_argument("--out", default=None)
+    parser.add_argument("--target", choices=["mel", "encodec_latent"], default=None, help="acoustic target kind (default: config target.kind)")
     parser.add_argument("--limit", type=int, default=None)
     return parser.parse_args()
 
@@ -30,22 +31,37 @@ def main() -> None:
     args = parse_args()
     cfg = load_simple_yaml(args.config)
     root = resolve_bundle_path(args.karaone_root or cfg["data"]["root"], BUNDLE_DIR)
-    output_path = resolve_bundle_path(args.out or cfg["data"]["target_cache"], BUNDLE_DIR)
-    ensure_dir(output_path.parent)
     audio_cfg = cfg["audio"]
     target_cfg = cfg["targets"]
+    tgt = cfg.get("target", {})
+    kind = args.target or str(tgt.get("kind", target_cfg.get("target_kind", "encodec_latent")))
+
+    # Choose output cache by target kind (mel and encodec caches coexist).
+    if args.out:
+        out_default = args.out
+    elif kind == "mel":
+        out_default = tgt.get("cache_mel", "../artifacts/audio_targets/karaone_trial_mel.npz")
+    else:
+        out_default = tgt.get("cache_encodec", cfg["data"]["target_cache"])
+    output_path = resolve_bundle_path(out_default, BUNDLE_DIR)
+    ensure_dir(output_path.parent)
+
     feature_cfg = AudioFeatureConfig(
         sample_rate=int(audio_cfg["sample_rate"]),
         duration_sec=float(audio_cfg["duration_sec"]),
         normalize=str(audio_cfg.get("normalize", "rms")),
         target_rms=float(audio_cfg.get("target_rms", 0.08)),
         max_gain=float(audio_cfg.get("max_gain", 10.0)),
-        backend=str(target_cfg.get("backend", "encodec_latent")),
-        target_kind=str(target_cfg.get("target_kind", "encodec_latent")),
+        backend=("mel" if kind == "mel" else str(target_cfg.get("backend", "encodec_latent"))),
+        target_kind=kind,
         codec_model_name_or_path=str(resolve_bundle_path(target_cfg["codec_model_name_or_path"], BUNDLE_DIR)),
         codec_bandwidth=float(target_cfg.get("codec_bandwidth", 6.0)),
         local_files_only=bool(target_cfg.get("local_files_only", True)),
+        n_mels=int(tgt.get("n_mels", 80)),
+        mel_n_fft=int(tgt.get("mel_n_fft", 1024)),
+        mel_hop=int(tgt.get("mel_hop", 256)),
     )
+    print(f"[extract] target kind={kind} -> {output_path}")
     backend_name, backend = build_audio_feature_backend(feature_cfg)
     rows = list(csv.DictReader((root / "trials.csv").open("r", encoding="utf-8", newline="")))
     if args.limit:

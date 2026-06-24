@@ -1,6 +1,10 @@
 # 生成式重建方案：用条件潜在扩散摆脱"均值塌缩"
 
-> 状态：规划 → 实现。本文件是实现依据；代码按此落地。
+> 状态：已实现。本文件是实现依据。
+> **更新**：扩散头现在通过 `--target {mel,encodec_latent}` 作用于任一声学目标
+> （`EEGLatentDiffusion(latent_dim=targets.D)`，mel→80 / encodec→128 自动适配），
+> 采样后按 `vocoder.kind` 用 Griffin-Lim(mel) 或 EnCodec(latent) 还原波形。
+> 它是 mel-重做方案里 `model.decoder=diffusion` 这个开关；与回归头共用目标/编码器/评估。
 
 ## 1. 背景与目标
 

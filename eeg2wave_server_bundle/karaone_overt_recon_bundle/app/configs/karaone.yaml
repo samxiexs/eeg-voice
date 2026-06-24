@@ -21,6 +21,20 @@ targets:
   codec_bandwidth: 6.0
   local_files_only: true
 
+# Acoustic target representation (switch). mel = log-mel + Griffin-Lim vocoder
+# (offline, scipy-only, default). encodec_latent = EnCodec continuous latent.
+target:
+  kind: mel                  # mel | encodec_latent
+  cache_mel: ../artifacts/audio_targets/karaone_trial_mel.npz
+  cache_encodec: ../artifacts/audio_targets/karaone_trial_encodec_latents.npz
+  n_mels: 80
+  mel_n_fft: 1024
+  mel_hop: 256
+
+vocoder:
+  kind: griffinlim           # griffinlim (mel) | encodec (latent)
+  griffinlim_iters: 60
+
 model:
   n_channels_eeg: 62
   d_model: 256
@@ -33,6 +47,7 @@ model:
   dropout: 0.15
   num_experts: 1            # output head: 1 = plain MLP (MoE moved to encoder)
   num_channel_experts: 4    # encoder channel-selection/clustering MoE (used by --model moe)
+  decoder: regression       # regression (train_karaone_recon.py) | diffusion (train_karaone_diffusion.py)
 
 train:
   batch_size: 48
@@ -52,8 +67,12 @@ train:
   lambda_router_balance: 0.01
   lambda_channel_balance: 0.01
   lambda_clip: 0.5            # EEG<->audio contrastive alignment (Defossez 2022); set 0 to disable
+  lambda_dtw: 1.0            # DTW-aligned reconstruction (NeuroTalk); handles cross-trial onset jitter; 0 disables
+  lambda_gan: 0.0            # adversarial anti-collapse (regression head); set >0 (e.g. 0.1) to enable
   supcon_temperature: 0.1
   clip_temperature: 0.07
+  dtw_band: 0.2             # Sakoe-Chiba band as fraction of T (speed)
+  feat_match: 2.0          # GAN feature-matching weight (when lambda_gan>0)
 
 # Generative path: EEG-conditioned latent diffusion (escapes the regression
 # model's mean-collapse). Used by train/synthesize_karaone_diffusion.py.

@@ -1,7 +1,58 @@
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn.functional as F
+
+
+def _dtw_path(cost: np.ndarray, band: float) -> tuple[np.ndarray, np.ndarray]:
+    """Banded (Sakoe-Chiba) DTW backtrace. cost[T,T] -> aligned index arrays (pi, pj)."""
+    n, m = cost.shape
+    w = max(int(band * max(n, m)), abs(n - m) + 1)
+    inf = np.float32(1e18)
+    acc = np.full((n + 1, m + 1), inf, dtype=np.float32)
+    acc[0, 0] = 0.0
+    for i in range(1, n + 1):
+        j0 = max(1, i - w)
+        j1 = min(m, i + w)
+        for j in range(j0, j1 + 1):
+            acc[i, j] = cost[i - 1, j - 1] + min(acc[i - 1, j], acc[i, j - 1], acc[i - 1, j - 1])
+    # backtrace
+    i, j = n, m
+    pi, pj = [], []
+    while i > 0 and j > 0:
+        pi.append(i - 1)
+        pj.append(j - 1)
+        step = min(acc[i - 1, j], acc[i, j - 1], acc[i - 1, j - 1])
+        if step == acc[i - 1, j - 1]:
+            i, j = i - 1, j - 1
+        elif step == acc[i - 1, j]:
+            i -= 1
+        else:
+            j -= 1
+    return np.asarray(pi[::-1], dtype=np.int64), np.asarray(pj[::-1], dtype=np.int64)
+
+
+def dtw_recon_loss(pred: torch.Tensor, target: torch.Tensor, band: float = 0.2) -> torch.Tensor:
+    """DTW-aligned L1 between pred and target sequences [B,T,D].
+
+    The warping path is found on a *detached* L2 cost (so it is not differentiated),
+    then L1 is computed on the path-aligned frames with gradient flowing through
+    `pred`. This makes the loss invariant to the cross-trial onset/rate jitter that
+    breaks naive frame-wise regression (NeuroTalk-style alignment)."""
+    b = pred.shape[0]
+    pred_np = pred.detach().cpu().numpy()
+    tgt_np = target.detach().cpu().numpy()
+    total = pred.new_tensor(0.0)
+    for k in range(b):
+        # L2 cost matrix between frames (detached)
+        diff = pred_np[k][:, None, :] - tgt_np[k][None, :, :]
+        cost = np.sqrt((diff * diff).sum(-1) + 1e-8).astype(np.float32)
+        pi, pj = _dtw_path(cost, band)
+        pi_t = torch.from_numpy(pi).to(pred.device)
+        pj_t = torch.from_numpy(pj).to(pred.device)
+        total = total + (pred[k][pi_t] - target[k][pj_t]).abs().mean()
+    return total / max(b, 1)
 
 
 def clip_alignment(eeg_embed: torch.Tensor, audio_embed: torch.Tensor, temperature: float = 0.07) -> torch.Tensor:
@@ -54,8 +105,10 @@ def compute_losses(
     lambda_router_balance: float = 0.01,
     lambda_channel_balance: float = 0.01,
     lambda_clip: float = 0.5,
+    lambda_dtw: float = 0.0,
     supcon_temperature: float = 0.1,
     clip_temperature: float = 0.07,
+    dtw_band: float = 0.2,
 ) -> dict[str, torch.Tensor]:
     # All supervision here is EEG-derived or keyed by the spoken phoneme `label`
     # (the content we want to decode). No subject-ID supervision exists.
@@ -75,6 +128,9 @@ def compute_losses(
     # Cross-modal alignment: EEG utterance embedding vs the audio-latent summary
     # (mean over time of the normalized EnCodec target). Audio side is frozen.
     clip_loss = clip_alignment(out["clip_embed"], target_seq.mean(dim=1), temperature=clip_temperature)
+
+    # DTW-aligned reconstruction: invariant to cross-trial onset/rate jitter.
+    dtw_loss = dtw_recon_loss(pred, target_seq, band=dtw_band) if lambda_dtw > 0.0 else pred.new_tensor(0.0)
 
     pred_std = pred.reshape(-1, pred.shape[-1]).std(dim=0)
     tgt_std = target_seq.reshape(-1, target_seq.shape[-1]).std(dim=0)
@@ -101,6 +157,7 @@ def compute_losses(
         + lambda_router_balance * router_balance
         + lambda_channel_balance * channel_balance
         + lambda_clip * clip_loss
+        + lambda_dtw * dtw_loss
     )
     return {
         "total": total,
@@ -111,6 +168,7 @@ def compute_losses(
         "supcon": supcon.detach(),
         "proto_cos": proto_cos.detach(),
         "clip_loss": clip_loss.detach(),
+        "dtw_loss": dtw_loss.detach(),
         "log_rms_loss": log_rms_loss.detach(),
         "std_match": std_match.detach(),
         "std_ratio": std_ratio,

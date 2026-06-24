@@ -15,11 +15,17 @@ if str(BUNDLE_DIR) not in sys.path:
     sys.path.insert(0, str(BUNDLE_DIR))
 
 from src.karaone_recon.data import KaraOneTrialDataset
+from src.karaone_recon.discriminator import (
+    AcousticDiscriminator,
+    discriminator_loss,
+    feature_matching_loss,
+    generator_adv_loss,
+)
 from src.karaone_recon.eval import evaluate
 from src.karaone_recon.losses import compute_losses
 from src.karaone_recon.model import KaraOneConfig, KaraOneEEG2Codec
 from src.karaone_recon.targets import KaraOneTargets
-from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, set_seed, write_json
+from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, resolve_target_cache, set_seed, write_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,6 +33,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "karaone.yaml"))
     parser.add_argument("--stages", default=None, help="comma list, e.g. overt_like or overt_like,thinking")
     parser.add_argument("--model", choices=["baseline", "moe"], default="baseline")
+    parser.add_argument("--target", choices=["mel", "encodec_latent"], default=None, help="acoustic target (default: config target.kind)")
+    parser.add_argument("--lambda-gan", type=float, default=None, help="override train.lambda_gan (adversarial anti-collapse)")
+    parser.add_argument("--lambda-dtw", type=float, default=None, help="override train.lambda_dtw (DTW-aligned recon)")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--run-suffix", default=None)
     parser.add_argument("--init-from", default=None)
@@ -35,9 +44,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_common(cfg: dict, stages: tuple[str, ...]):
+def _load_common(cfg: dict, stages: tuple[str, ...], target_kind: str | None = None):
     root = resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR)
-    targets = KaraOneTargets(resolve_bundle_path(cfg["data"]["target_cache"], BUNDLE_DIR), data_root=root)
+    kind, cache = resolve_target_cache(cfg, BUNDLE_DIR, target_kind)
+    targets = KaraOneTargets(cache, data_root=root)
     heldout = cfg["data"].get("heldout_subjects", ["P02", "MM21"])
     common = dict(
         data_root=root,
@@ -57,7 +67,9 @@ def main() -> None:
     set_seed(int(train_cfg.get("seed", 7)))
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     stages = tuple((args.stages or cfg["data"].get("stages", "overt_like")).split(","))
-    _, targets, common = _load_common(cfg, stages)
+    target_kind = args.target or str(cfg.get("target", {}).get("kind", "encodec_latent"))
+    _, targets, common = _load_common(cfg, stages, target_kind)
+    print(f"[target] kind={target_kind} D={targets.D} T={targets.T}")
     train_ds = KaraOneTrialDataset(split="train", **common)
     val_ds = KaraOneTrialDataset(split="val", **common)
     test_ds = KaraOneTrialDataset(split="test", **common)
@@ -83,7 +95,9 @@ def main() -> None:
             num_stages=train_ds.num_stages,
             target_steps=targets.T,
             target_dim=targets.D,
-            content_dim=int(model_cfg.get("content_dim", 128)),
+            # content embedding lives in the acoustic-target space (so proto_cos vs the
+            # per-label target summary is dimensionally valid); tie it to targets.D.
+            content_dim=int(targets.D),
             speaker_dim=int(model_cfg.get("speaker_dim", 64)),
             num_blocks=int(model_cfg.get("num_blocks", 6)),
             kernel_size=int(model_cfg.get("kernel_size", 5)),
@@ -126,10 +140,23 @@ def main() -> None:
             "lambda_router_balance": 0.01,
             "lambda_channel_balance": 0.01,
             "lambda_clip": 0.5,
+            "lambda_dtw": 0.0,
             "supcon_temperature": 0.1,
             "clip_temperature": 0.07,
+            "dtw_band": 0.2,
         }.items()
     }
+    if args.lambda_dtw is not None:
+        loss_kwargs["lambda_dtw"] = float(args.lambda_dtw)
+
+    # Optional adversarial head (anti-collapse), switch via train.lambda_gan > 0.
+    lambda_gan = float(args.lambda_gan if args.lambda_gan is not None else train_cfg.get("lambda_gan", 0.0))
+    feat_match = float(train_cfg.get("feat_match", 2.0))
+    disc = disc_opt = None
+    if lambda_gan > 0.0:
+        disc = AcousticDiscriminator().to(device)
+        disc_opt = torch.optim.AdamW(disc.parameters(), lr=float(train_cfg.get("lr", 3e-4)), weight_decay=1e-4)
+    print(f"[loss] dtw={loss_kwargs['lambda_dtw']} gan={lambda_gan}")
 
     run = f"karaone_{args.model}_{'_'.join(stages)}_{args.run_suffix or 'v1'}"
     run_dir = resolve_bundle_path(cfg["output"]["root"], BUNDLE_DIR) / run
@@ -165,6 +192,7 @@ def main() -> None:
                 "default_decoder_scales": targets.default_decoder_scales,
                 "val_pred_over_zero_cos_gain": float(val_gain),
                 "model_kind": args.model,
+                "target_kind": target_kind,
             },
             path,
         )
@@ -182,16 +210,33 @@ def main() -> None:
                 batch["stage_idx"].to(device),
                 batch["eeg_valid_len"].to(device),
             )
+            target_seq = batch["target_seq"].to(device)
             losses = compute_losses(
                 out,
-                batch["target_seq"].to(device),
+                target_seq,
                 batch["label_idx"].to(device),
                 batch["content_proto"].to(device),
                 batch["target_log_rms"].to(device),
                 **loss_kwargs,
             )
+            total = losses["total"]
+            # Adversarial anti-collapse (optional): LSGAN + feature matching on the acoustic seq.
+            if disc is not None:
+                pred = out["pred_latent"]
+                disc_opt.zero_grad()
+                d_real, _ = disc(target_seq)
+                d_fake_d, _ = disc(pred.detach())
+                loss_d = discriminator_loss(d_real, d_fake_d)
+                loss_d.backward()
+                disc_opt.step()
+                d_fake_g, feats_fake = disc(pred)
+                _, feats_real = disc(target_seq)
+                g_adv = generator_adv_loss(d_fake_g)
+                g_fm = feature_matching_loss(feats_real, feats_fake)
+                total = total + lambda_gan * (g_adv + feat_match * g_fm)
+                losses = {**losses, "loss_d": loss_d.detach(), "g_adv": g_adv.detach()}
             opt.zero_grad()
-            losses["total"].backward()
+            total.backward()
             clip_grad_norm_(model.parameters(), float(train_cfg.get("grad_clip", 1.0)))
             opt.step()
             b = int(batch["eeg"].shape[0])

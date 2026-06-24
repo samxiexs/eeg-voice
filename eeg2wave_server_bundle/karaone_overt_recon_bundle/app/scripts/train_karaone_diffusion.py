@@ -21,7 +21,7 @@ from src.karaone_recon.data import KaraOneTrialDataset
 from src.karaone_recon.diffusion import DiffusionConfig, EEGLatentDiffusion
 from src.karaone_recon.eval import _corr_median, _retrieval_stats
 from src.karaone_recon.targets import KaraOneTargets
-from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, set_seed, write_json
+from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, resolve_target_cache, set_seed, write_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "karaone.yaml"))
     parser.add_argument("--stages", default=None)
     parser.add_argument("--model", choices=["baseline", "moe"], default="moe")
+    parser.add_argument("--target", choices=["mel", "encodec_latent"], default=None, help="acoustic target (default: config target.kind)")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--eval-every", type=int, default=2)
     parser.add_argument("--eval-steps", type=int, default=None, help="DDIM steps used during eval")
@@ -96,7 +97,9 @@ def main() -> None:
     stages = tuple((args.stages or cfg["data"].get("stages", "overt_like")).split(","))
 
     root = resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR)
-    targets = KaraOneTargets(resolve_bundle_path(cfg["data"]["target_cache"], BUNDLE_DIR), data_root=root)
+    target_kind, cache = resolve_target_cache(cfg, BUNDLE_DIR, args.target)
+    targets = KaraOneTargets(cache, data_root=root)
+    print(f"[target] kind={target_kind} D={targets.D} T={targets.T}")
     common = dict(
         data_root=root,
         targets=targets,
@@ -167,6 +170,7 @@ def main() -> None:
                 "ddim_steps": ddim_steps,
                 "best_val_pred_over_mean_gain": float(metric),
                 "model_kind": f"diffusion_{args.model}",
+                "target_kind": target_kind,
             },
             path,
         )

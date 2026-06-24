@@ -44,14 +44,25 @@ DIFFUSION_PLAN.md # generative (latent-diffusion) path design — escapes mean-c
 RUN_SERVER.md     # step-by-step runbook
 ```
 
-## Two model paths
+## Switchable pipeline
 
-- **Regression** (`KaraOneEEG2Codec`, `train_karaone_recon.py`): EEG -> EnCodec
-  latent by regression. Fast, but collapses to the mean voice on this data
-  (std-ratio ~0.15, sample pairwise-corr ~0.94). Good as an honest baseline.
-- **Diffusion** (`EEGLatentDiffusion`, `train_karaone_diffusion.py`): EEG-conditioned
-  latent diffusion that *samples* `p(latent | EEG)`, so it does not collapse. See
-  [DIFFUSION_PLAN.md](DIFFUSION_PLAN.md) and [METHOD.md](METHOD.md) §4.
+`EEG -> encoder(opt. channel-MoE) -> decoder head -> acoustic target -> vocoder -> wav`.
+Everything is a switch (see [METHOD.md](METHOD.md) and [DIFFUSION_PLAN.md](DIFFUSION_PLAN.md)):
+
+- **Acoustic target** (`target.kind`): `mel` (log-mel + scipy Griffin-Lim vocoder,
+  **default**, offline) or `encodec_latent` (EnCodec continuous latent + EnCodec decoder).
+- **Decoder head**: `regression` (`train_karaone_recon.py`) or `diffusion`
+  (`EEGLatentDiffusion`, `train_karaone_diffusion.py`).
+- **Alignment / anti-collapse** (regression): `lambda_dtw` (DTW-aligned recon — handles
+  the cross-trial onset jitter that naive frame-wise regression cannot) and `lambda_gan`
+  (adversarial, fights mean-collapse). Defaults: dtw on, gan off (set `lambda_gan>0`).
+- **Encoder channel-MoE** (`--model moe`): per-channel gate + channel clustering.
+- **Subject-agnostic**: no subject-ID input anywhere (output is identical across subjects).
+
+Default = `mel + regression + DTW + Griffin-Lim`, mirroring the EEG→speech literature
+(NeuroTalk / Park 2025 / FESDE). The earlier EnCodec-latent cosine-regression path
+collapses to the mean voice on this data (std-ratio ~0.15, sample pairwise-corr ~0.94)
+and is kept only as an honest baseline switch.
 
 The raw 23GB KaraOne `.tar.bz2` archives are not included.
 

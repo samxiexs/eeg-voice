@@ -38,17 +38,29 @@ Outputs:
 
 ## 3. Target cache
 
-The bundle already includes:
-
-```text
-../artifacts/audio_targets/karaone_trial_encodec_latents.npz
-```
-
-Regenerate only if data or codec settings change:
+Two acoustic targets are supported (switch via `target.kind` in the config or
+`--target`). See [METHOD.md](METHOD.md) §4 and [DIFFUSION_PLAN.md](DIFFUSION_PLAN.md).
 
 ```bash
-python scripts/extract_karaone_targets.py --config configs/karaone.yaml
+# mel target (DEFAULT) — log-mel + Griffin-Lim vocoder, offline / scipy-only
+python scripts/extract_karaone_targets.py --target mel
+# -> ../artifacts/audio_targets/karaone_trial_mel.npz
+
+# EnCodec-latent target (best audio, EnCodec vocoder) — already shipped
+python scripts/extract_karaone_targets.py --target encodec_latent
+# -> ../artifacts/audio_targets/karaone_trial_encodec_latents.npz
 ```
+
+### Pipeline switches (config `karaone.yaml`)
+
+| switch | values | default |
+|---|---|---|
+| `target.kind` / `--target` | `mel`, `encodec_latent` | mel |
+| `vocoder.kind` | `griffinlim`, `encodec` | griffinlim |
+| `--model` (encoder channel-MoE) | `baseline`, `moe` | — |
+| decoder head | `train_karaone_recon.py` (regression), `train_karaone_diffusion.py` (diffusion) | regression |
+| `train.lambda_dtw` | 0 / >0 (DTW-aligned recon) | 1.0 |
+| `train.lambda_gan` | 0 / >0 (adversarial anti-collapse) | 0.0 (set 0.1 to enable) |
 
 ## 4. Baseline overt reconstruction
 

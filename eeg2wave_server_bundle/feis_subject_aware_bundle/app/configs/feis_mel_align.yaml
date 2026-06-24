@@ -1,0 +1,77 @@
+# EEG-only FEIS mel-alignment generation.
+# Valid model input: EEG only. No stage, speaker, or identity metadata is used.
+data:
+  root: ../data/feis
+  target_cache: ../artifacts/audio_targets/feis_label_mel_banks.npz
+  include_anomalous: false
+
+audio:
+  sample_rate: 16000
+  duration_sec: 1.0
+  normalize: rms
+  target_rms: 0.08
+  max_gain: 12.0
+
+target:
+  kind: mel
+  policy: label_bank_softmin
+  n_mels: 80
+  n_fft: 1024
+  hop_length: 256
+  target_frames: 64
+  f_min: 50.0
+  f_max: 7600.0
+  max_refs_per_label: 20
+
+input:
+  use_stage_idx: false
+
+model:
+  n_channels_eeg: 14
+  d_model: 192
+  cond_dim: 16
+  num_blocks: 5
+  kernel_size: 5
+  num_heads: 6
+  num_cross_layers: 2
+  ff_mult: 4
+  channel_moe: true
+  moe_num_experts: 4
+  moe_top_k: 2
+  channel_dropout: 0.2
+  dropout: 0.2
+  decoder: regression
+
+loss:
+  dtw: true
+  gan: false
+  lambda_dtw: 1.0
+  lambda_content_ce: 0.75
+  lambda_contrastive: 0.25
+  lambda_log_rms: 0.1
+  lambda_moe_load_balance: 0.05
+  lambda_moe_sparsity: 0.005
+  lambda_moe_route_entropy: 0.01
+  lambda_moe_cluster: 0.05
+  dtw_band: 10
+  dtw_top_k: 3
+  contrast_temperature: 0.07
+
+diffusion:
+  enabled: false
+
+train:
+  batch_size: 64
+  lr: 0.0003
+  weight_decay: 0.001
+  epochs: 40
+  grad_clip: 1.0
+  num_workers: 0
+  seed: 7
+
+vocoder:
+  kind: griffinlim
+  iters: 48
+
+output:
+  root: ../artifacts/outputs_mel
