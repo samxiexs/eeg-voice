@@ -13,8 +13,11 @@ audio:
   max_gain: 12.0
 
 target:
-  kind: mel
+  kind: mel                  # mel | encodec_latent
   policy: label_bank_softmin
+  cache_mel: ../artifacts/audio_targets/feis_label_mel_banks.npz
+  cache_encodec: ../artifacts/audio_targets/feis_label_encodec_banks.npz
+  cache_encodec_source: ../artifacts/audio_targets/feis_templates_encodec_latents.npz
   n_mels: 80
   n_fft: 1024
   hop_length: 256
@@ -40,7 +43,7 @@ model:
   moe_top_k: 2
   channel_dropout: 0.2
   dropout: 0.2
-  decoder: regression
+  decoder: regression         # regression | diffusion
 
 loss:
   dtw: true
@@ -53,12 +56,25 @@ loss:
   lambda_moe_sparsity: 0.005
   lambda_moe_route_entropy: 0.01
   lambda_moe_cluster: 0.05
+  lambda_gan: 0.0
+  lambda_feat_match: 2.0
   dtw_band: 10
   dtw_top_k: 3
   contrast_temperature: 0.07
 
 diffusion:
   enabled: false
+  num_steps: 200
+  sample_steps: 24
+  eval_steps: 8
+  d_model: 192
+  num_layers: 2
+  num_heads: 4
+  ff_mult: 4
+  dropout: 0.1
+  beta_start: 0.0001
+  beta_end: 0.02
+  lambda_diffusion: 1.0
 
 train:
   batch_size: 64
@@ -70,8 +86,10 @@ train:
   seed: 7
 
 vocoder:
-  kind: griffinlim
+  kind: griffinlim           # griffinlim | encodec
   iters: 48
+  encodec_model_name_or_path: ../models/encodec_24khz
+  encodec_local_files_only: true
 
 output:
   root: ../artifacts/outputs_mel

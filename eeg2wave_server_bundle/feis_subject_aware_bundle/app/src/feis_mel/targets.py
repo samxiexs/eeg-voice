@@ -10,6 +10,7 @@ class MelLabelTargets:
         payload = np.load(Path(cache_path), allow_pickle=True)
         self.label_vocab = payload["label_vocab"].astype(str).tolist()
         self.label_to_id = {label: idx for idx, label in enumerate(self.label_vocab)}
+        self.target_kind = str(payload["target_kind"].item()) if "target_kind" in payload.files else "mel"
         self.raw_banks = payload["target_banks"].astype(np.float32)
         self.target_mean = payload["target_mean"].astype(np.float32)
         self.target_std = np.maximum(payload["target_std"].astype(np.float32), 1e-6)
@@ -21,6 +22,16 @@ class MelLabelTargets:
         self.target_log_rms = np.log(np.maximum(self.target_rms, 1e-8)).astype(np.float32)
         self.global_mean_raw = self.raw_banks.mean(axis=(0, 1)).astype(np.float32)
         self.label_prototypes = self.banks.mean(axis=(1, 2)).astype(np.float32)
+        self.decoder_scales = (
+            payload["decoder_scales"].astype(np.float32)
+            if "decoder_scales" in payload.files
+            else np.ones((self.num_labels, self.refs_per_label, 1), dtype=np.float32)
+        )
+        self.default_decoder_scales = (
+            payload["default_decoder_scales"].astype(np.float32)
+            if "default_decoder_scales" in payload.files
+            else self.decoder_scales.reshape(-1, self.decoder_scales.shape[-1]).mean(axis=0).astype(np.float32)
+        )
 
     @property
     def num_labels(self) -> int:
@@ -42,6 +53,9 @@ class MelLabelTargets:
     def canonical_path_for_label_id(self, label_idx: int, ref_idx: int = 0) -> str:
         return str(self.canonical_audio_paths[int(label_idx), int(ref_idx)])
 
+    def decoder_scale_for_label_id(self, label_idx: int, ref_idx: int = 0) -> np.ndarray:
+        return self.decoder_scales[int(label_idx), int(ref_idx)].astype(np.float32)
+
     def log_rms_for_label_id(self, label_idx: int) -> float:
         return float(self.target_log_rms[int(label_idx)].mean())
 
@@ -50,4 +64,3 @@ class MelLabelTargets:
 
     def denormalize(self, norm_mel: np.ndarray) -> np.ndarray:
         return (np.asarray(norm_mel, dtype=np.float32) * self.target_std.reshape(1, -1) + self.target_mean.reshape(1, -1)).astype(np.float32)
-

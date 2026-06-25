@@ -9,16 +9,20 @@ CONDA_ENV="${CONDA_ENV:-eegvoice}"
 CONFIG="${CONFIG:-configs/feis_mel_align.yaml}"
 STAGES="${STAGES:-stimuli thinking speaking resting}"
 EPOCHS="${EPOCHS:-40}"
-RUN_SUFFIX="${RUN_SUFFIX:-mel_align_v1}"
+RUN_TAG="${RUN_TAG:-$(date +%Y%m%d_%H%M%S)}"
+RUN_SUFFIX="${RUN_SUFFIX:-mel_align_${RUN_TAG}}"
 DEVICE="${DEVICE:-cpu}"
 SPLIT="${SPLIT:-test_holdout}"
 SYNTH_LIMIT="${SYNTH_LIMIT:-24}"
 MAX_WAVEFORM_FIGS="${MAX_WAVEFORM_FIGS:-24}"
 MAX_STEPS="${MAX_STEPS:-}"
+OUTPUT_ROOT="$BUNDLE_DIR/../artifacts/outputs_mel"
+SUMMARY_CSV="$OUTPUT_ROOT/four_stage_summary_${RUN_TAG}.csv"
+SUMMARY_JSON="$OUTPUT_ROOT/four_stage_summary_${RUN_TAG}.json"
 
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$BUNDLE_DIR/../artifacts/matplotlib_cache}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/feis-cache}"
-mkdir -p "$MPLCONFIGDIR"
+mkdir -p "$MPLCONFIGDIR" "$OUTPUT_ROOT"
 
 if [ -f "$CONDA_ROOT/etc/profile.d/conda.sh" ]; then
   # shellcheck disable=SC1091
@@ -40,7 +44,27 @@ print(f"[env] scipy={scipy.__version__}")
 PY
 
 echo "[config] stages=$STAGES"
-echo "[config] epochs=$EPOCHS run_suffix=$RUN_SUFFIX device=$DEVICE split=$SPLIT"
+echo "[config] epochs=$EPOCHS run_tag=$RUN_TAG run_suffix=$RUN_SUFFIX device=$DEVICE split=$SPLIT"
+echo "[summary] $SUMMARY_CSV"
+
+SUMMARY_CSV="$SUMMARY_CSV" SUMMARY_JSON="$SUMMARY_JSON" python - <<'PY'
+import csv
+import json
+import os
+from pathlib import Path
+
+csv_path = Path(os.environ["SUMMARY_CSV"])
+json_path = Path(os.environ["SUMMARY_JSON"])
+with csv_path.open("w", encoding="utf-8", newline="") as handle:
+    writer = csv.writer(handle)
+    writer.writerow([
+        "stage", "target_kind", "decoder_kind", "channel_moe", "diffusion_enabled", "gan_enabled",
+        "content_top1", "retrieval_top1", "mel_PCC", "DTW_MCD", "pred_to_label_bank_dtw",
+        "mean_mel_baseline_dtw", "pred_beats_mean", "best_checkpoint", "run_dir", "wav_dir",
+        "figures_dir", "waveform_compare_dir",
+    ])
+json_path.write_text(json.dumps([], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
 
 echo "+ python scripts/build_feis_mel_targets.py --config $CONFIG"
 python scripts/build_feis_mel_targets.py --config "$CONFIG"
@@ -87,6 +111,57 @@ for STAGE in $STAGES; do
     --wav-dir "$WAV_DIR" \
     --max-waveforms "$MAX_WAVEFORM_FIGS"
 
+  SUMMARY_CSV="$SUMMARY_CSV" SUMMARY_JSON="$SUMMARY_JSON" STAGE="$STAGE" RUN_DIR="$RUN_DIR" WAV_DIR="$WAV_DIR" python - <<'PY'
+import csv
+import json
+import os
+from pathlib import Path
+
+import torch
+
+stage = os.environ["STAGE"]
+run_dir = Path(os.environ["RUN_DIR"])
+wav_dir = Path(os.environ["WAV_DIR"])
+csv_path = Path(os.environ["SUMMARY_CSV"])
+json_path = Path(os.environ["SUMMARY_JSON"])
+ckpt_path = run_dir / "checkpoints" / "best.pt"
+metrics_path = run_dir / "metrics" / "test_metrics.json"
+ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+holdout = metrics.get("test_holdout", {})
+row = {
+    "stage": stage,
+    "target_kind": ckpt.get("target_kind", ""),
+    "decoder_kind": ckpt.get("decoder_kind", "regression"),
+    "channel_moe": bool(ckpt.get("channel_moe", False)),
+    "diffusion_enabled": bool(ckpt.get("diffusion_enabled", False)),
+    "gan_enabled": bool(ckpt.get("gan_enabled", False)),
+    "content_top1": holdout.get("content_top1", ""),
+    "retrieval_top1": holdout.get("retrieval_top1", ""),
+    "mel_PCC": holdout.get("mel_PCC", ""),
+    "DTW_MCD": holdout.get("DTW_MCD", ""),
+    "pred_to_label_bank_dtw": holdout.get("pred_to_label_bank_dtw", ""),
+    "mean_mel_baseline_dtw": holdout.get("mean_mel_baseline_dtw", ""),
+    "pred_beats_mean": holdout.get("pred_beats_mean", ""),
+    "best_checkpoint": str(ckpt_path),
+    "run_dir": str(run_dir),
+    "wav_dir": str(wav_dir),
+    "figures_dir": str(run_dir / "figures"),
+    "waveform_compare_dir": str(wav_dir / "waveform_compare"),
+}
+fields = [
+    "stage", "target_kind", "decoder_kind", "channel_moe", "diffusion_enabled", "gan_enabled",
+    "content_top1", "retrieval_top1", "mel_PCC", "DTW_MCD", "pred_to_label_bank_dtw",
+    "mean_mel_baseline_dtw", "pred_beats_mean", "best_checkpoint", "run_dir", "wav_dir",
+    "figures_dir", "waveform_compare_dir",
+]
+with csv_path.open("a", encoding="utf-8", newline="") as handle:
+    csv.DictWriter(handle, fieldnames=fields).writerow(row)
+payload = json.loads(json_path.read_text(encoding="utf-8"))
+payload.append(row)
+json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+
   echo "[stage done] $STAGE"
   echo "  run_dir: $RUN_DIR"
   echo "  training_figures: $RUN_DIR/figures"
@@ -96,3 +171,5 @@ done
 
 echo
 echo "[done] all requested stages finished."
+echo "  summary_csv: $SUMMARY_CSV"
+echo "  summary_json: $SUMMARY_JSON"

@@ -13,6 +13,7 @@ if str(BUNDLE_DIR) not in sys.path:
     sys.path.insert(0, str(BUNDLE_DIR))
 
 from src.feis_mel.data import FEISMelDataset
+from src.feis_mel.diffusion import FEISAcousticDiffusionConfig, FEISDiffusionInference, build_feis_acoustic_diffusion
 from src.feis_mel.eval import evaluate_feis_mel
 from src.feis_mel.model import FEISEEGToMel, FEISMelConfig
 from src.feis_mel.targets import MelLabelTargets
@@ -26,7 +27,19 @@ def parse_args():
     p.add_argument("--split", default="test_holdout")
     p.add_argument("--device", default=None)
     p.add_argument("--out", default=None)
+    p.add_argument("--sample-steps", type=int, default=None)
     return p.parse_args()
+
+
+def _target_cache_path(cfg: dict, ckpt: dict) -> Path:
+    target_cache = Path(str(ckpt.get("target_cache", "")))
+    if target_cache.exists():
+        return target_cache
+    target_kind = str(ckpt.get("target_kind", cfg.get("target", {}).get("kind", "mel")))
+    target_cfg = cfg.get("target", {})
+    if target_kind == "encodec_latent":
+        return resolve_bundle_path(target_cfg.get("cache_encodec", cfg["data"]["target_cache"]), BUNDLE_DIR)
+    return resolve_bundle_path(target_cfg.get("cache_mel", cfg["data"]["target_cache"]), BUNDLE_DIR)
 
 
 def main() -> None:
@@ -34,9 +47,7 @@ def main() -> None:
     cfg = load_simple_yaml(args.config)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    target_cache = Path(str(ckpt.get("target_cache", "")))
-    if not target_cache.exists():
-        target_cache = resolve_bundle_path(cfg["data"]["target_cache"], BUNDLE_DIR)
+    target_cache = _target_cache_path(cfg, ckpt)
     targets = MelLabelTargets(target_cache)
     ds = FEISMelDataset(
         data_root=resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR),
@@ -47,8 +58,20 @@ def main() -> None:
     )
     model = FEISEEGToMel(FEISMelConfig(**ckpt["model_config"])).to(device)
     model.load_state_dict(ckpt["model_state"], strict=True)
+    eval_model = model
+    if str(ckpt.get("decoder_kind", "regression")) == "diffusion":
+        diff_cfg = FEISAcousticDiffusionConfig(**ckpt["diffusion_config"])
+        diffusion = build_feis_acoustic_diffusion(diff_cfg).to(device)
+        diffusion.load_state_dict(ckpt["diffusion_state"], strict=True)
+        eval_model = FEISDiffusionInference(
+            model,
+            diffusion,
+            target_steps=targets.T,
+            target_dim=targets.D,
+            sample_steps=int(args.sample_steps or diff_cfg.sample_steps),
+        )
     metrics = evaluate_feis_mel(
-        model,
+        eval_model,
         ds,
         targets,
         device=device,
@@ -63,4 +86,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
