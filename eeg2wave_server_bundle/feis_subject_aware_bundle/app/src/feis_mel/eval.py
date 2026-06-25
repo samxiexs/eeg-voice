@@ -7,6 +7,11 @@ from torch.utils.data import DataLoader
 from src.feis_mel.audio import pearson_flat
 from src.feis_mel.losses import _dtw_path
 
+# Min PCC gain over the STRICT controls (zero-EEG / shuffled-EEG) before the
+# reconstruction counts as "using EEG". The weak label-prior baseline is NOT used for
+# the verdict (a generic smooth mel beats it even from a zero input).
+EEG_INFO_PCC_EPS = 0.01
+
 
 def _dtw_distance(a: np.ndarray, b: np.ndarray, band: int = 10) -> float:
     cost = np.mean(np.abs(a[:, None, :] - b[None, :, :]), axis=-1)
@@ -130,6 +135,20 @@ def evaluate_feis_mel(model, dataset, targets, device="cpu", batch_size=64, dtw_
     shuffled = _agg(shuffled_pairs, targets, proto_raw, mean_baseline, dtw_band, dtw_top_k)
     zero_content_top1 = float(np.mean([1.0 if lab == zero_content_class else 0.0 for lab in labels]))
 
+    # --- honest verdict (STRICT) ---------------------------------------------
+    # "Informative" must be judged against the STRICT controls (zero-EEG and shuffled-
+    # EEG), NOT the weak label-prior: a model that emits a generic smooth mel for ANY
+    # input (even zeros) already beats the raw label-mean, so beating label-prior is not
+    # evidence of decoding. We require the prediction to beat BOTH strict controls on
+    # PCC by a real margin, OR a content accuracy that is statistically above chance.
+    pred_over_zeroeeg_pcc = pred["pcc"] - zero["pcc"]
+    pred_over_shuffled_pcc = pred["pcc"] - shuffled["pcc"]
+    content_se = (chance * (1.0 - chance) / max(n, 1)) ** 0.5  # binomial SE at chance
+    content_z = (result["content_top1"] - chance) / max(content_se, 1e-8)
+    content_significant = bool(content_z > 2.0)  # > ~2 SD above chance (not noise)
+    recon_beats_controls = bool(pred_over_zeroeeg_pcc > EEG_INFO_PCC_EPS and pred_over_shuffled_pcc > EEG_INFO_PCC_EPS)
+    eeg_informative = bool(recon_beats_controls or content_significant)
+
     result.update({
         # baselines (PCC higher=better; DTW lower=better)
         "zeroeeg_mel_PCC": zero["pcc"],
@@ -147,7 +166,12 @@ def evaluate_feis_mel(model, dataset, targets, device="cpu", batch_size=64, dtw_
         "pred_over_zeroeeg_dtw_gain": zero["dtw"] - pred["dtw"],
         "content_over_chance": result["content_top1"] - chance,
         "retrieval_over_chance": result["retrieval_top1"] - chance,
-        # honest summary flag: EEG must beat the label prior AND classify above chance
-        "eeg_informative": bool((pred["pcc"] - prior["pcc"]) > 0.0 and (result["content_top1"] - chance) > 0.0),
+        # STRICT honest verdict: reconstruction must beat BOTH zero-EEG and shuffled-EEG
+        # on PCC by >= EEG_INFO_PCC_EPS, OR content must be statistically above chance.
+        "content_z": content_z,
+        "content_significant": content_significant,
+        "eeg_recon_beats_controls": recon_beats_controls,
+        "eeg_info_pcc_eps": EEG_INFO_PCC_EPS,
+        "eeg_informative": eeg_informative,
     })
     return result
