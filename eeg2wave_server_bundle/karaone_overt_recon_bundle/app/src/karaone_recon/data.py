@@ -33,9 +33,14 @@ class KaraOneTrialDataset(Dataset):
         split_protocol: str = "trial",
         heldout_subjects: Iterable[str] = ("P02", "MM21"),
         eeg_len: int = 1280,
+        aux_targets: KaraOneTargets | None = None,
     ):
         self.root = Path(data_root)
         self.targets = targets
+        # Optional auxiliary HuBERT-feature targets (same subject:trial keys). Used for
+        # the content-bearing auxiliary head + retrieval metrics; the main `targets`
+        # (mel/encodec) still drives waveform rendering.
+        self.aux_targets = aux_targets
         self.split = str(split)
         self.stages = tuple(stages)
         self.split_protocol = str(split_protocol)
@@ -194,7 +199,7 @@ class KaraOneTrialDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         entry = self.entries[idx]
         eeg, valid_len = self._eeg(entry)
-        return {
+        item = {
             "eeg": torch.from_numpy(eeg).float(),
             "eeg_valid_len": torch.tensor(valid_len, dtype=torch.long),
             "subject_idx": torch.tensor(self.subject_to_id[entry.subject], dtype=torch.long),
@@ -211,4 +216,12 @@ class KaraOneTrialDataset(Dataset):
             "trial_index": entry.trial_index,
             "template_id": KaraOneTargets.key(entry.subject, entry.trial_index),
         }
+        if self.aux_targets is not None:
+            if self.aux_targets.has_trial(entry.subject, entry.trial_index):
+                item["hubert_seq"] = torch.from_numpy(self.aux_targets.target(entry.subject, entry.trial_index)).float()
+                item["hubert_summary"] = torch.from_numpy(self.aux_targets.target_summary(entry.subject, entry.trial_index)).float()
+            else:
+                item["hubert_seq"] = torch.zeros(self.aux_targets.T, self.aux_targets.D, dtype=torch.float32)
+                item["hubert_summary"] = torch.zeros(self.aux_targets.D, dtype=torch.float32)
+        return item
 

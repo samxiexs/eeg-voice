@@ -6,7 +6,10 @@ import json
 import sys
 from pathlib import Path
 
+import math
+
 import torch
+import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 
@@ -68,12 +71,26 @@ def main() -> None:
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     stages = tuple((args.stages or cfg["data"].get("stages", "overt_like")).split(","))
     target_kind = args.target or str(cfg.get("target", {}).get("kind", "encodec_latent"))
-    _, targets, common = _load_common(cfg, stages, target_kind)
+    root, targets, common = _load_common(cfg, stages, target_kind)
     print(f"[target] kind={target_kind} D={targets.D} T={targets.T}")
-    train_ds = KaraOneTrialDataset(split="train", **common)
-    val_ds = KaraOneTrialDataset(split="val", **common)
-    test_ds = KaraOneTrialDataset(split="test", **common)
-    subject_test = KaraOneTrialDataset(split="subject_test", split_protocol="subject_holdout", **{k: v for k, v in common.items() if k != "split_protocol"})
+
+    # WS3: optional HuBERT auxiliary target cache (semantic content head + retrieval).
+    da_cfg = cfg.get("domain_adapt", {})
+    tgt_cfg = cfg.get("target", {})
+    aux_targets = None
+    hubert_cache = tgt_cfg.get("cache_hubert")
+    if hubert_cache:
+        hubert_path = resolve_bundle_path(hubert_cache, BUNDLE_DIR)
+        if hubert_path.exists():
+            aux_targets = KaraOneTargets(hubert_path, data_root=root)
+            print(f"[hubert] aux target T={aux_targets.T} D={aux_targets.D} ({hubert_path.name})")
+        else:
+            print(f"[hubert] cache not found ({hubert_path.name}); HuBERT aux head disabled")
+
+    train_ds = KaraOneTrialDataset(split="train", aux_targets=aux_targets, **common)
+    val_ds = KaraOneTrialDataset(split="val", aux_targets=aux_targets, **common)
+    test_ds = KaraOneTrialDataset(split="test", aux_targets=aux_targets, **common)
+    subject_test = KaraOneTrialDataset(split="subject_test", split_protocol="subject_holdout", aux_targets=aux_targets, **{k: v for k, v in common.items() if k != "split_protocol"})
     print(
         f"[data] stages={stages} train={len(train_ds)} val={len(val_ds)} test={len(test_ds)} "
         f"subject_test={len(subject_test)} subjects={train_ds.num_subjects} labels={train_ds.num_labels}"
@@ -105,8 +122,15 @@ def main() -> None:
             dropout=float(model_cfg.get("dropout", 0.15)),
             num_experts=int(model_cfg.get("num_experts", 1)),
             num_channel_experts=num_channel_experts,
+            instance_norm=bool(da_cfg.get("instance_norm", False)),
+            use_domain_adv=bool(da_cfg.get("adversarial", False)),
+            hubert_dim=int(aux_targets.D) if aux_targets is not None else 0,
+            hubert_steps=int(aux_targets.T) if aux_targets is not None else 50,
         )
     ).to(device)
+    use_domain_adv = bool(da_cfg.get("adversarial", False))
+    lambda_domain_adv = float(da_cfg.get("lambda_domain_adv", 0.0)) if use_domain_adv else 0.0
+    print(f"[domain] instance_norm={bool(da_cfg.get('instance_norm', False))} adversarial={use_domain_adv} lambda={lambda_domain_adv}")
     if args.init_from:
         ckpt = torch.load(args.init_from, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model_state"], strict=False)
@@ -141,11 +165,19 @@ def main() -> None:
             "lambda_channel_balance": 0.01,
             "lambda_clip": 0.5,
             "lambda_dtw": 0.0,
+            "lambda_energy_env": 0.0,
+            "lambda_multiscale_mel": 0.0,
+            "lambda_hubert_aux": 0.0,
+            "lambda_hubert_clip": 0.0,
             "supcon_temperature": 0.1,
             "clip_temperature": 0.07,
             "dtw_band": 0.2,
         }.items()
     }
+    # HuBERT-derived losses are only meaningful when the aux cache is present.
+    if aux_targets is None:
+        loss_kwargs["lambda_hubert_aux"] = 0.0
+        loss_kwargs["lambda_hubert_clip"] = 0.0
     if args.lambda_dtw is not None:
         loss_kwargs["lambda_dtw"] = float(args.lambda_dtw)
 
@@ -198,17 +230,24 @@ def main() -> None:
         )
 
     best_gain = -1e9
+    epochs_no_improve = 0
+    patience = int(train_cfg.get("early_stop_patience", 0))  # 0 = disabled
     for epoch in range(epochs):
         model.train()
         agg: dict[str, float] = {}
         seen = 0
         steps = 0
+        # DANN gradient-reversal strength ramp (0 -> lambda_domain_adv) over training.
+        progress = epoch / max(epochs - 1, 1)
+        grl_lambda = lambda_domain_adv * (2.0 / (1.0 + math.exp(-10.0 * progress)) - 1.0) if use_domain_adv else 0.0
         for batch in loader:
+            subject_idx = batch["subject_idx"].to(device)
             out = model(
                 batch["eeg"].to(device),
-                batch["subject_idx"].to(device),
+                subject_idx,
                 batch["stage_idx"].to(device),
                 batch["eeg_valid_len"].to(device),
+                lambda_domain=grl_lambda,
             )
             target_seq = batch["target_seq"].to(device)
             losses = compute_losses(
@@ -217,9 +256,17 @@ def main() -> None:
                 batch["label_idx"].to(device),
                 batch["content_proto"].to(device),
                 batch["target_log_rms"].to(device),
+                hubert_seq=batch["hubert_seq"].to(device) if "hubert_seq" in batch else None,
+                hubert_summary=batch["hubert_summary"].to(device) if "hubert_summary" in batch else None,
                 **loss_kwargs,
             )
             total = losses["total"]
+            # Subject-adversarial CE (DANN): classifier learns subject; reversed
+            # gradient (via grl_lambda inside the model) pushes the encoder to forget it.
+            if use_domain_adv and "subject_logits" in out:
+                domain_adv = F.cross_entropy(out["subject_logits"], subject_idx)
+                total = total + domain_adv
+                losses = {**losses, "domain_adv": domain_adv.detach(), "grl_lambda": out["pred_latent"].new_tensor(grl_lambda)}
             # Adversarial anti-collapse (optional): LSGAN + feature matching on the acoustic seq.
             if disc is not None:
                 pred = out["pred_latent"]
@@ -248,7 +295,7 @@ def main() -> None:
                 break
         sched.step()
         train_metrics = {name: value / max(seen, 1) for name, value in agg.items()}
-        val_metrics = evaluate(model, val_ds, targets, device=device, batch_size=batch_size)
+        val_metrics = evaluate(model, val_ds, targets, device=device, batch_size=batch_size, aux_targets=aux_targets)
         # Select on gain vs the STABLE global-mean baseline (pred_over_mean), not vs the
         # zero-EEG baseline: the latter is noisy/untrained early and was selecting epoch ~1.
         gain = float(val_metrics["pred_over_mean_cos_gain"])
@@ -277,7 +324,10 @@ def main() -> None:
             )
         if gain > best_gain:
             best_gain = gain
+            epochs_no_improve = 0
             save_ckpt(run_dir / "checkpoints" / "best.pt", best_gain)
+        else:
+            epochs_no_improve += 1
         # Live training curves: regenerate the PNG each epoch (never break training on a plot error).
         try:
             from src.karaone_recon.plotting import plot_history
@@ -287,12 +337,17 @@ def main() -> None:
             print(f"[plot] skipped ({exc})")
         if args.max_steps:
             break
+        # Early stopping on the stable val gain (treats the 120ep over-fitting documented
+        # in MODEL_TECH; 20ep was cleanest). patience=0 disables.
+        if patience > 0 and epochs_no_improve >= patience:
+            print(f"[early-stop] no val-gain improvement for {patience} epochs (best={best_gain:+.4f}); stopping at epoch {epoch}")
+            break
 
     save_ckpt(run_dir / "checkpoints" / "last.pt", best_gain)
     final = {
         "selection": {"criterion": "val pred_over_mean_cos_gain", "best_val_gain": best_gain},
-        "test": evaluate(model, test_ds, targets, device=device, batch_size=batch_size),
-        "subject_test": evaluate(model, subject_test, targets, device=device, batch_size=batch_size),
+        "test": evaluate(model, test_ds, targets, device=device, batch_size=batch_size, aux_targets=aux_targets),
+        "subject_test": evaluate(model, subject_test, targets, device=device, batch_size=batch_size, aux_targets=aux_targets),
     }
     write_json(run_dir / "metrics" / "test_metrics.json", final)
     print(json.dumps(final["selection"], indent=2))

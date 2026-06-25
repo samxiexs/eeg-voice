@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "karaone.yaml"))
     parser.add_argument("--karaone-root", default=None)
     parser.add_argument("--out", default=None)
-    parser.add_argument("--target", choices=["mel", "encodec_latent"], default=None, help="acoustic target kind (default: config target.kind)")
+    parser.add_argument("--target", choices=["mel", "encodec_latent", "hubert_sequence"], default=None, help="target kind: mel/encodec_latent (renderable) or hubert_sequence (semantic aux). Default: config target.kind")
     parser.add_argument("--limit", type=int, default=None)
     return parser.parse_args()
 
@@ -36,15 +36,28 @@ def main() -> None:
     tgt = cfg.get("target", {})
     kind = args.target or str(tgt.get("kind", target_cfg.get("target_kind", "encodec_latent")))
 
-    # Choose output cache by target kind (mel and encodec caches coexist).
+    # Choose output cache by target kind (mel / encodec / hubert caches coexist).
     if args.out:
         out_default = args.out
     elif kind == "mel":
         out_default = tgt.get("cache_mel", "../artifacts/audio_targets/karaone_trial_mel.npz")
+    elif kind == "hubert_sequence":
+        out_default = tgt.get("cache_hubert", "../artifacts/audio_targets/karaone_trial_hubert.npz")
     else:
         out_default = tgt.get("cache_encodec", cfg["data"]["target_cache"])
     output_path = resolve_bundle_path(out_default, BUNDLE_DIR)
     ensure_dir(output_path.parent)
+
+    if kind == "mel":
+        backend_kind = "mel"
+    elif kind == "hubert_sequence":
+        backend_kind = "ssl_local"  # local HuBERT/wav2vec2 embedder (offline)
+    else:
+        backend_kind = str(target_cfg.get("backend", "encodec_latent"))
+    # Local SSL (HuBERT) weights; the bundled copy lives in the FEIS bundle.
+    ssl_path = resolve_bundle_path(
+        tgt.get("hubert_ssl_path", "../../feis_subject_aware_bundle/models/hubert-base-ls960"), BUNDLE_DIR
+    )
 
     feature_cfg = AudioFeatureConfig(
         sample_rate=int(audio_cfg["sample_rate"]),
@@ -52,8 +65,10 @@ def main() -> None:
         normalize=str(audio_cfg.get("normalize", "rms")),
         target_rms=float(audio_cfg.get("target_rms", 0.08)),
         max_gain=float(audio_cfg.get("max_gain", 10.0)),
-        backend=("mel" if kind == "mel" else str(target_cfg.get("backend", "encodec_latent"))),
+        backend=backend_kind,
         target_kind=kind,
+        ssl_model_name_or_path=str(ssl_path),
+        sequence_target_steps=int(tgt.get("hubert_steps", 50)),
         codec_model_name_or_path=str(resolve_bundle_path(target_cfg["codec_model_name_or_path"], BUNDLE_DIR)),
         codec_bandwidth=float(target_cfg.get("codec_bandwidth", 6.0)),
         local_files_only=bool(target_cfg.get("local_files_only", True)),

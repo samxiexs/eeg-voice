@@ -53,6 +53,30 @@ class ResidualTemporalBlock(nn.Module):
         return self.act(x + residual)
 
 
+def _instance_norm(eeg: torch.Tensor, valid_len: torch.Tensor | None) -> torch.Tensor:
+    """Per-trial, per-channel instance normalization (RevIN-style) over the valid
+    (non-padded) time span.
+
+    No subject id is used: this is the "no-ID statistical alignment" half of the
+    cross-subject domain adaptation. EEG is already globally z-scored, but each
+    trial/session still carries its own offset+scale drift; removing it per trial
+    shrinks the cross-subject gap without ever looking at who the subject is.
+    (True CORAL would also align second-order cross-channel statistics to a target
+    domain, which needs transductive access to held-out EEG — out of scope here.)"""
+    b, c, t = eeg.shape
+    if valid_len is None:
+        mean = eeg.mean(dim=-1, keepdim=True)
+        var = eeg.var(dim=-1, keepdim=True, unbiased=False)
+        return (eeg - mean) / torch.sqrt(var + 1e-5)
+    idx = torch.arange(t, device=eeg.device).view(1, 1, t)
+    mask = (idx < valid_len.view(b, 1, 1).clamp(min=1)).to(eeg.dtype)
+    denom = mask.sum(dim=-1, keepdim=True).clamp(min=1.0)
+    mean = (eeg * mask).sum(dim=-1, keepdim=True) / denom
+    var = (((eeg - mean) ** 2) * mask).sum(dim=-1, keepdim=True) / denom
+    normed = (eeg - mean) / torch.sqrt(var + 1e-5)
+    return normed * mask  # keep the zero-padded tail at zero (matches dataset padding)
+
+
 def _channel_dropout(eeg: torch.Tensor, p: float, training: bool) -> torch.Tensor:
     if not training or p <= 0.0:
         return eeg
@@ -153,9 +177,11 @@ class SpatialTemporalEEGEncoder(nn.Module):
         channel_dropout: float = 0.15,
         dropout: float = 0.15,
         num_channel_experts: int = 1,
+        instance_norm: bool = False,
     ):
         super().__init__()
         self.channel_dropout_p = float(channel_dropout)
+        self.instance_norm = bool(instance_norm)
         self.num_channel_experts = int(num_channel_experts)
         if self.num_channel_experts > 1:
             # Channel-selecting + channel-clustering MoE spatial front-end.
@@ -189,8 +215,10 @@ class SpatialTemporalEEGEncoder(nn.Module):
         self.target_steps = int(target_steps)
 
     def forward(
-        self, eeg: torch.Tensor, cond: torch.Tensor
+        self, eeg: torch.Tensor, cond: torch.Tensor, valid_len: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if self.instance_norm:
+            eeg = _instance_norm(eeg, valid_len)
         x = _channel_dropout(eeg, self.channel_dropout_p, self.training)
         if self.num_channel_experts > 1:
             x, aux = self.spatial(x)

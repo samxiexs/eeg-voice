@@ -89,6 +89,76 @@ def supervised_contrastive(embed: torch.Tensor, label_idx: torch.Tensor, tempera
     return -((log_prob * pos.float()).sum(dim=1)[valid] / pos_count[valid].clamp_min(1)).mean()
 
 
+def energy_envelope_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """1 - Pearson correlation of the per-frame energy envelope (averaged over batch).
+
+    Directly fights the documented energy collapse (recon RMS ~= half of original,
+    decoupled from content): the predicted temporal magnitude contour is pushed to
+    track the target's, rather than flattening to a constant low-energy hum. Energy
+    is the mean square over the feature axis at each frame, so it is a magnitude
+    envelope in the (z-scored) mel/latent target space."""
+    pe = pred.pow(2).mean(dim=-1)  # [B, T]
+    te = target.pow(2).mean(dim=-1)
+    pe = pe - pe.mean(dim=1, keepdim=True)
+    te = te - te.mean(dim=1, keepdim=True)
+    num = (pe * te).sum(dim=1)
+    den = pe.norm(dim=1) * te.norm(dim=1) + 1e-8
+    corr = num / den
+    return (1.0 - corr).mean()
+
+
+def multiscale_temporal_l1(pred: torch.Tensor, target: torch.Tensor, scales: tuple[int, ...] = (1, 2, 4)) -> torch.Tensor:
+    """Multi-resolution L1 in the target domain (time-averaged at {1,2,4}x).
+
+    A literal multi-resolution STFT loss needs a rendered waveform (deferred to the
+    flow/vocoder-in-loop round). In the mel/latent target domain this is the
+    equivalent anti-oversmoothing term: matching coarse (downsampled) contours as
+    well as fine frames keeps the prediction from blurring into the per-frame mean."""
+    total = pred.new_tensor(0.0)
+    for s in scales:
+        if s <= 1:
+            p, t = pred, target
+        else:
+            p = F.avg_pool1d(pred.transpose(1, 2), kernel_size=int(s), ceil_mode=True).transpose(1, 2)
+            t = F.avg_pool1d(target.transpose(1, 2), kernel_size=int(s), ceil_mode=True).transpose(1, 2)
+        total = total + F.l1_loss(p, t)
+    return total / max(len(scales), 1)
+
+
+def hubert_aux_loss(pred_hubert: torch.Tensor, hubert_seq: torch.Tensor) -> torch.Tensor:
+    """SmoothL1 + (1 - cos) between EEG-predicted HuBERT features and the GT HuBERT
+    sequence. A content-bearing, low-SNR-friendly auxiliary target (wav2vec2/HuBERT
+    semantic space, Defossez 2022 / AudioLM line) that complements the acoustic
+    (mel/latent) regression which the model actually renders from."""
+    smooth = F.smooth_l1_loss(pred_hubert, hubert_seq)
+    cos = 1.0 - F.cosine_similarity(pred_hubert, hubert_seq, dim=-1).mean()
+    return smooth + cos
+
+
+class GradientReversal(torch.autograd.Function):
+    """Identity forward, sign-flipped (and scaled) gradient backward (DANN).
+
+    Used for subject-adversarial domain adaptation: the subject classifier learns
+    to identify the subject from the pooled EEG embedding, while the reversed
+    gradient pushes the encoder to make that embedding subject-INVARIANT. This uses
+    subject ids at TRAIN time only to *remove* subject information; inference never
+    sees subject id, so the model stays subject-agnostic (consistent with the
+    existing `del subject_idx` design)."""
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, lambd: float) -> torch.Tensor:  # type: ignore[override]
+        ctx.lambd = float(lambd)
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):  # type: ignore[override]
+        return -ctx.lambd * grad_output, None
+
+
+def grad_reverse(x: torch.Tensor, lambd: float = 1.0) -> torch.Tensor:
+    return GradientReversal.apply(x, lambd)
+
+
 def compute_losses(
     out: dict[str, torch.Tensor],
     target_seq: torch.Tensor,
@@ -106,6 +176,12 @@ def compute_losses(
     lambda_channel_balance: float = 0.01,
     lambda_clip: float = 0.5,
     lambda_dtw: float = 0.0,
+    lambda_energy_env: float = 0.0,
+    lambda_multiscale_mel: float = 0.0,
+    lambda_hubert_aux: float = 0.0,
+    lambda_hubert_clip: float = 0.0,
+    hubert_seq: torch.Tensor | None = None,
+    hubert_summary: torch.Tensor | None = None,
     supcon_temperature: float = 0.1,
     clip_temperature: float = 0.07,
     dtw_band: float = 0.2,
@@ -146,6 +222,21 @@ def compute_losses(
     # Encoder channel-MoE load balance (keeps channel clusters from collapsing).
     channel_balance = out.get("channel_balance", pred.new_tensor(0.0))
 
+    # Anti-collapse group (WS2a): energy-envelope correlation + multi-resolution L1.
+    # Both operate in the (z-scored) acoustic target domain, no waveform render needed.
+    energy_env = energy_envelope_loss(pred, target_seq) if lambda_energy_env > 0.0 else pred.new_tensor(0.0)
+    multiscale_mel = multiscale_temporal_l1(pred, target_seq) if lambda_multiscale_mel > 0.0 else pred.new_tensor(0.0)
+
+    # HuBERT auxiliary content target (WS3): regression to GT HuBERT features, plus a
+    # content-bearing symmetric InfoNCE (EEG-predicted HuBERT summary <-> GT summary).
+    pred_hubert = out.get("pred_hubert")
+    hubert_aux = pred.new_tensor(0.0)
+    hubert_clip = pred.new_tensor(0.0)
+    if pred_hubert is not None and hubert_seq is not None and lambda_hubert_aux > 0.0:
+        hubert_aux = hubert_aux_loss(pred_hubert, hubert_seq)
+    if pred_hubert is not None and hubert_summary is not None and lambda_hubert_clip > 0.0:
+        hubert_clip = clip_alignment(pred_hubert.mean(dim=1), hubert_summary, temperature=clip_temperature)
+
     total = (
         lambda_recon_cos * recon_cos
         + lambda_recon_mse * recon_mse
@@ -158,6 +249,10 @@ def compute_losses(
         + lambda_channel_balance * channel_balance
         + lambda_clip * clip_loss
         + lambda_dtw * dtw_loss
+        + lambda_energy_env * energy_env
+        + lambda_multiscale_mel * multiscale_mel
+        + lambda_hubert_aux * hubert_aux
+        + lambda_hubert_clip * hubert_clip
     )
     return {
         "total": total,
@@ -174,5 +269,9 @@ def compute_losses(
         "std_ratio": std_ratio,
         "router_balance": router_balance.detach(),
         "channel_balance": channel_balance.detach() if torch.is_tensor(channel_balance) else pred.new_tensor(0.0),
+        "energy_env": energy_env.detach(),
+        "multiscale_mel": multiscale_mel.detach(),
+        "hubert_aux": hubert_aux.detach(),
+        "hubert_clip": hubert_clip.detach(),
     }
 

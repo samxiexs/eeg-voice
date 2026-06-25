@@ -41,6 +41,8 @@ def _retrieval_stats(
     label_hits = 0
     for i, (subject, label, trial) in enumerate(zip(subjects, labels, trial_indices)):
         mask = subject_arr == subject
+        if not mask.any():  # subject absent from this (possibly partial) target cache
+            continue
         scores = pred_norm[i] @ target_norm[mask].T
         candidate_trials = trial_arr[mask]
         candidate_labels = label_arr[mask]
@@ -61,6 +63,7 @@ def evaluate(
     targets: KaraOneTargets,
     device: str | torch.device,
     batch_size: int = 64,
+    aux_targets: KaraOneTargets | None = None,
 ) -> dict[str, Any]:
     model.eval()
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -74,6 +77,11 @@ def evaluate(
     subjects: list[str] = []
     labels: list[str] = []
     trials: list[int] = []
+    # HuBERT aux head (WS3): content-bearing distance + retrieval, when a HuBERT cache
+    # is provided and the model has the aux head.
+    hubert_pred_summaries: list[np.ndarray] = []
+    hubert_cos_sum = 0.0
+    hubert_n = 0
 
     global_mean = torch.from_numpy(targets.global_mean_norm).to(device).float()
     for batch in loader:
@@ -126,6 +134,14 @@ def evaluate(
         labels.extend([str(item) for item in batch["label"]])
         trials.extend([int(item) for item in batch["trial_index"]])
 
+        pred_hub = out.get("pred_hubert")
+        if aux_targets is not None and pred_hub is not None and "hubert_seq" in batch:
+            hub_t = batch["hubert_seq"].to(device)
+            hub_cos = F.cosine_similarity(pred_hub, hub_t, dim=-1).mean(dim=1)  # per-sample
+            hubert_cos_sum += float(hub_cos.sum().detach().cpu())
+            hubert_n += int(pred_hub.shape[0])
+            hubert_pred_summaries.append(pred_hub.mean(dim=1).detach().cpu().numpy())
+
     out_metrics = {name: value / max(count, 1) for name, value in totals.items()}
     pred_summary = np.concatenate(pred_summaries, axis=0)
     zero_summary = np.concatenate(zero_summaries, axis=0)
@@ -152,6 +168,14 @@ def evaluate(
     )
     out_metrics.update({f"pred_{k}": v for k, v in _retrieval_stats(pred_summary, subjects, labels, trials, targets).items()})
     out_metrics.update({f"zeroeeg_{k}": v for k, v in _retrieval_stats(zero_summary, subjects, labels, trials, targets).items()})
+
+    # HuBERT-space content metrics (more trustworthy than mel-PCC; WS3).
+    if aux_targets is not None and hubert_n > 0:
+        out_metrics["pred_hubert_cos"] = hubert_cos_sum / max(hubert_n, 1)
+        hub_summary = np.concatenate(hubert_pred_summaries, axis=0)
+        out_metrics.update(
+            {f"pred_hubert_{k}": v for k, v in _retrieval_stats(hub_summary, subjects, labels, trials, aux_targets).items()}
+        )
 
     stage_payload = {}
     for stage, payload in by_stage.items():

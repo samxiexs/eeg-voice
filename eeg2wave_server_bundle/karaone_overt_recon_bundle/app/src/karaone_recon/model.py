@@ -4,8 +4,10 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .encoder import SpatialTemporalEEGEncoder
+from .losses import grad_reverse
 
 
 def _masked_time_mean(seq: torch.Tensor, eeg_valid_len: torch.Tensor | None, in_len: int) -> torch.Tensor:
@@ -46,6 +48,12 @@ class KaraOneConfig:
     dropout: float = 0.15
     num_experts: int = 1
     num_channel_experts: int = 1
+    # WS1 cross-subject domain adaptation
+    instance_norm: bool = False        # per-trial RevIN normalization in the encoder (no subject id)
+    use_domain_adv: bool = False       # subject-adversarial DANN head (train-only; inference subject-agnostic)
+    # WS3 HuBERT auxiliary content head (0/absent => disabled)
+    hubert_dim: int = 0
+    hubert_steps: int = 50
 
 
 class KaraOneEEG2Codec(nn.Module):
@@ -67,6 +75,7 @@ class KaraOneEEG2Codec(nn.Module):
             channel_dropout=cfg.channel_dropout,
             dropout=cfg.dropout,
             num_channel_experts=cfg.num_channel_experts,
+            instance_norm=cfg.instance_norm,
         )
         d = cfg.d_model
         self.content_seq_head = nn.Sequential(
@@ -132,20 +141,52 @@ class KaraOneEEG2Codec(nn.Module):
             nn.Linear(d, 1),
         )
 
+        # WS1: subject-adversarial DANN head. Trains to classify the subject from the
+        # pooled EEG embedding through a gradient-reversal layer, so the ENCODER is
+        # pushed to drop subject-specific information (cross-subject generalization).
+        # Train-only: at inference the head is unused and `subject_idx` never feeds
+        # the generative path, so the model stays subject-agnostic.
+        self.use_domain_adv = bool(cfg.use_domain_adv)
+        if self.use_domain_adv:
+            self.subject_classifier = nn.Sequential(
+                nn.LayerNorm(d),
+                nn.Linear(d, d),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(d, max(2, cfg.num_subjects)),
+            )
+
+        # WS3: HuBERT auxiliary content head. Maps the per-frame content sequence to a
+        # HuBERT-feature sequence (interpolated to `hubert_steps`), giving a
+        # content-bearing semantic target alongside the rendered mel/latent target.
+        self.hubert_dim = int(cfg.hubert_dim)
+        self.hubert_steps = int(cfg.hubert_steps)
+        if self.hubert_dim > 0:
+            self.hubert_head = nn.Sequential(
+                nn.LayerNorm(cfg.content_dim),
+                nn.Linear(cfg.content_dim, d),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(d, self.hubert_dim),
+            )
+
     def forward(
         self,
         eeg: torch.Tensor,
         subject_idx: torch.Tensor,
         stage_idx: torch.Tensor,
         eeg_valid_len: torch.Tensor | None = None,
+        lambda_domain: float = 0.0,
     ) -> dict[str, torch.Tensor]:
         # NOTE: subject_idx is accepted for API compatibility (eval/synth/train call
-        # sites) but is intentionally UNUSED — the model is subject-agnostic and the
-        # output depends only on the EEG (and the task `stage`).
+        # sites) and is UNUSED by the generative path — the reconstruction depends only
+        # on the EEG (and the task `stage`). It is consumed ONLY by the optional
+        # subject-adversarial DANN head (train-time), which exists to REMOVE subject
+        # information, keeping inference subject-agnostic.
         del subject_idx
         in_len = int(eeg.shape[-1])
         cond = self.stage_embedding(stage_idx.long())
-        encoded, channel_aux = self.encoder(eeg, cond)
+        encoded, channel_aux = self.encoder(eeg, cond, eeg_valid_len)
         seq = encoded.transpose(1, 2)
         pooled = _masked_time_mean(seq, eeg_valid_len, in_len)  # ignores zero-padded tail
         content_seq = self.content_seq_head(seq)
@@ -170,6 +211,15 @@ class KaraOneEEG2Codec(nn.Module):
             "router_probs": router_probs,
             "pooled": pooled,
         }
+        if self.use_domain_adv:
+            # Gradient-reversal: classifier learns subject; encoder unlearns it.
+            out["subject_logits"] = self.subject_classifier(grad_reverse(pooled, lambda_domain))
+        if self.hubert_dim > 0:
+            # Interpolate the content sequence to the HuBERT frame rate, then project.
+            content_t = F.interpolate(
+                content_seq.transpose(1, 2), size=self.hubert_steps, mode="linear", align_corners=False
+            ).transpose(1, 2)
+            out["pred_hubert"] = self.hubert_head(content_t)  # [B, hubert_steps, hubert_dim]
         out.update(channel_aux)  # channel_gate, channel_assign, channel_balance (if encoder MoE on)
         return out
 

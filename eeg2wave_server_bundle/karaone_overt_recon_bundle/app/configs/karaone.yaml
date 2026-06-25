@@ -30,6 +30,20 @@ target:
   n_mels: 80
   mel_n_fft: 1024
   mel_hop: 256
+  # WS3 HuBERT semantic AUXILIARY target (content head + retrieval metrics). The
+  # mel/encodec target above still renders audio; HuBERT has no offline vocoder.
+  # Build once: python scripts/extract_karaone_targets.py --target hubert_sequence
+  cache_hubert: ../artifacts/audio_targets/karaone_trial_hubert.npz
+  hubert_ssl_path: ../../feis_subject_aware_bundle/models/hubert-base-ls960
+  hubert_steps: 50
+
+# WS1 cross-subject domain adaptation. instance_norm = per-trial RevIN (no subject id);
+# adversarial = subject-DANN (uses subject id at TRAIN time only, to REMOVE it).
+# Inference stays subject-agnostic. Set both false to reproduce the old behavior.
+domain_adapt:
+  instance_norm: true
+  adversarial: true
+  lambda_domain_adv: 0.1     # DANN gradient-reversal strength (ramped 0 -> this)
 
 vocoder:
   kind: griffinlim           # griffinlim (mel) | encodec (latent)
@@ -64,7 +78,12 @@ train:
   lambda_supcon: 0.5
   lambda_proto: 0.25
   lambda_log_rms: 0.2
-  lambda_std: 0.0
+  lambda_std: 0.1            # WS2a: turn on per-dim std matching (anti-collapse, std_ratio->1)
+  lambda_energy_env: 0.3    # WS2a: energy-envelope correlation (fights RMS/energy collapse)
+  lambda_multiscale_mel: 0.3  # WS2a: multi-resolution temporal L1 (fights over-smoothing)
+  lambda_hubert_aux: 0.3    # WS3: HuBERT feature regression (0 if no hubert cache)
+  lambda_hubert_clip: 0.3   # WS3: EEG<->HuBERT-summary symmetric InfoNCE
+  early_stop_patience: 15   # WS1c: stop after N epochs without val-gain gain (0 disables)
   lambda_router_balance: 0.01
   lambda_channel_balance: 0.01
   lambda_clip: 0.5            # EEG<->audio contrastive alignment (Defossez 2022); set 0 to disable
