@@ -40,6 +40,7 @@ class DiffusionConfig:
     timesteps: int = 1000
     schedule: str = "cosine"
     x0_clip: float = 8.0           # clamp predicted x0 during sampling (z-scored latent is ~unit scale)
+    mode: str = "diffusion"        # "diffusion" (DDPM+DDIM) | "flow" (conditional flow matching, NeuroSonic/Voicebox)
 
 
 def make_beta_schedule(timesteps: int, kind: str = "cosine") -> torch.Tensor:
@@ -155,6 +156,8 @@ class EEGLatentDiffusion(nn.Module):
 
     # -- training -----------------------------------------------------------
     def loss(self, x0: torch.Tensor, eeg: torch.Tensor, eeg_valid_len: torch.Tensor | None = None) -> torch.Tensor:
+        if self.cfg.mode == "flow":
+            return self._flow_loss(x0, eeg, eeg_valid_len)
         b = x0.shape[0]
         t = torch.randint(0, self.cfg.timesteps, (b,), device=x0.device)
         noise = torch.randn_like(x0)
@@ -165,6 +168,46 @@ class EEGLatentDiffusion(nn.Module):
         eps_hat = self.denoise(x_t, t, cond_seq)
         return F.mse_loss(eps_hat, noise)
 
+    # -- conditional flow matching (NeuroSonic/Voicebox) --------------------
+    # Reuses the SAME `denoise` network as a velocity field v(x_t, t, cond). The
+    # straight (rectified) path is x_t = (1-t)*noise + t*x0, so the target velocity
+    # is the constant u = x0 - noise. Sampling integrates the probability-flow ODE
+    # dx/dt = v deterministically with Euler steps -> keeps variance (no mean
+    # collapse) without DDPM's many stochastic steps.
+    def _flow_t_embed(self, t_cont: torch.Tensor) -> torch.Tensor:
+        # scale continuous t in [0,1] into the sinusoidal-embedding range the net expects
+        return t_cont * float(self.cfg.timesteps - 1)
+
+    def _flow_loss(self, x0: torch.Tensor, eeg: torch.Tensor, eeg_valid_len: torch.Tensor | None = None) -> torch.Tensor:
+        b = x0.shape[0]
+        t = torch.rand(b, device=x0.device)  # U(0,1)
+        noise = torch.randn_like(x0)
+        t_ = t.view(b, 1, 1)
+        x_t = (1.0 - t_) * noise + t_ * x0
+        target_v = x0 - noise
+        cond_seq = self.encode_cond(eeg, eeg_valid_len)
+        v_hat = self.denoise(x_t, self._flow_t_embed(t), cond_seq)
+        return F.mse_loss(v_hat, target_v)
+
+    @torch.no_grad()
+    def _flow_sample(
+        self,
+        eeg: torch.Tensor,
+        eeg_valid_len: torch.Tensor | None = None,
+        steps: int = 16,
+        generator: torch.Generator | None = None,
+    ) -> torch.Tensor:
+        b = eeg.shape[0]
+        device = eeg.device
+        cond_seq = self.encode_cond(eeg, eeg_valid_len)
+        x = torch.randn((b, self.cfg.target_steps, self.cfg.latent_dim), device=device, generator=generator)
+        dt = 1.0 / max(steps, 1)
+        for i in range(steps):
+            t_cont = torch.full((b,), i * dt, device=device)
+            v = self.denoise(x, self._flow_t_embed(t_cont), cond_seq)
+            x = x + v * dt
+        return x.clamp(-self.cfg.x0_clip, self.cfg.x0_clip)
+
     # -- sampling (DDIM, deterministic eta=0) -------------------------------
     @torch.no_grad()
     def sample(
@@ -174,6 +217,8 @@ class EEGLatentDiffusion(nn.Module):
         steps: int = 50,
         generator: torch.Generator | None = None,
     ) -> torch.Tensor:
+        if self.cfg.mode == "flow":
+            return self._flow_sample(eeg, eeg_valid_len, steps=steps, generator=generator)
         b = eeg.shape[0]
         device = eeg.device
         cond_seq = self.encode_cond(eeg, eeg_valid_len)

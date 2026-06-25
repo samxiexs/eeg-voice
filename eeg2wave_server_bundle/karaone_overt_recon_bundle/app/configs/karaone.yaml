@@ -97,11 +97,12 @@ train:
 # Generative path: EEG-conditioned latent diffusion (escapes the regression
 # model's mean-collapse). Used by train/synthesize_karaone_diffusion.py.
 diffusion:
+  mode: diffusion        # diffusion (DDPM+DDIM) | flow (conditional flow matching, NeuroSonic/Voicebox)
   hidden: 256
   num_blocks: 6
   cond_ch: 128
   timesteps: 1000
-  ddim_steps: 50         # sampling steps at synthesis time
+  ddim_steps: 50         # sampling/ODE steps at synthesis time (flow needs fewer, e.g. 16)
   eval_steps: 20         # fewer steps during per-epoch eval (speed)
   schedule: cosine
   x0_clip: 8.0

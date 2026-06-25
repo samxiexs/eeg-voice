@@ -42,6 +42,19 @@ def parse_args():
     p.add_argument("--run-suffix", default=None)
     p.add_argument("--device", default=None)
     p.add_argument("--max-steps", type=int, default=None)
+    p.add_argument(
+        "--decoder",
+        choices=["regression", "diffusion", "flow"],
+        default=None,
+        help="Override config: regression | diffusion (DDPM) | flow (conditional flow matching). "
+        "flow/diffusion both enable the generative head; flow uses NeuroSonic/Voicebox-style ODE sampling.",
+    )
+    p.add_argument(
+        "--init-from",
+        default=None,
+        help="Warm-start model weights from a checkpoint before training (NeuroTalk overt->imagined "
+        "transfer: pretrain on `speaking`, then fine-tune `thinking`/`stimuli`). Loaded strict=False.",
+    )
     return p.parse_args()
 
 
@@ -78,7 +91,7 @@ def _set_requires_grad(module: torch.nn.Module, enabled: bool) -> None:
         param.requires_grad_(enabled)
 
 
-def _diffusion_config(cfg: dict, targets: MelLabelTargets, d_model: int) -> FEISAcousticDiffusionConfig:
+def _diffusion_config(cfg: dict, targets: MelLabelTargets, d_model: int, mode_override: str | None = None) -> FEISAcousticDiffusionConfig:
     dcfg = cfg.get("diffusion", {})
     return FEISAcousticDiffusionConfig(
         target_dim=targets.D,
@@ -94,6 +107,7 @@ def _diffusion_config(cfg: dict, targets: MelLabelTargets, d_model: int) -> FEIS
         dropout=float(dcfg.get("dropout", 0.1)),
         beta_start=float(dcfg.get("beta_start", 1e-4)),
         beta_end=float(dcfg.get("beta_end", 2e-2)),
+        mode=str(mode_override or dcfg.get("mode", "diffusion")),
     )
 
 
@@ -150,6 +164,14 @@ def main() -> None:
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     target_kind = _target_kind(cfg)
     decoder_kind = _decoder_kind(cfg)
+    # CLI --decoder overrides config; flow/diffusion both use the generative head.
+    diff_mode_override = None
+    if args.decoder == "regression":
+        decoder_kind = "regression"
+    elif args.decoder == "diffusion":
+        decoder_kind, diff_mode_override = "diffusion", "diffusion"
+    elif args.decoder == "flow":
+        decoder_kind, diff_mode_override = "diffusion", "flow"
     if decoder_kind not in {"regression", "diffusion"}:
         raise ValueError(f"Unsupported model.decoder={decoder_kind!r}")
     target_path = _target_cache_path(cfg)
@@ -189,10 +211,17 @@ def main() -> None:
         channel_dropout=float(cm.get("channel_dropout", 0.2)),
         dropout=float(cm.get("dropout", 0.2)),
     )).to(device)
+    if args.init_from:
+        # NeuroTalk-style transfer: warm-start the encoder/heads from another stage's
+        # checkpoint (e.g. `speaking` -> `thinking`). strict=False tolerates head/label
+        # mismatches; only matching tensors load.
+        init_ckpt = torch.load(args.init_from, map_location=device, weights_only=False)
+        missing, unexpected = model.load_state_dict(init_ckpt["model_state"], strict=False)
+        print(f"[init] warm-started from {args.init_from} (missing={len(missing)} unexpected={len(unexpected)})")
     diffusion = None
     diff_cfg = None
     if decoder_kind == "diffusion":
-        diff_cfg = _diffusion_config(cfg, targets, model.cfg.d_model)
+        diff_cfg = _diffusion_config(cfg, targets, model.cfg.d_model, mode_override=diff_mode_override)
         diffusion = build_feis_acoustic_diffusion(diff_cfg).to(device)
     gan_enabled = bool(cfg["loss"].get("gan", False)) and decoder_kind == "regression"
     discriminator = AcousticPatchDiscriminator(target_dim=targets.D, hidden=max(64, model.cfg.d_model // 2), dropout=float(cm.get("dropout", 0.2))).to(device) if gan_enabled else None
@@ -236,6 +265,8 @@ def main() -> None:
         lambda_moe_sparsity=float(loss_cfg.get("lambda_moe_sparsity", 0.005)),
         lambda_moe_route_entropy=float(loss_cfg.get("lambda_moe_route_entropy", 0.01)),
         lambda_moe_cluster=float(loss_cfg.get("lambda_moe_cluster", 0.05)),
+        lambda_std=float(loss_cfg.get("lambda_std", 0.0)),
+        lambda_energy=float(loss_cfg.get("lambda_energy", 0.0)),
         contrast_temperature=float(loss_cfg.get("contrast_temperature", 0.07)),
     )
 
@@ -365,7 +396,9 @@ def main() -> None:
             if diffusion is not None and diff_cfg is not None
             else model
         )
-        val = evaluate_feis_mel(eval_model, val_ds, targets, device=device, batch_size=batch_size, dtw_band=int(loss_cfg.get("dtw_band", 10)))
+        # controls=False keeps per-epoch val fast; the honest zero-EEG/label-prior/shuffled
+        # controls run on the final test splits below (and in scripts/feis_mel_eval.py).
+        val = evaluate_feis_mel(eval_model, val_ds, targets, device=device, batch_size=batch_size, dtw_band=int(loss_cfg.get("dtw_band", 10)), controls=False)
         score = _selection_score(val)
         print(
             f"epoch {epoch:03d} | total {train_metrics['total']:.3f} mel {train_metrics['mel_dtw']:.3f} "
@@ -432,10 +465,20 @@ def main() -> None:
         "test_holdout": evaluate_feis_mel(best_eval_model, test_holdout, targets, device=device, batch_size=batch_size, dtw_band=int(loss_cfg.get("dtw_band", 10))),
     }
     write_json(run_dir / "metrics" / "test_metrics.json", res)
+    th = res["test_holdout"]
     write_json(run_dir / "mel_alignment_qc.json", {
         "content_gate": "content_top1 must exceed chance before claiming generation",
         "resting_negative_control": "resting should not match speaking/thinking if EEG content is used",
-        "test_holdout": res["test_holdout"],
+        "honest_verdict": {
+            "eeg_informative": th.get("eeg_informative"),
+            "pred_over_labelprior_pcc_gain": th.get("pred_over_labelprior_pcc_gain"),
+            "pred_over_zeroeeg_pcc_gain": th.get("pred_over_zeroeeg_pcc_gain"),
+            "content_over_chance": th.get("content_over_chance"),
+            "note": "If eeg_informative is false (gain~0, content~chance), the mel matches the "
+                    "label prior, not EEG decoding. Compare across stages: resting should be worse "
+                    "than speaking/thinking if EEG content is truly used.",
+        },
+        "test_holdout": th,
     })
     _write_figures(run_dir)
     print(f"[done] {run_dir}")

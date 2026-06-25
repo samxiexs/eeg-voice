@@ -56,6 +56,8 @@ loss:
   lambda_moe_sparsity: 0.005
   lambda_moe_route_entropy: 0.01
   lambda_moe_cluster: 0.05
+  lambda_std: 0.1            # anti-collapse: match per-dim temporal std of the label-bank mean
+  lambda_energy: 0.1        # anti-collapse: match temporal energy-envelope spread (fights flat mel)
   lambda_gan: 0.0
   lambda_feat_match: 2.0
   dtw_band: 10
@@ -64,6 +66,7 @@ loss:
 
 diffusion:
   enabled: false
+  mode: diffusion        # diffusion (DDPM+DDIM) | flow (conditional flow matching, NeuroSonic/Voicebox)
   num_steps: 200
   sample_steps: 24
   eval_steps: 8

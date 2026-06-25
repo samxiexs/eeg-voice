@@ -23,6 +23,7 @@ class FEISAcousticDiffusionConfig:
     dropout: float = 0.1
     beta_start: float = 1e-4
     beta_end: float = 2e-2
+    mode: str = "diffusion"  # diffusion (DDPM+DDIM) | flow (conditional flow matching)
 
 
 def build_feis_acoustic_diffusion(cfg: FEISAcousticDiffusionConfig) -> LatentDiffusion:
@@ -37,6 +38,7 @@ def build_feis_acoustic_diffusion(cfg: FEISAcousticDiffusionConfig) -> LatentDif
         num_heads=cfg.num_heads,
         ff_mult=cfg.ff_mult,
         dropout=cfg.dropout,
+        mode=cfg.mode,
     )
 
 

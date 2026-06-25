@@ -110,11 +110,15 @@ class LatentDiffusion(nn.Module):
         ff_mult: int = 4,
         dropout: float = 0.1,
         time_dim: int = 128,
+        mode: str = "diffusion",
     ):
         super().__init__()
         if num_steps < 2:
             raise ValueError(f"num_steps must be >= 2, got {num_steps}")
         self.num_steps = int(num_steps)
+        # "diffusion" = DDPM(eps)+DDIM; "flow" = conditional flow matching (NeuroSonic/
+        # Voicebox): same denoiser reused as a velocity field on the straight path.
+        self.mode = str(mode)
         betas = torch.linspace(float(beta_start), float(beta_end), self.num_steps, dtype=torch.float32)
         alphas = 1.0 - betas
         alpha_bars = torch.cumprod(alphas, dim=0)
@@ -146,6 +150,8 @@ class LatentDiffusion(nn.Module):
         cond_seq: torch.Tensor,
         coarse_latent: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
+        if self.mode == "flow":
+            return self._flow_losses(x0, cond_seq, coarse_latent=coarse_latent)
         bsz = x0.shape[0]
         timesteps = torch.randint(0, self.num_steps, (bsz,), device=x0.device)
         noise = torch.randn_like(x0)
@@ -161,6 +167,52 @@ class LatentDiffusion(nn.Module):
             "diffusion_t_mean": timesteps.float().mean().detach(),
         }
 
+    # -- conditional flow matching (NeuroSonic/Voicebox) --------------------
+    # Straight path x_t = (1-t)*noise + t*x0, constant target velocity u = x0 - noise.
+    # Reuses the SAME denoiser as the velocity field; same return keys as the diffusion
+    # branch so the training loop / logging are unchanged.
+    def _flow_losses(
+        self,
+        x0: torch.Tensor,
+        cond_seq: torch.Tensor,
+        coarse_latent: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        bsz = x0.shape[0]
+        t = torch.rand(bsz, device=x0.device)
+        noise = torch.randn_like(x0)
+        t_ = t.view(bsz, 1, 1)
+        x_t = (1.0 - t_) * noise + t_ * x0
+        target_v = x0 - noise
+        t_in = t * float(self.num_steps - 1)  # scale into the sinusoidal embedding range
+        v_hat = self.denoiser(x_t, t_in, cond_seq, coarse_latent=coarse_latent)
+        v_mse = F.mse_loss(v_hat, target_v)
+        x0_pred = x_t + (1.0 - t_) * v_hat  # along the straight path x0 = x_t + (1-t)*v
+        x0_mse = F.smooth_l1_loss(x0_pred, x0)
+        return {
+            "diffusion_loss": v_mse,
+            "diffusion_eps_mse": v_mse.detach(),
+            "diffusion_x0_mse": x0_mse.detach(),
+            "diffusion_t_mean": t.mean().detach() * float(self.num_steps - 1),
+        }
+
+    @torch.no_grad()
+    def _sample_flow(
+        self,
+        shape: tuple[int, int, int],
+        cond_seq: torch.Tensor,
+        coarse_latent: torch.Tensor | None = None,
+        sample_steps: int = 16,
+    ) -> torch.Tensor:
+        steps = int(max(1, sample_steps))
+        device = cond_seq.device
+        x = torch.randn(shape, device=device, dtype=cond_seq.dtype)
+        dt = 1.0 / steps
+        for i in range(steps):
+            t_cont = torch.full((shape[0],), i * dt, device=device)
+            v = self.denoiser(x, t_cont * float(self.num_steps - 1), cond_seq, coarse_latent=coarse_latent)
+            x = x + v * dt
+        return x
+
     def predict_x0(self, xt: torch.Tensor, timesteps: torch.Tensor, pred_noise: torch.Tensor) -> torch.Tensor:
         return (
             xt - _extract(self.sqrt_one_minus_alpha_bars, timesteps, xt) * pred_noise
@@ -174,6 +226,8 @@ class LatentDiffusion(nn.Module):
         coarse_latent: torch.Tensor | None = None,
         sample_steps: int = 24,
     ) -> torch.Tensor:
+        if self.mode == "flow":
+            return self._sample_flow(shape, cond_seq, coarse_latent=coarse_latent, sample_steps=sample_steps)
         steps = int(max(1, min(sample_steps, self.num_steps)))
         device = cond_seq.device
         schedule = torch.linspace(self.num_steps - 1, 0, steps, device=device).round().long()

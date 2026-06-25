@@ -108,6 +108,8 @@ def compute_feis_mel_losses(
     lambda_moe_sparsity: float = 0.0,
     lambda_moe_route_entropy: float = 0.0,
     lambda_moe_cluster: float = 0.0,
+    lambda_std: float = 0.0,
+    lambda_energy: float = 0.0,
     contrast_temperature: float = 0.07,
 ) -> dict[str, torch.Tensor]:
     pred = out["pred_mel"]
@@ -125,6 +127,23 @@ def compute_feis_mel_losses(
         temperature=contrast_temperature,
     )
     log_rms_loss = F.mse_loss(out["pred_log_rms"], target_log_rms.float())
+
+    # Anti-collapse (alignment-free, vs the per-label bank mean). The DTW recon above is
+    # invariant to cross-utterance time warping but lets the model win by emitting a flat,
+    # over-smoothed mel; these two terms restore spectral spread and temporal energy
+    # variation without needing a time alignment.
+    bank_mean = target_bank.mean(dim=1)  # [B, T, D]
+    if lambda_std > 0.0:
+        std_match = F.l1_loss(pred.std(dim=1), bank_mean.std(dim=1))  # per-dim temporal std
+    else:
+        std_match = pred.new_tensor(0.0)
+    if lambda_energy > 0.0:
+        pe = pred.pow(2).mean(dim=-1)        # [B, T] frame-energy envelope
+        te = bank_mean.pow(2).mean(dim=-1)
+        energy_match = (pe.std(dim=1) - te.std(dim=1)).abs().mean()  # match temporal energy spread
+    else:
+        energy_match = pred.new_tensor(0.0)
+
     moe_load_balance = out.get("moe_load_balance", pred.new_tensor(0.0))
     moe_sparsity = out.get("moe_channel_sparsity", pred.new_tensor(0.0))
     moe_route_entropy = out.get("moe_route_entropy", pred.new_tensor(0.0))
@@ -138,10 +157,14 @@ def compute_feis_mel_losses(
         + lambda_moe_sparsity * moe_sparsity
         + lambda_moe_route_entropy * moe_route_entropy
         + lambda_moe_cluster * moe_cluster
+        + lambda_std * std_match
+        + lambda_energy * energy_match
     )
     return {
         "total": total,
         "mel_dtw": recon.detach(),
+        "std_match": std_match.detach(),
+        "energy_match": energy_match.detach(),
         "dtw_cost": dtw_cost.detach(),
         "content_ce": content_ce.detach(),
         "content_acc": content_acc.detach(),

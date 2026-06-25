@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "karaone.yaml"))
     parser.add_argument("--stages", default=None)
     parser.add_argument("--model", choices=["baseline", "moe"], default="moe")
+    parser.add_argument("--mode", choices=["diffusion", "flow"], default=None, help="generative head: DDPM diffusion or conditional flow matching (default: config diffusion.mode)")
     parser.add_argument("--target", choices=["mel", "encodec_latent"], default=None, help="acoustic target (default: config target.kind)")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--eval-every", type=int, default=2)
@@ -130,8 +131,10 @@ def main() -> None:
             timesteps=int(dcfg.get("timesteps", 1000)),
             schedule=str(dcfg.get("schedule", "cosine")),
             x0_clip=float(dcfg.get("x0_clip", 8.0)),
+            mode=str(args.mode or dcfg.get("mode", "diffusion")),
         )
     ).to(device)
+    print(f"[generative] mode={model.cfg.mode} (flow = deterministic ODE, fewer steps, no mean-collapse)")
 
     epochs = int(args.epochs or dcfg.get("epochs", 60))
     eval_steps = int(args.eval_steps or dcfg.get("eval_steps", 20))
