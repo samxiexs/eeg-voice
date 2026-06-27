@@ -24,6 +24,7 @@ experiments.
 app/
   configs/karaone.yaml
   scripts/analyze_karaone_data.py
+  scripts/export_karaone_eeg_csv.py
   scripts/extract_karaone_targets.py
   scripts/train_karaone_recon.py
   scripts/eval_karaone_recon.py
@@ -76,6 +77,43 @@ The raw 23GB KaraOne `.tar.bz2` archives are not included.
 - EEG channels: 62
 - EEG stages: `clearing`, `stimulus_like`, `thinking`, `overt_like`
 - Audio target: same-trial overt wav, normalized and encoded as EnCodec latents
+
+## EEG CSV audit export
+
+The training pipeline reads compact `.npz` bundles, but you can export FEIS-style
+wide CSV files for channel/time auditing and channel-MoE interpretation:
+
+```bash
+cd app
+
+# Estimate full output rows without writing large CSV files.
+python scripts/export_karaone_eeg_csv.py --dry-run
+
+# Small sanity export: one subject, first two trials, thinking only.
+python scripts/export_karaone_eeg_csv.py \
+  --subjects MM05 \
+  --stages thinking \
+  --limit-trials-per-subject 2 \
+  --overwrite
+
+# Full per-subject CSV export. This can be several GB.
+python scripts/export_karaone_eeg_csv.py --overwrite
+```
+
+Default output:
+
+```text
+data/karaone/eeg_csv/<SUBJECT>/full_eeg.csv
+data/karaone/eeg_csv/manifest.csv
+```
+
+Each CSV row is one trial/stage/time sample, with metadata plus 62 channel
+columns: `Time:256Hz, subject_id, trial_index, label, stage, sample_index,
+valid, audio_path, <62 EEG channels>`. The exporter uses `channel_names` from
+the subject bundle when available (for example `FP1`, `FPZ`, `AF3`); pass
+`--generic-channel-names` to force `Ch001...Ch062`. Padding rows are preserved
+by default and marked with `valid=false`; pass `--drop-padding` to keep only
+valid samples.
 
 ## Mainline model
 
