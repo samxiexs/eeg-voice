@@ -7,14 +7,51 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except Exception:  # noqa: BLE001
+    def tqdm(iterable, **kwargs):  # type: ignore[no-redef]
+        return iterable
 
 BUNDLE_DIR = Path(__file__).resolve().parents[1]
 if str(BUNDLE_DIR) not in sys.path:
     sys.path.insert(0, str(BUNDLE_DIR))
 
-from src.audio_features import AudioFeatureConfig, _extract_target_from_audio, build_audio_feature_backend, compute_prosody_target
-from src.utils import ensure_dir, load_simple_yaml, load_wav_fixed, resolve_bundle_path
+REQUIRED_CACHE_KEYS = {
+    "template_ids",
+    "subject_ids",
+    "trial_indices",
+    "labels",
+    "audio_paths",
+    "target_sequences",
+    "target_masks",
+    "target_summaries",
+    "target_mean",
+    "target_std",
+    "target_rms",
+    "target_log_rms",
+    "decoder_scales",
+    "default_decoder_scales",
+    "feature_backend",
+    "target_kind",
+    "target_steps",
+    "target_dim",
+}
+
+
+def target_cache_is_complete(path: Path, kind: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        payload = np.load(path, allow_pickle=True)
+    except Exception:
+        return False
+    if not REQUIRED_CACHE_KEYS.issubset(set(payload.files)):
+        return False
+    cached_kind = str(np.asarray(payload["target_kind"]).item())
+    if cached_kind != str(kind):
+        return False
+    return True
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,11 +61,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", default=None)
     parser.add_argument("--target", choices=["mel", "encodec_latent", "hubert_sequence"], default=None, help="target kind: mel/encodec_latent (renderable) or hubert_sequence (semantic aux). Default: config target.kind")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--force", action="store_true", help="overwrite an existing complete cache")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    from src.audio_features import AudioFeatureConfig, _extract_target_from_audio, build_audio_feature_backend, compute_prosody_target
+    from src.utils import ensure_dir, load_simple_yaml, load_wav_fixed, resolve_bundle_path
+
     cfg = load_simple_yaml(args.config)
     root = resolve_bundle_path(args.karaone_root or cfg["data"]["root"], BUNDLE_DIR)
     audio_cfg = cfg["audio"]
@@ -47,6 +88,11 @@ def main() -> None:
         out_default = tgt.get("cache_encodec", cfg["data"]["target_cache"])
     output_path = resolve_bundle_path(out_default, BUNDLE_DIR)
     ensure_dir(output_path.parent)
+    if output_path.exists() and not args.force and target_cache_is_complete(output_path, kind):
+        print(f"[extract] complete {kind} cache already exists: {output_path}")
+        return
+    if output_path.exists() and not target_cache_is_complete(output_path, kind):
+        print(f"[extract] existing {kind} cache is legacy/incomplete; rebuilding: {output_path}")
 
     if kind == "mel":
         backend_kind = "mel"
@@ -167,4 +213,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

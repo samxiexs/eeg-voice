@@ -165,6 +165,168 @@ class ChannelMoEFrontend(nn.Module):
         return h, {"channel_gate": gate, "channel_assign": assign, "channel_balance": balance}
 
 
+def _key_padding_mask(valid_len: torch.Tensor | None, in_len: int, out_len: int, device: torch.device) -> torch.Tensor | None:
+    if valid_len is None:
+        return None
+    frac = (valid_len.float() / float(max(in_len, 1))).clamp(min=1.0 / out_len, max=1.0)
+    valid_frames = (frac * out_len).ceil().clamp(min=1.0)
+    idx = torch.arange(out_len, device=device).unsqueeze(0)
+    return idx >= valid_frames.unsqueeze(1)
+
+
+class ConformerEncoderBlock(nn.Module):
+    """Lightweight Conformer block for EEG frame sequences.
+
+    This keeps the implementation small: feed-forward -> MHSA -> depthwise temporal
+    convolution -> feed-forward, with residual connections and pre-norm.
+    """
+
+    def __init__(self, d_model: int, heads: int, dropout: float, kernel_size: int = 7):
+        super().__init__()
+        hidden = d_model * 4
+        self.ff1_norm = nn.LayerNorm(d_model)
+        self.ff1 = nn.Sequential(
+            nn.Linear(d_model, hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden, d_model),
+            nn.Dropout(dropout),
+        )
+        self.attn_norm = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(d_model, heads, dropout=dropout, batch_first=True)
+        self.conv_norm = nn.LayerNorm(d_model)
+        padding = (int(kernel_size) - 1) // 2
+        self.conv = nn.Sequential(
+            nn.Conv1d(d_model, d_model * 2, kernel_size=1),
+            nn.GLU(dim=1),
+            nn.Conv1d(d_model, d_model, kernel_size=kernel_size, padding=padding, groups=d_model),
+            nn.GroupNorm(num_groups=min(8, d_model), num_channels=d_model),
+            nn.SiLU(),
+            nn.Conv1d(d_model, d_model, kernel_size=1),
+            nn.Dropout(dropout),
+        )
+        self.ff2_norm = nn.LayerNorm(d_model)
+        self.ff2 = nn.Sequential(
+            nn.Linear(d_model, hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden, d_model),
+            nn.Dropout(dropout),
+        )
+        self.out_norm = nn.LayerNorm(d_model)
+
+    def forward(self, x: torch.Tensor, key_padding_mask: torch.Tensor | None = None) -> torch.Tensor:
+        x = x + 0.5 * self.ff1(self.ff1_norm(x))
+        attn_in = self.attn_norm(x)
+        attn_out, _ = self.attn(attn_in, attn_in, attn_in, key_padding_mask=key_padding_mask, need_weights=False)
+        x = x + attn_out
+        conv_in = self.conv_norm(x).transpose(1, 2)
+        x = x + self.conv(conv_in).transpose(1, 2)
+        x = x + 0.5 * self.ff2(self.ff2_norm(x))
+        return self.out_norm(x)
+
+
+class TransformerEEGEncoder(nn.Module):
+    """Channel-aware EEG encoder with temporal patching + Transformer/Conformer trunk."""
+
+    def __init__(
+        self,
+        in_channels: int = 62,
+        d_model: int = 256,
+        cond_dim: int = 64,
+        target_steps: int = 150,
+        kernel_size: int = 5,
+        channel_dropout: float = 0.15,
+        dropout: float = 0.15,
+        num_channel_experts: int = 1,
+        instance_norm: bool = False,
+        encoder_kind: str = "transformer",
+        transformer_layers: int = 4,
+        transformer_heads: int = 4,
+        patch_stride: int = 4,
+    ):
+        super().__init__()
+        self.channel_dropout_p = float(channel_dropout)
+        self.instance_norm = bool(instance_norm)
+        self.num_channel_experts = int(num_channel_experts)
+        self.target_steps = int(target_steps)
+        self.encoder_kind = str(encoder_kind)
+        if self.num_channel_experts > 1:
+            self.spatial = ChannelMoEFrontend(
+                in_channels=in_channels,
+                d_model=d_model,
+                num_experts=self.num_channel_experts,
+                dropout=dropout,
+            )
+        else:
+            self.spatial = nn.Sequential(
+                nn.Conv1d(in_channels, d_model, kernel_size=1),
+                nn.GroupNorm(num_groups=min(8, d_model), num_channels=d_model),
+                nn.GELU(),
+            )
+        self.spatial_film = FiLM(cond_dim, d_model)
+        p = max(1, int(patch_stride))
+        k = max(3, int(kernel_size))
+        self.patch = nn.Sequential(
+            nn.Conv1d(d_model, d_model, kernel_size=k, stride=p, padding=k // 2),
+            nn.GroupNorm(num_groups=min(8, d_model), num_channels=d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.pos = nn.Parameter(torch.randn(1, self.target_steps, d_model) * 0.02)
+        heads = max(1, int(transformer_heads))
+        if d_model % heads != 0:
+            raise ValueError(f"d_model ({d_model}) must be divisible by transformer_heads ({heads})")
+        layers = max(1, int(transformer_layers))
+        if self.encoder_kind == "conformer":
+            self.blocks = nn.ModuleList(
+                [ConformerEncoderBlock(d_model, heads, dropout=dropout, kernel_size=max(3, k)) for _ in range(layers)]
+            )
+        else:
+            self.blocks = nn.ModuleList(
+                [
+                    nn.TransformerEncoderLayer(
+                        d_model=d_model,
+                        nhead=heads,
+                        dim_feedforward=d_model * 4,
+                        dropout=dropout,
+                        activation="gelu",
+                        batch_first=True,
+                        norm_first=True,
+                    )
+                    for _ in range(layers)
+                ]
+            )
+        self.out_norm = nn.LayerNorm(d_model)
+
+    def forward(
+        self, eeg: torch.Tensor, cond: torch.Tensor, valid_len: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        in_len = int(eeg.shape[-1])
+        if self.instance_norm:
+            eeg = _instance_norm(eeg, valid_len)
+        x = _channel_dropout(eeg, self.channel_dropout_p, self.training)
+        if self.num_channel_experts > 1:
+            x, aux = self.spatial(x)
+        else:
+            x, aux = self.spatial(x), {}
+        x = self.spatial_film(x, cond)
+        x = self.patch(x)
+        if x.shape[-1] != self.target_steps:
+            x = F.adaptive_avg_pool1d(x, self.target_steps)
+        seq = x.transpose(1, 2) + self.pos[:, : self.target_steps]
+        key_mask = _key_padding_mask(valid_len, in_len, self.target_steps, seq.device)
+        for block in self.blocks:
+            if isinstance(block, ConformerEncoderBlock):
+                seq = block(seq, key_mask)
+            else:
+                seq = block(seq, src_key_padding_mask=key_mask)
+        seq = self.out_norm(seq)
+        if key_mask is not None:
+            seq = seq.masked_fill(key_mask.unsqueeze(-1), 0.0)
+        return seq.transpose(1, 2), aux
+
+
 class SpatialTemporalEEGEncoder(nn.Module):
     def __init__(
         self,
@@ -230,4 +392,3 @@ class SpatialTemporalEEGEncoder(nn.Module):
         if x.shape[-1] != self.target_steps:
             x = F.adaptive_avg_pool1d(x, self.target_steps)
         return x, aux
-

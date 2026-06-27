@@ -210,6 +210,7 @@ class KaraOneTrialDataset(Dataset):
             "content_proto": torch.from_numpy(self.targets.content_prototype(entry.label)).float(),
             "subject_proto": torch.from_numpy(self.targets.subject_prototype(entry.subject)).float(),
             "target_log_rms": torch.tensor(self.targets.target_log_rms_value(entry.subject, entry.trial_index), dtype=torch.float32),
+            "target_decoder_scale": torch.from_numpy(self.targets.decoder_scale(entry.subject, entry.trial_index)).float(),
             "subject": entry.subject,
             "label": entry.label,
             "stage": entry.stage,
@@ -224,4 +225,3 @@ class KaraOneTrialDataset(Dataset):
                 item["hubert_seq"] = torch.zeros(self.aux_targets.T, self.aux_targets.D, dtype=torch.float32)
                 item["hubert_summary"] = torch.zeros(self.aux_targets.D, dtype=torch.float32)
         return item
-

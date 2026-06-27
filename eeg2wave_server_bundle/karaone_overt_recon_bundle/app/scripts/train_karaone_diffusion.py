@@ -101,6 +101,8 @@ def main() -> None:
     target_kind, cache = resolve_target_cache(cfg, BUNDLE_DIR, args.target)
     targets = KaraOneTargets(cache, data_root=root)
     print(f"[target] kind={target_kind} D={targets.D} T={targets.T}")
+    if target_kind == "encodec_latent" and not targets.has_complete_audio_metadata:
+        print("[target] WARNING: EnCodec cache is legacy/incomplete; rebuild with scripts/extract_karaone_targets.py --target encodec_latent --force")
     common = dict(
         data_root=root,
         targets=targets,
@@ -128,6 +130,10 @@ def main() -> None:
             kernel_size=int(cfg["model"].get("kernel_size", 5)),
             dropout=float(cfg["model"].get("dropout", 0.1)),
             num_channel_experts=num_channel_experts,
+            encoder_kind=str(cfg["model"].get("encoder_kind", "cnn")),
+            transformer_layers=int(cfg["model"].get("transformer_layers", 4)),
+            transformer_heads=int(cfg["model"].get("transformer_heads", 4)),
+            patch_stride=int(cfg["model"].get("patch_stride", 4)),
             timesteps=int(dcfg.get("timesteps", 1000)),
             schedule=str(dcfg.get("schedule", "cosine")),
             x0_clip=float(dcfg.get("x0_clip", 8.0)),

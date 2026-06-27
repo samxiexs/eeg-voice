@@ -64,6 +64,11 @@ class KaraOneTargets:
             if "default_decoder_scales" in payload.files
             else self.decoder_scales.mean(axis=0).astype(np.float32)
         )
+        self.decoder_scale_dim = int(self.default_decoder_scales.reshape(-1).shape[0])
+        self.has_complete_audio_metadata = all(
+            key in payload.files
+            for key in ("labels", "trial_indices", "audio_paths", "target_rms", "target_log_rms", "decoder_scales")
+        )
 
         self.key_to_idx = {
             self.key(subject, int(trial)): idx

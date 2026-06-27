@@ -24,7 +24,7 @@ targets:
 # Acoustic target representation (switch). mel = log-mel + Griffin-Lim vocoder
 # (offline, scipy-only, default). encodec_latent = EnCodec continuous latent.
 target:
-  kind: mel                  # mel | encodec_latent
+  kind: encodec_latent       # encodec_latent mainline | mel baseline
   cache_mel: ../artifacts/audio_targets/karaone_trial_mel.npz
   cache_encodec: ../artifacts/audio_targets/karaone_trial_encodec_latents.npz
   n_mels: 80
@@ -46,7 +46,7 @@ domain_adapt:
   lambda_domain_adv: 0.1     # DANN gradient-reversal strength (ramped 0 -> this)
 
 vocoder:
-  kind: griffinlim           # griffinlim (mel) | encodec (latent)
+  kind: encodec              # encodec (latent) | griffinlim (mel baseline)
   griffinlim_iters: 100      # fast (momentum) Griffin-Lim; more iters = fewer "bubbling" artifacts
   griffinlim_momentum: 0.99
 
@@ -56,6 +56,10 @@ model:
   cond_dim: 64
   content_dim: 128
   speaker_dim: 64
+  encoder_kind: conformer    # cnn | transformer | conformer
+  transformer_layers: 4
+  transformer_heads: 4
+  patch_stride: 4
   num_blocks: 6
   kernel_size: 5
   channel_dropout: 0.15
@@ -81,6 +85,10 @@ train:
   lambda_std: 0.1            # WS2a: turn on per-dim std matching (anti-collapse, std_ratio->1)
   lambda_energy_env: 0.3    # WS2a: energy-envelope correlation (fights RMS/energy collapse)
   lambda_multiscale_mel: 0.3  # WS2a: multi-resolution temporal L1 (fights over-smoothing)
+  lambda_frame_energy: 0.3  # frame-level log-energy head (restores voiced peaks)
+  lambda_voiced_rms: 0.3    # active-region RMS loss, not only whole-window loudness
+  lambda_decoder_scale: 0.1 # EnCodec decoder-scale/loudness head
+  lambda_ctc: 0.2           # prompt-token CTC content loss (duration-agnostic)
   lambda_hubert_aux: 0.3    # WS3: HuBERT feature regression (0 if no hubert cache)
   lambda_hubert_clip: 0.3   # WS3: EEG<->HuBERT-summary symmetric InfoNCE
   early_stop_patience: 15   # WS1c: stop after N epochs without val-gain gain (0 disables)
@@ -97,12 +105,12 @@ train:
 # Generative path: EEG-conditioned latent diffusion (escapes the regression
 # model's mean-collapse). Used by train/synthesize_karaone_diffusion.py.
 diffusion:
-  mode: diffusion        # diffusion (DDPM+DDIM) | flow (conditional flow matching, NeuroSonic/Voicebox)
+  mode: flow             # flow (conditional flow matching, NeuroSonic/Voicebox) | diffusion (DDPM+DDIM)
   hidden: 256
   num_blocks: 6
   cond_ch: 128
   timesteps: 1000
-  ddim_steps: 50         # sampling/ODE steps at synthesis time (flow needs fewer, e.g. 16)
+  ddim_steps: 24         # sampling/ODE steps at synthesis time (flow needs fewer, e.g. 16)
   eval_steps: 20         # fewer steps during per-epoch eval (speed)
   schedule: cosine
   x0_clip: 8.0
@@ -113,4 +121,3 @@ diffusion:
 
 output:
   root: ../artifacts/outputs_karaone
-

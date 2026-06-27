@@ -104,6 +104,10 @@ def plot_history(jsonl_path: str | Path, out_png: str | Path, title: str | None 
             ("train", "clip_loss", "clip (InfoNCE)"),
             ("train", "supcon", "supcon"),
             ("train", "recon_mse", "recon_mse"),
+            ("train", "ctc", "ctc"),
+            ("train", "frame_energy", "frame energy"),
+            ("train", "voiced_rms", "voiced rms"),
+            ("train", "decoder_scale", "decoder scale"),
         ],
         ylabel="loss",
     )

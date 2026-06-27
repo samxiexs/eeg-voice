@@ -34,7 +34,11 @@ def main() -> None:
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model = KaraOneEEG2Codec(KaraOneConfig(**ckpt["model_config"])).to(device)
-    model.load_state_dict(ckpt["model_state"], strict=True)
+    missing, unexpected = model.load_state_dict(ckpt["model_state"], strict=False)
+    if missing:
+        print(f"[eval] checkpoint missing {len(missing)} new keys; initialized defaults are used for aux heads")
+    if unexpected:
+        print(f"[eval] checkpoint has {len(unexpected)} unexpected keys; ignored")
     root = resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR)
     target_kind = str(ckpt.get("target_kind", cfg.get("target", {}).get("kind", "encodec_latent")))
     _, cache = resolve_target_cache(cfg, BUNDLE_DIR, target_kind)

@@ -143,31 +143,23 @@ python scripts/synthesize_karaone.py \
 Each sample writes:
 
 ```text
-original / oracle_codec / mean_latent / zeroeeg / pred / pred_scaled / zeroeeg_scaled
+original / oracle_encodec(or oracle_griffinlim for mel) / mean_latent / zeroeeg / pred / pred_scaled / zeroeeg_scaled
 ```
 
-## 9. Generative path: latent diffusion (escapes mean-collapse)
+## 9. Mainline generative path: EnCodec latent flow
 
-The regression model above collapses to the mean voice (low `std_ratio`, high
-pairwise correlation). The diffusion model samples from `p(latent | EEG)` instead.
-See [METHOD.md](METHOD.md) §4 and [DIFFUSION_PLAN.md](DIFFUSION_PLAN.md).
+The regression model above can collapse to the mean voice (low `std_ratio`, high
+pairwise correlation). The mainline now uses conditional flow matching over EnCodec
+latents and decodes with the frozen EnCodec decoder. `run_codec.sh` also checks
+whether the EnCodec cache is the complete format and rebuilds it when needed.
 
 ```bash
-# train (writes metrics/training_curves.png with std_ratio / pairwise-corr panels)
-python scripts/train_karaone_diffusion.py \
-  --config configs/karaone.yaml \
-  --model moe \
-  --epochs 60
-
-# sample reconstructions (multiple draws per trial show generative diversity)
-python scripts/synthesize_karaone_diffusion.py \
-  --config configs/karaone.yaml \
-  --checkpoint ../artifacts/outputs_karaone/karaone_diffusion_moe_overt_like_v1/checkpoints/best.pt \
-  --split test --limit 8 --num-samples 2
+bash run_codec.sh 30 moe synth flow 8
 ```
 
 Judge it by: `pred_std_ratio_median` rising toward 1.0 and `pred_pairwise_corr_median`
-well below the regression's ~0.94 (anti-collapse), alongside `pred_over_mean_cos_gain`.
+well below the collapsed-regression range, alongside `pred_over_mean_cos_gain`,
+`sample1_active_env_corr_mean`, and `sample1_voiced_rms_over_orig_mean`.
 
 ## 10. Optional second-stage refiner (legacy)
 
@@ -180,4 +172,3 @@ python scripts/train_karaone_refiner.py \
 
 The refiner is a residual denoising latent model. Treat it as an enhancement
 branch; the baseline/MoE checkpoint remains the main result.
-

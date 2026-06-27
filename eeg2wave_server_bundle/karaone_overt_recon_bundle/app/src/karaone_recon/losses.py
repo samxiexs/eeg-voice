@@ -135,6 +135,55 @@ def hubert_aux_loss(pred_hubert: torch.Tensor, hubert_seq: torch.Tensor) -> torc
     return smooth + cos
 
 
+def prompt_ctc_loss(ctc_logits: torch.Tensor, label_idx: torch.Tensor) -> torch.Tensor:
+    """CTC over the prompt label as a one-token sequence.
+
+    KaraOne labels are short prompted phoneme/word classes rather than full
+    transcripts. This still gives the sequence encoder a duration-agnostic
+    content objective: emit the prompt token somewhere in the acoustic frame
+    sequence, with blank elsewhere.
+    """
+    if ctc_logits.shape[1] < 1:
+        return ctc_logits.new_tensor(0.0)
+    log_probs = F.log_softmax(ctc_logits, dim=-1).transpose(0, 1)  # [T, B, V]
+    b, t, _ = ctc_logits.shape
+    targets = label_idx.long().clamp_min(0) + 1  # blank=0, labels start at 1
+    input_lengths = torch.full((b,), int(t), device=ctc_logits.device, dtype=torch.long)
+    target_lengths = torch.ones((b,), device=ctc_logits.device, dtype=torch.long)
+    return F.ctc_loss(log_probs, targets, input_lengths, target_lengths, blank=0, zero_infinity=True)
+
+
+def frame_log_energy_loss(pred_frame_log_energy: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    target_log_energy = torch.log(target.pow(2).mean(dim=-1).clamp_min(1e-8))
+    return F.smooth_l1_loss(pred_frame_log_energy, target_log_energy)
+
+
+def voiced_region_rms_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Match target-active-frame RMS, not only whole-utterance RMS."""
+    target_energy = target.pow(2).mean(dim=-1)
+    mean = target_energy.mean(dim=1, keepdim=True)
+    std = target_energy.std(dim=1, keepdim=True, unbiased=False)
+    peak = target_energy.max(dim=1, keepdim=True).values
+    thresh = torch.maximum(mean + 0.5 * std, 0.1 * peak)
+    mask = (target_energy >= thresh).detach().to(pred.dtype)
+    mask = torch.where(mask.sum(dim=1, keepdim=True) > 0, mask, torch.ones_like(mask))
+    pred_rms = torch.sqrt(((pred.pow(2).mean(dim=-1) * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)).clamp_min(1e-8))
+    target_rms = torch.sqrt(((target_energy * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)).clamp_min(1e-8))
+    return F.smooth_l1_loss(torch.log(pred_rms), torch.log(target_rms))
+
+
+def decoder_scale_loss(pred_log_scale: torch.Tensor, target_decoder_scale: torch.Tensor | None) -> torch.Tensor:
+    if target_decoder_scale is None:
+        return pred_log_scale.new_tensor(0.0)
+    target = torch.log(target_decoder_scale.float().clamp_min(1e-6))
+    if target.shape[-1] != pred_log_scale.shape[-1]:
+        if target.shape[-1] == 1:
+            target = target.expand_as(pred_log_scale)
+        else:
+            target = target[..., : pred_log_scale.shape[-1]]
+    return F.smooth_l1_loss(pred_log_scale, target)
+
+
 class GradientReversal(torch.autograd.Function):
     """Identity forward, sign-flipped (and scaled) gradient backward (DANN).
 
@@ -178,10 +227,15 @@ def compute_losses(
     lambda_dtw: float = 0.0,
     lambda_energy_env: float = 0.0,
     lambda_multiscale_mel: float = 0.0,
+    lambda_frame_energy: float = 0.0,
+    lambda_voiced_rms: float = 0.0,
+    lambda_decoder_scale: float = 0.0,
+    lambda_ctc: float = 0.0,
     lambda_hubert_aux: float = 0.0,
     lambda_hubert_clip: float = 0.0,
     hubert_seq: torch.Tensor | None = None,
     hubert_summary: torch.Tensor | None = None,
+    target_decoder_scale: torch.Tensor | None = None,
     supcon_temperature: float = 0.1,
     clip_temperature: float = 0.07,
     dtw_band: float = 0.2,
@@ -226,6 +280,18 @@ def compute_losses(
     # Both operate in the (z-scored) acoustic target domain, no waveform render needed.
     energy_env = energy_envelope_loss(pred, target_seq) if lambda_energy_env > 0.0 else pred.new_tensor(0.0)
     multiscale_mel = multiscale_temporal_l1(pred, target_seq) if lambda_multiscale_mel > 0.0 else pred.new_tensor(0.0)
+    frame_energy = (
+        frame_log_energy_loss(out["pred_frame_log_energy"], target_seq)
+        if lambda_frame_energy > 0.0 and "pred_frame_log_energy" in out
+        else pred.new_tensor(0.0)
+    )
+    voiced_rms = voiced_region_rms_loss(pred, target_seq) if lambda_voiced_rms > 0.0 else pred.new_tensor(0.0)
+    dec_scale = (
+        decoder_scale_loss(out["pred_log_decoder_scale"], target_decoder_scale)
+        if lambda_decoder_scale > 0.0 and "pred_log_decoder_scale" in out
+        else pred.new_tensor(0.0)
+    )
+    ctc = prompt_ctc_loss(out["ctc_logits"], label_idx) if lambda_ctc > 0.0 and "ctc_logits" in out else pred.new_tensor(0.0)
 
     # HuBERT auxiliary content target (WS3): regression to GT HuBERT features, plus a
     # content-bearing symmetric InfoNCE (EEG-predicted HuBERT summary <-> GT summary).
@@ -251,6 +317,10 @@ def compute_losses(
         + lambda_dtw * dtw_loss
         + lambda_energy_env * energy_env
         + lambda_multiscale_mel * multiscale_mel
+        + lambda_frame_energy * frame_energy
+        + lambda_voiced_rms * voiced_rms
+        + lambda_decoder_scale * dec_scale
+        + lambda_ctc * ctc
         + lambda_hubert_aux * hubert_aux
         + lambda_hubert_clip * hubert_clip
     )
@@ -271,7 +341,10 @@ def compute_losses(
         "channel_balance": channel_balance.detach() if torch.is_tensor(channel_balance) else pred.new_tensor(0.0),
         "energy_env": energy_env.detach(),
         "multiscale_mel": multiscale_mel.detach(),
+        "frame_energy": frame_energy.detach(),
+        "voiced_rms": voiced_rms.detach(),
+        "decoder_scale": dec_scale.detach(),
+        "ctc": ctc.detach(),
         "hubert_aux": hubert_aux.detach(),
         "hubert_clip": hubert_clip.detach(),
     }
-

@@ -73,6 +73,8 @@ def main() -> None:
     target_kind = args.target or str(cfg.get("target", {}).get("kind", "encodec_latent"))
     root, targets, common = _load_common(cfg, stages, target_kind)
     print(f"[target] kind={target_kind} D={targets.D} T={targets.T}")
+    if target_kind == "encodec_latent" and not targets.has_complete_audio_metadata:
+        print("[target] WARNING: EnCodec cache is legacy/incomplete; rebuild with scripts/extract_karaone_targets.py --target encodec_latent --force")
 
     # WS3: optional HuBERT auxiliary target cache (semantic content head + retrieval).
     da_cfg = cfg.get("domain_adapt", {})
@@ -122,6 +124,11 @@ def main() -> None:
             dropout=float(model_cfg.get("dropout", 0.15)),
             num_experts=int(model_cfg.get("num_experts", 1)),
             num_channel_experts=num_channel_experts,
+            encoder_kind=str(model_cfg.get("encoder_kind", "cnn")),
+            transformer_layers=int(model_cfg.get("transformer_layers", 4)),
+            transformer_heads=int(model_cfg.get("transformer_heads", 4)),
+            patch_stride=int(model_cfg.get("patch_stride", 4)),
+            decoder_scale_dim=int(targets.decoder_scale_dim),
             instance_norm=bool(da_cfg.get("instance_norm", False)),
             use_domain_adv=bool(da_cfg.get("adversarial", False)),
             hubert_dim=int(aux_targets.D) if aux_targets is not None else 0,
@@ -167,6 +174,10 @@ def main() -> None:
             "lambda_dtw": 0.0,
             "lambda_energy_env": 0.0,
             "lambda_multiscale_mel": 0.0,
+            "lambda_frame_energy": 0.0,
+            "lambda_voiced_rms": 0.0,
+            "lambda_decoder_scale": 0.0,
+            "lambda_ctc": 0.0,
             "lambda_hubert_aux": 0.0,
             "lambda_hubert_clip": 0.0,
             "supcon_temperature": 0.1,
@@ -258,6 +269,7 @@ def main() -> None:
                 batch["target_log_rms"].to(device),
                 hubert_seq=batch["hubert_seq"].to(device) if "hubert_seq" in batch else None,
                 hubert_summary=batch["hubert_summary"].to(device) if "hubert_summary" in batch else None,
+                target_decoder_scale=batch["target_decoder_scale"].to(device),
                 **loss_kwargs,
             )
             total = losses["total"]

@@ -33,7 +33,7 @@ app/
 data/karaone/
   processed KaraOne EEG/audio bundles
 artifacts/audio_targets/
-  karaone_trial_encodec_latents.npz
+  karaone_trial_encodec_latents.npz  # must be the complete post-202606 format
 models/encodec_24khz/
   local EnCodec weights
 reports/
@@ -49,20 +49,22 @@ RUN_SERVER.md     # step-by-step runbook
 `EEG -> encoder(opt. channel-MoE) -> decoder head -> acoustic target -> vocoder -> wav`.
 Everything is a switch (see [METHOD.md](METHOD.md) and [DIFFUSION_PLAN.md](DIFFUSION_PLAN.md)):
 
-- **Acoustic target** (`target.kind`): `mel` (log-mel + scipy Griffin-Lim vocoder,
-  **default**, offline) or `encodec_latent` (EnCodec continuous latent + EnCodec decoder).
-- **Decoder head**: `regression` (`train_karaone_recon.py`) or `diffusion`
-  (`EEGLatentDiffusion`, `train_karaone_diffusion.py`).
+- **Acoustic target** (`target.kind`): `encodec_latent` (**mainline**, EnCodec continuous latent + EnCodec decoder)
+  or `mel` (log-mel + scipy Griffin-Lim baseline, offline).
+- **Decoder head**: `flow`/`diffusion` (`train_karaone_diffusion.py`) or regression
+  (`train_karaone_recon.py`). The mainline runner is `bash run_codec.sh`.
 - **Alignment / anti-collapse** (regression): `lambda_dtw` (DTW-aligned recon — handles
   the cross-trial onset jitter that naive frame-wise regression cannot) and `lambda_gan`
   (adversarial, fights mean-collapse). Defaults: dtw on, gan off (set `lambda_gan>0`).
+- **Encoder** (`model.encoder_kind`): `conformer` mainline, `transformer` ablation, `cnn` legacy.
 - **Encoder channel-MoE** (`--model moe`): per-channel gate + channel clustering.
 - **Subject-agnostic**: no subject-ID input anywhere (output is identical across subjects).
 
-Default = `mel + regression + DTW + Griffin-Lim`, mirroring the EEG→speech literature
-(NeuroTalk / Park 2025 / FESDE). The earlier EnCodec-latent cosine-regression path
-collapses to the mean voice on this data (std-ratio ~0.15, sample pairwise-corr ~0.94)
-and is kept only as an honest baseline switch.
+Default = `EnCodec latent + conditional flow matching + Conformer + EnCodec decoder`.
+The mel + Griffin-Lim route is kept as an honest baseline via `run_mel.sh`.
+The older EnCodec cache format is incomplete for synthesis; rebuild it with
+`python app/scripts/extract_karaone_targets.py --target encodec_latent --force`, or
+just run `bash run_codec.sh`, which checks and rebuilds it automatically.
 
 The raw 23GB KaraOne `.tar.bz2` archives are not included.
 
@@ -80,12 +82,12 @@ The raw 23GB KaraOne `.tar.bz2` archives are not included.
 ```text
 EEG [62 x L]
   -> channel-MoE front-end (selects/clusters channels)   # only with --model moe
-  -> stage-conditioned spatial-temporal encoder           # NO subject ID
+  -> conformer/transformer EEG encoder                    # NO subject ID
   -> valid-length masked time pooling -> utterance embedding
   -> latent head (content + EEG-derived global/voice)
-  -> EnCodec latent [T,128]
+  -> EnCodec latent [T,128] or conditional flow samples
   -> frozen EnCodec decoder
-  -> wav (loudness rescaled by a predicted log-RMS head)
+  -> wav (loudness/active energy monitored separately)
 ```
 
 Key properties (see [METHOD.md](METHOD.md) for the full story):
@@ -96,9 +98,10 @@ Key properties (see [METHOD.md](METHOD.md) for the full story):
 - **Channel-MoE encoder** (`--model moe`): a learned per-channel gate + soft
   clustering of channels into experts, i.e. "not every channel is useful" made
   explicit. Plain spatial conv with `--model baseline`.
-- **Two training signals for alignment**: frame-wise regression to the EnCodec
-  latent *plus* a cross-modal contrastive loss (Defossez 2022) that pulls each
-  trial's EEG embedding toward its own audio and away from other trials'.
+- **Two-stage supervision**: HuBERT/wav2vec-style semantic auxiliary targets and
+  prompt-token CTC guide content, while EnCodec/flow handles acoustic realization.
+- **Energy repair**: frame log-energy, active voiced-region RMS, decoder-scale, and
+  envelope metrics directly target the low-volume/flat-waveform failure mode.
 - **Refiner is NOT diffusion.** `train_karaone_refiner.py` is an optional
   single-step residual post-filter on a frozen checkpoint. See `refiner.py`.
 
@@ -108,9 +111,10 @@ Always compare prediction against:
 
 - `zeroeeg`: EEG set to zero (now a global constant, since there is no subject id)
 - `mean_latent`: global target latent mean
-- `oracle_codec`: true target latent decoded by EnCodec (the quality ceiling)
+- `oracle_encodec`: true target latent decoded by EnCodec (the quality ceiling)
 
-The headline number is `pred_over_zero_cos_gain`, not raw reconstruction cosine.
+The headline numbers are `pred_over_mean_cos_gain`, HuBERT/retrieval metrics, and
+active-region synthesis metrics (`*_active_env_corr`, `*_voiced_rms_over_orig`), not
+raw waveform Pearson.
 Because the model is subject-agnostic, this gain is a clean measure of how much
 the EEG actually contributes over a content-free baseline.
-

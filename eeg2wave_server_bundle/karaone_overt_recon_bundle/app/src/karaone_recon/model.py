@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .encoder import SpatialTemporalEEGEncoder
+from .encoder import SpatialTemporalEEGEncoder, TransformerEEGEncoder
 from .losses import grad_reverse
 
 
@@ -48,6 +48,11 @@ class KaraOneConfig:
     dropout: float = 0.15
     num_experts: int = 1
     num_channel_experts: int = 1
+    encoder_kind: str = "cnn"           # cnn | transformer | conformer
+    transformer_layers: int = 4
+    transformer_heads: int = 4
+    patch_stride: int = 4
+    decoder_scale_dim: int = 1
     # WS1 cross-subject domain adaptation
     instance_norm: bool = False        # per-trial RevIN normalization in the encoder (no subject id)
     use_domain_adv: bool = False       # subject-adversarial DANN head (train-only; inference subject-agnostic)
@@ -65,18 +70,35 @@ class KaraOneEEG2Codec(nn.Module):
         self.stage_embedding = nn.Embedding(cfg.num_stages, cfg.cond_dim)
         nn.init.normal_(self.stage_embedding.weight, std=0.02)
 
-        self.encoder = SpatialTemporalEEGEncoder(
-            in_channels=cfg.n_channels_eeg,
-            d_model=cfg.d_model,
-            cond_dim=cfg.cond_dim,
-            target_steps=cfg.target_steps,
-            num_blocks=cfg.num_blocks,
-            kernel_size=cfg.kernel_size,
-            channel_dropout=cfg.channel_dropout,
-            dropout=cfg.dropout,
-            num_channel_experts=cfg.num_channel_experts,
-            instance_norm=cfg.instance_norm,
-        )
+        if str(cfg.encoder_kind) in {"transformer", "conformer"}:
+            self.encoder = TransformerEEGEncoder(
+                in_channels=cfg.n_channels_eeg,
+                d_model=cfg.d_model,
+                cond_dim=cfg.cond_dim,
+                target_steps=cfg.target_steps,
+                kernel_size=cfg.kernel_size,
+                channel_dropout=cfg.channel_dropout,
+                dropout=cfg.dropout,
+                num_channel_experts=cfg.num_channel_experts,
+                instance_norm=cfg.instance_norm,
+                encoder_kind=str(cfg.encoder_kind),
+                transformer_layers=int(cfg.transformer_layers),
+                transformer_heads=int(cfg.transformer_heads),
+                patch_stride=int(cfg.patch_stride),
+            )
+        else:
+            self.encoder = SpatialTemporalEEGEncoder(
+                in_channels=cfg.n_channels_eeg,
+                d_model=cfg.d_model,
+                cond_dim=cfg.cond_dim,
+                target_steps=cfg.target_steps,
+                num_blocks=cfg.num_blocks,
+                kernel_size=cfg.kernel_size,
+                channel_dropout=cfg.channel_dropout,
+                dropout=cfg.dropout,
+                num_channel_experts=cfg.num_channel_experts,
+                instance_norm=cfg.instance_norm,
+            )
         d = cfg.d_model
         self.content_seq_head = nn.Sequential(
             nn.LayerNorm(d),
@@ -87,6 +109,7 @@ class KaraOneEEG2Codec(nn.Module):
         )
         self.content_embed_head = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, cfg.content_dim))
         self.content_classifier = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, d), nn.GELU(), nn.Linear(d, cfg.num_labels))
+        self.ctc_classifier = nn.Sequential(nn.LayerNorm(cfg.content_dim), nn.Linear(cfg.content_dim, cfg.num_labels + 1))
 
         # Global utterance/voice embedding inferred from the EEG (replaces the old
         # per-subject speaker lookup table). cfg.speaker_dim is just its width.
@@ -139,6 +162,18 @@ class KaraOneEEG2Codec(nn.Module):
             nn.Linear(cfg.content_dim + cfg.speaker_dim, d),
             nn.GELU(),
             nn.Linear(d, 1),
+        )
+        self.frame_energy_head = nn.Sequential(
+            nn.LayerNorm(cfg.content_dim + cfg.speaker_dim),
+            nn.Linear(cfg.content_dim + cfg.speaker_dim, d),
+            nn.GELU(),
+            nn.Linear(d, 1),
+        )
+        self.decoder_scale_head = nn.Sequential(
+            nn.LayerNorm(cfg.speaker_dim),
+            nn.Linear(cfg.speaker_dim, d),
+            nn.GELU(),
+            nn.Linear(d, max(1, int(cfg.decoder_scale_dim))),
         )
 
         # WS1: subject-adversarial DANN head. Trains to classify the subject from the
@@ -201,11 +236,16 @@ class KaraOneEEG2Codec(nn.Module):
         pred_latent = (expert_outputs * router_probs[:, None, :, None]).sum(dim=2)
 
         pred_log_rms = self.log_rms_head(torch.cat([content_seq.mean(dim=1), global_embed], dim=-1)).squeeze(-1)
+        pred_frame_log_energy = self.frame_energy_head(expert_input).squeeze(-1)
+        pred_log_decoder_scale = self.decoder_scale_head(global_embed)
         out = {
             "pred_latent": pred_latent,
             "pred_log_rms": pred_log_rms,
+            "pred_frame_log_energy": pred_frame_log_energy,
+            "pred_log_decoder_scale": pred_log_decoder_scale,
             "content_embed": content_embed,
             "content_logits": self.content_classifier(pooled),
+            "ctc_logits": self.ctc_classifier(content_seq),
             "clip_embed": self.clip_head(pooled),  # EEG side of the EEG<->audio contrastive alignment
             "router_logits": router_logits,
             "router_probs": router_probs,
@@ -233,4 +273,3 @@ class KaraOneEEG2Codec(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         out = self.forward(eeg, subject_idx, stage_idx, eeg_valid_len)
         return out["pred_latent"], out["pred_log_rms"]
-

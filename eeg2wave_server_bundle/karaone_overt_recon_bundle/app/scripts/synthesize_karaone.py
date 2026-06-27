@@ -63,14 +63,69 @@ def _env_corr(a: np.ndarray, b: np.ndarray) -> float:
     return float((ea * eb).sum() / den)
 
 
+def _active_mask(env: np.ndarray) -> np.ndarray:
+    env = np.asarray(env, dtype=np.float64)
+    if env.size == 0 or float(env.max(initial=0.0)) <= 1e-10:
+        return np.ones(max(env.size, 1), dtype=bool)
+    median = float(np.median(env))
+    mad = float(np.median(np.abs(env - median))) + 1e-12
+    threshold = max(0.2 * float(env.max()), median + 2.0 * mad)
+    mask = env >= threshold
+    if not mask.any():
+        mask[int(np.argmax(env))] = True
+    return mask
+
+
+def _samples_from_frame_mask(mask: np.ndarray, n: int, hop: int = 256) -> np.ndarray:
+    sample_mask = np.repeat(mask.astype(bool), hop)
+    if sample_mask.size < n:
+        sample_mask = np.pad(sample_mask, (0, n - sample_mask.size), constant_values=False)
+    return sample_mask[:n]
+
+
+def _active_metrics(candidate: np.ndarray, original: np.ndarray, hop: int = 256) -> dict[str, float]:
+    cand_env = _envelope(candidate, hop=hop)
+    orig_env = _envelope(original, hop=hop)
+    m = min(len(cand_env), len(orig_env))
+    cand_env, orig_env = cand_env[:m], orig_env[:m]
+    orig_active = _active_mask(orig_env)
+    cand_active = _active_mask(cand_env)
+    orig_sample_mask = _samples_from_frame_mask(orig_active, min(len(candidate), len(original)), hop=hop)
+    cand = np.asarray(candidate[: orig_sample_mask.size], dtype=np.float64)
+    orig = np.asarray(original[: orig_sample_mask.size], dtype=np.float64)
+    if not orig_sample_mask.any():
+        orig_sample_mask = np.ones_like(orig_sample_mask, dtype=bool)
+    cand_voiced = cand[orig_sample_mask]
+    orig_voiced = orig[orig_sample_mask]
+    voiced_rms_ratio = _rms(cand_voiced) / max(_rms(orig_voiced), 1e-8)
+    peak_ratio = float(np.max(np.abs(cand_voiced)) / max(float(np.max(np.abs(orig_voiced))), 1e-8))
+    duration_ratio = float(cand_active.mean() / max(float(orig_active.mean()), 1e-8))
+    active_corr = 0.0
+    if orig_active.sum() >= 2:
+        ca = cand_env[orig_active] - cand_env[orig_active].mean()
+        oa = orig_env[orig_active] - orig_env[orig_active].mean()
+        active_corr = float((ca * oa).sum() / (np.linalg.norm(ca) * np.linalg.norm(oa) + 1e-8))
+    return {
+        "active_env_corr": active_corr,
+        "voiced_rms_over_orig": float(voiced_rms_ratio),
+        "peak_over_orig": peak_ratio,
+        "active_duration_ratio": duration_ratio,
+    }
+
+
 def main() -> None:
     args = parse_args()
     cfg = load_simple_yaml(args.config)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model = KaraOneEEG2Codec(KaraOneConfig(**ckpt["model_config"])).to(device)
-    model.load_state_dict(ckpt["model_state"], strict=True)
+    missing, unexpected = model.load_state_dict(ckpt["model_state"], strict=False)
+    if missing:
+        print(f"[synth] checkpoint missing {len(missing)} new keys; using initialized defaults for: {missing[:4]}")
+    if unexpected:
+        print(f"[synth] checkpoint has {len(unexpected)} unexpected keys; ignored: {unexpected[:4]}")
     model.eval()
+    has_trained_scale_head = any(str(key).startswith("decoder_scale_head.") for key in ckpt.get("model_state", {}))
     root = resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR)
     target_kind = str(ckpt.get("target_kind", cfg.get("target", {}).get("kind", "encodec_latent")))
     _, cache = resolve_target_cache(cfg, BUNDLE_DIR, target_kind)
@@ -122,27 +177,36 @@ def main() -> None:
         entry = ds.entries[idx]
         with torch.no_grad():
             valid_len = item["eeg_valid_len"].view(1).to(device)
-            pred_latent, pred_log_rms = model.generate_full(
+            pred_out = model(
                 item["eeg"].unsqueeze(0).to(device),
                 item["subject_idx"].view(1).to(device),
                 item["stage_idx"].view(1).to(device),
                 valid_len,
             )
-            zero_latent, zero_log_rms = model.generate_full(
+            zero_out = model(
                 torch.zeros_like(item["eeg"]).unsqueeze(0).to(device),
                 item["subject_idx"].view(1).to(device),
                 item["stage_idx"].view(1).to(device),
                 valid_len,
             )
-        pred = pred_latent.squeeze(0).cpu().numpy()
-        zero = zero_latent.squeeze(0).cpu().numpy()
+        pred = pred_out["pred_latent"].squeeze(0).cpu().numpy()
+        zero = zero_out["pred_latent"].squeeze(0).cpu().numpy()
+        pred_log_rms = pred_out["pred_log_rms"].squeeze(0)
+        zero_log_rms = zero_out["pred_log_rms"].squeeze(0)
+        pred_decoder_scale = targets.default_decoder_scales
+        zero_decoder_scale = targets.default_decoder_scales
+        if has_trained_scale_head:
+            pred_decoder_scale = np.exp(pred_out["pred_log_decoder_scale"].squeeze(0).cpu().numpy()).astype(np.float32)
+            zero_decoder_scale = np.exp(zero_out["pred_log_decoder_scale"].squeeze(0).cpu().numpy()).astype(np.float32)
+            pred_decoder_scale = np.clip(pred_decoder_scale, 1e-4, 20.0)
+            zero_decoder_scale = np.clip(zero_decoder_scale, 1e-4, 20.0)
         pred_wav = backend.decode(
             denormalize_latent(pred, targets.target_mean, targets.target_std),
-            decoder_scales=targets.default_decoder_scales,
+            decoder_scales=pred_decoder_scale,
         )
         zero_wav = backend.decode(
             denormalize_latent(zero, targets.target_mean, targets.target_std),
-            decoder_scales=targets.default_decoder_scales,
+            decoder_scales=zero_decoder_scale,
         )
         oracle = backend.decode(
             targets.raw_target(entry.subject, entry.trial_index).astype(np.float32),
@@ -157,9 +221,10 @@ def main() -> None:
             max_gain=float(cfg["audio"].get("max_gain", 10.0)),
         )
         tag = f"{entry.subject}_{entry.label.replace('/', '')}_{entry.stage}_t{entry.trial_index:03d}"
+        oracle_kind = "oracle_encodec" if target_kind == "encodec_latent" else "oracle_griffinlim"
         wavs = {
             "original": original,
-            "oracle_codec": oracle,
+            oracle_kind: oracle,
             "mean_latent": mean_wav,
             "zeroeeg": zero_wav,
             "pred": pred_wav,
@@ -172,6 +237,8 @@ def main() -> None:
             manifest.append([entry.subject, entry.label, entry.stage, entry.trial_index, args.split, kind, filename, _rms(wav)])
         # Oracle = GT target through the SAME vocoder => the vocoder ceiling. Reporting
         # pred vs oracle (not just vs original) separates "model error" from "vocoder loss".
+        pred_active = _active_metrics(wavs["pred_scaled"], original)
+        oracle_active = _active_metrics(oracle, original)
         metric_rows.append(
             {
                 "subject": entry.subject,
@@ -181,6 +248,14 @@ def main() -> None:
                 "oracle_env_corr": _env_corr(oracle, original),
                 "pred_rms_over_orig": _rms(wavs["pred_scaled"]) / max(_rms(original), 1e-8),
                 "oracle_rms_over_orig": _rms(oracle) / max(_rms(original), 1e-8),
+                "pred_active_env_corr": pred_active["active_env_corr"],
+                "oracle_active_env_corr": oracle_active["active_env_corr"],
+                "pred_voiced_rms_over_orig": pred_active["voiced_rms_over_orig"],
+                "oracle_voiced_rms_over_orig": oracle_active["voiced_rms_over_orig"],
+                "pred_peak_over_orig": pred_active["peak_over_orig"],
+                "oracle_peak_over_orig": oracle_active["peak_over_orig"],
+                "pred_active_duration_ratio": pred_active["active_duration_ratio"],
+                "oracle_active_duration_ratio": oracle_active["active_duration_ratio"],
             }
         )
     with (out_dir / "listening_manifest.csv").open("w", encoding="utf-8", newline="") as handle:
@@ -196,17 +271,29 @@ def main() -> None:
         "n": len(metric_rows),
         "target_kind": target_kind,
         "vocoder": "griffinlim" if target_kind == "mel" else "encodec",
+        "oracle_kind": oracle_kind if metric_rows else ("oracle_encodec" if target_kind == "encodec_latent" else "oracle_griffinlim"),
         "pred_env_corr_mean": _mean("pred_env_corr"),
         "oracle_env_corr_mean": _mean("oracle_env_corr"),  # vocoder ceiling
         "pred_rms_over_orig_mean": _mean("pred_rms_over_orig"),
         "oracle_rms_over_orig_mean": _mean("oracle_rms_over_orig"),
+        "pred_active_env_corr_mean": _mean("pred_active_env_corr"),
+        "oracle_active_env_corr_mean": _mean("oracle_active_env_corr"),
+        "pred_voiced_rms_over_orig_mean": _mean("pred_voiced_rms_over_orig"),
+        "oracle_voiced_rms_over_orig_mean": _mean("oracle_voiced_rms_over_orig"),
+        "pred_peak_over_orig_mean": _mean("pred_peak_over_orig"),
+        "oracle_peak_over_orig_mean": _mean("oracle_peak_over_orig"),
+        "pred_active_duration_ratio_mean": _mean("pred_active_duration_ratio"),
+        "oracle_active_duration_ratio_mean": _mean("oracle_active_duration_ratio"),
         "per_trial": metric_rows,
     }
     (out_dir / "synth_metrics.json").write_text(json.dumps(synth_metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(
         f"[oracle] env_corr pred={synth_metrics['pred_env_corr_mean']:.3f} "
         f"oracle(ceiling)={synth_metrics['oracle_env_corr_mean']:.3f} | "
-        f"rms/orig pred={synth_metrics['pred_rms_over_orig_mean']:.3f} oracle={synth_metrics['oracle_rms_over_orig_mean']:.3f}"
+        f"active_env pred={synth_metrics['pred_active_env_corr_mean']:.3f} "
+        f"oracle={synth_metrics['oracle_active_env_corr_mean']:.3f} | "
+        f"voiced_rms/orig pred={synth_metrics['pred_voiced_rms_over_orig_mean']:.3f} "
+        f"oracle={synth_metrics['oracle_voiced_rms_over_orig_mean']:.3f}"
     )
     print(f"[done] wrote {len(manifest)} wav rows to {out_dir}")
 

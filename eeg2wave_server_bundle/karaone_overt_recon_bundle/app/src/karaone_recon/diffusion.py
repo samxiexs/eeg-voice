@@ -21,6 +21,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .encoder import SpatialTemporalEEGEncoder
+from .encoder import TransformerEEGEncoder
 
 
 @dataclass
@@ -37,6 +38,10 @@ class DiffusionConfig:
     dropout: float = 0.1
     num_channel_experts: int = 1   # reuse the channel-MoE front-end if > 1
     encoder_blocks: int = 6
+    encoder_kind: str = "cnn"
+    transformer_layers: int = 4
+    transformer_heads: int = 4
+    patch_stride: int = 4
     timesteps: int = 1000
     schedule: str = "cosine"
     x0_clip: float = 8.0           # clamp predicted x0 during sampling (z-scored latent is ~unit scale)
@@ -95,17 +100,33 @@ class EEGLatentDiffusion(nn.Module):
     def __init__(self, cfg: DiffusionConfig):
         super().__init__()
         self.cfg = cfg
-        self.eeg_encoder = SpatialTemporalEEGEncoder(
-            in_channels=cfg.n_channels_eeg,
-            d_model=cfg.d_model,
-            cond_dim=cfg.time_dim,  # unused stage cond; we feed a zero/learned bias below
-            target_steps=cfg.target_steps,
-            num_blocks=cfg.encoder_blocks,
-            kernel_size=cfg.kernel_size,
-            channel_dropout=0.15,
-            dropout=cfg.dropout,
-            num_channel_experts=cfg.num_channel_experts,
-        )
+        if str(cfg.encoder_kind) in {"transformer", "conformer"}:
+            self.eeg_encoder = TransformerEEGEncoder(
+                in_channels=cfg.n_channels_eeg,
+                d_model=cfg.d_model,
+                cond_dim=cfg.time_dim,
+                target_steps=cfg.target_steps,
+                kernel_size=cfg.kernel_size,
+                channel_dropout=0.15,
+                dropout=cfg.dropout,
+                num_channel_experts=cfg.num_channel_experts,
+                encoder_kind=str(cfg.encoder_kind),
+                transformer_layers=int(cfg.transformer_layers),
+                transformer_heads=int(cfg.transformer_heads),
+                patch_stride=int(cfg.patch_stride),
+            )
+        else:
+            self.eeg_encoder = SpatialTemporalEEGEncoder(
+                in_channels=cfg.n_channels_eeg,
+                d_model=cfg.d_model,
+                cond_dim=cfg.time_dim,  # unused stage cond; we feed a zero/learned bias below
+                target_steps=cfg.target_steps,
+                num_blocks=cfg.encoder_blocks,
+                kernel_size=cfg.kernel_size,
+                channel_dropout=0.15,
+                dropout=cfg.dropout,
+                num_channel_experts=cfg.num_channel_experts,
+            )
         # The encoder's FiLM expects a cond vector; we use a single learned bias
         # (task-only, subject-agnostic). Shape [1, time_dim].
         self.enc_cond_bias = nn.Parameter(torch.zeros(1, cfg.time_dim))

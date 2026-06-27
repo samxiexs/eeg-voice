@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 import time
 from pathlib import Path
@@ -40,6 +41,69 @@ def _rms(audio: np.ndarray) -> float:
 
 def _scale_to_rms(audio: np.ndarray, target_rms: float, max_gain: float = 20.0) -> np.ndarray:
     return (audio * min(float(target_rms) / _rms(audio), max_gain)).astype(np.float32)
+
+
+def _envelope(audio: np.ndarray, hop: int = 256) -> np.ndarray:
+    n = len(audio) // hop
+    if n < 2:
+        return np.zeros(2, dtype=np.float64)
+    frames = np.asarray(audio[: n * hop], dtype=np.float64).reshape(n, hop)
+    return np.sqrt(np.mean(np.square(frames), axis=1) + 1e-12)
+
+
+def _env_corr(a: np.ndarray, b: np.ndarray) -> float:
+    ea, eb = _envelope(a), _envelope(b)
+    m = min(len(ea), len(eb))
+    if m < 2:
+        return 0.0
+    ea = ea[:m] - ea[:m].mean()
+    eb = eb[:m] - eb[:m].mean()
+    return float((ea * eb).sum() / (np.linalg.norm(ea) * np.linalg.norm(eb) + 1e-8))
+
+
+def _active_mask(env: np.ndarray) -> np.ndarray:
+    env = np.asarray(env, dtype=np.float64)
+    if env.size == 0 or float(env.max(initial=0.0)) <= 1e-10:
+        return np.ones(max(env.size, 1), dtype=bool)
+    median = float(np.median(env))
+    mad = float(np.median(np.abs(env - median))) + 1e-12
+    threshold = max(0.2 * float(env.max()), median + 2.0 * mad)
+    mask = env >= threshold
+    if not mask.any():
+        mask[int(np.argmax(env))] = True
+    return mask
+
+
+def _samples_from_frame_mask(mask: np.ndarray, n: int, hop: int = 256) -> np.ndarray:
+    sample_mask = np.repeat(mask.astype(bool), hop)
+    if sample_mask.size < n:
+        sample_mask = np.pad(sample_mask, (0, n - sample_mask.size), constant_values=False)
+    return sample_mask[:n]
+
+
+def _active_metrics(candidate: np.ndarray, original: np.ndarray, hop: int = 256) -> dict[str, float]:
+    cand_env = _envelope(candidate, hop=hop)
+    orig_env = _envelope(original, hop=hop)
+    m = min(len(cand_env), len(orig_env))
+    cand_env, orig_env = cand_env[:m], orig_env[:m]
+    orig_active = _active_mask(orig_env)
+    cand_active = _active_mask(cand_env)
+    sample_mask = _samples_from_frame_mask(orig_active, min(len(candidate), len(original)), hop=hop)
+    if not sample_mask.any():
+        sample_mask = np.ones_like(sample_mask, dtype=bool)
+    cand = np.asarray(candidate[: sample_mask.size], dtype=np.float64)[sample_mask]
+    orig = np.asarray(original[: sample_mask.size], dtype=np.float64)[sample_mask]
+    active_corr = 0.0
+    if orig_active.sum() >= 2:
+        ca = cand_env[orig_active] - cand_env[orig_active].mean()
+        oa = orig_env[orig_active] - orig_env[orig_active].mean()
+        active_corr = float((ca * oa).sum() / (np.linalg.norm(ca) * np.linalg.norm(oa) + 1e-8))
+    return {
+        "active_env_corr": active_corr,
+        "voiced_rms_over_orig": _rms(cand) / max(_rms(orig), 1e-8),
+        "peak_over_orig": float(np.max(np.abs(cand)) / max(float(np.max(np.abs(orig))), 1e-8)),
+        "active_duration_ratio": float(cand_active.mean() / max(float(orig_active.mean()), 1e-8)),
+    }
 
 
 def main() -> None:
@@ -97,6 +161,7 @@ def main() -> None:
     n_out = len(ds) if int(args.limit) <= 0 else min(int(args.limit), len(ds))
     print(f"[synth] reconstructing {n_out}/{len(ds)} trials of split={args.split} (ddim_steps={steps})")
     manifest = []
+    metric_rows = []
     for idx in range(n_out):
         item = ds[idx]
         entry = ds.entries[idx]
@@ -104,21 +169,30 @@ def main() -> None:
         valid = item["eeg_valid_len"].view(1).to(device)
         tag = f"{entry.subject}_{entry.label.replace('/', '')}_{entry.stage}_t{entry.trial_index:03d}"
 
+        oracle_kind = "oracle_encodec" if target_kind == "encodec_latent" else "oracle_griffinlim"
+        original = load_wav_fixed(
+            root / targets.audio_path(entry.subject, entry.trial_index),
+            sample_rate=sample_rate,
+            n_samples=int(round(sample_rate * duration_sec)),
+            normalize=str(cfg["audio"].get("normalize", "rms")),
+            target_rms=target_rms,
+            max_gain=float(cfg["audio"].get("max_gain", 10.0)),
+        )
         wavs = {
-            "original": load_wav_fixed(
-                root / targets.audio_path(entry.subject, entry.trial_index),
-                sample_rate=sample_rate,
-                n_samples=int(round(sample_rate * duration_sec)),
-                normalize=str(cfg["audio"].get("normalize", "rms")),
-                target_rms=target_rms,
-                max_gain=float(cfg["audio"].get("max_gain", 10.0)),
-            ),
-            "oracle_codec": backend.decode(
+            "original": original,
+            oracle_kind: backend.decode(
                 targets.raw_target(entry.subject, entry.trial_index).astype(np.float32),
                 decoder_scales=targets.decoder_scale(entry.subject, entry.trial_index),
             ),
             "mean_latent": mean_wav,
         }
+        with torch.no_grad():
+            zero_latent = model.sample(torch.zeros_like(eeg), valid, steps=steps).squeeze(0).cpu().numpy()
+        zero_wav = backend.decode(
+            denormalize_latent(zero_latent, targets.target_mean, targets.target_std),
+            decoder_scales=targets.default_decoder_scales,
+        )
+        wavs["zeroeeg"] = _scale_to_rms(zero_wav, target_rms)
         # Multiple diffusion draws -> demonstrates the output is NOT a fixed mean.
         for s in range(int(args.num_samples)):
             with torch.no_grad():
@@ -129,6 +203,30 @@ def main() -> None:
             )
             wavs[f"sample{s + 1}"] = _scale_to_rms(wav, target_rms)
 
+        sample1 = wavs.get("sample1")
+        if sample1 is not None:
+            sample_active = _active_metrics(sample1, original)
+            oracle_active = _active_metrics(wavs[oracle_kind], original)
+            metric_rows.append(
+                {
+                    "subject": entry.subject,
+                    "label": entry.label,
+                    "trial_index": int(entry.trial_index),
+                    "sample1_env_corr": _env_corr(sample1, original),
+                    "oracle_env_corr": _env_corr(wavs[oracle_kind], original),
+                    "sample1_rms_over_orig": _rms(sample1) / max(_rms(original), 1e-8),
+                    "oracle_rms_over_orig": _rms(wavs[oracle_kind]) / max(_rms(original), 1e-8),
+                    "sample1_active_env_corr": sample_active["active_env_corr"],
+                    "oracle_active_env_corr": oracle_active["active_env_corr"],
+                    "sample1_voiced_rms_over_orig": sample_active["voiced_rms_over_orig"],
+                    "oracle_voiced_rms_over_orig": oracle_active["voiced_rms_over_orig"],
+                    "sample1_peak_over_orig": sample_active["peak_over_orig"],
+                    "oracle_peak_over_orig": oracle_active["peak_over_orig"],
+                    "sample1_active_duration_ratio": sample_active["active_duration_ratio"],
+                    "oracle_active_duration_ratio": oracle_active["active_duration_ratio"],
+                }
+            )
+
         for kind, wav in wavs.items():
             filename = f"{tag}_{kind}.wav"
             save_wav(out_dir / filename, wav, sample_rate)
@@ -137,6 +235,34 @@ def main() -> None:
         writer = csv.writer(handle)
         writer.writerow(["subject", "label", "stage", "trial_index", "split", "wav_type", "file", "rms"])
         writer.writerows(manifest)
+    def _mean(key: str) -> float:
+        return float(np.mean([row[key] for row in metric_rows])) if metric_rows else 0.0
+
+    synth_metrics = {
+        "split": args.split,
+        "n": len(metric_rows),
+        "target_kind": target_kind,
+        "vocoder": "griffinlim" if target_kind == "mel" else "encodec",
+        "oracle_kind": "oracle_encodec" if target_kind == "encodec_latent" else "oracle_griffinlim",
+        "sample1_env_corr_mean": _mean("sample1_env_corr"),
+        "oracle_env_corr_mean": _mean("oracle_env_corr"),
+        "sample1_active_env_corr_mean": _mean("sample1_active_env_corr"),
+        "oracle_active_env_corr_mean": _mean("oracle_active_env_corr"),
+        "sample1_voiced_rms_over_orig_mean": _mean("sample1_voiced_rms_over_orig"),
+        "oracle_voiced_rms_over_orig_mean": _mean("oracle_voiced_rms_over_orig"),
+        "sample1_peak_over_orig_mean": _mean("sample1_peak_over_orig"),
+        "oracle_peak_over_orig_mean": _mean("oracle_peak_over_orig"),
+        "sample1_active_duration_ratio_mean": _mean("sample1_active_duration_ratio"),
+        "oracle_active_duration_ratio_mean": _mean("oracle_active_duration_ratio"),
+        "per_trial": metric_rows,
+    }
+    (out_dir / "synth_metrics.json").write_text(json.dumps(synth_metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"[oracle] env_corr sample1={synth_metrics['sample1_env_corr_mean']:.3f} "
+        f"oracle={synth_metrics['oracle_env_corr_mean']:.3f} | "
+        f"active_env sample1={synth_metrics['sample1_active_env_corr_mean']:.3f} "
+        f"oracle={synth_metrics['oracle_active_env_corr_mean']:.3f}"
+    )
     print(f"[done] wrote {len(manifest)} wav rows to {out_dir} (ddim_steps={steps})")
 
 
