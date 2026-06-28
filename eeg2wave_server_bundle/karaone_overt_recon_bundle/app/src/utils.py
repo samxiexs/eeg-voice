@@ -92,15 +92,20 @@ def resolve_bundle_path(path: str | Path, base_dir: str | Path) -> Path:
 
 
 def resolve_target_cache(cfg: dict, base_dir: str | Path, kind: str | None = None) -> tuple[str, Path]:
-    """Resolve the acoustic-target cache path for the selected target kind.
+    """Resolve the target cache path for the selected target kind.
 
-    Returns (kind, path). `mel` -> target.cache_mel; otherwise the EnCodec-latent
-    cache (target.cache_encodec or legacy data.target_cache)."""
+    Returns (kind, path). `mel` and `encodec_latent` are renderable acoustic
+    targets; `hubert_sequence` is the semantic-first target used by the Phase 1
+    KaraOne trainer."""
     tgt = cfg.get("target", {})
     kind = kind or str(tgt.get("kind", "encodec_latent"))
     if kind == "mel":
         path = tgt.get("cache_mel", "../artifacts/audio_targets/karaone_trial_mel.npz")
+    elif kind in {"hubert_sequence", "hubert"}:
+        kind = "hubert_sequence"
+        path = tgt.get("cache_hubert", "../artifacts/audio_targets/karaone_trial_hubert.npz")
     else:
+        kind = "encodec_latent"
         path = tgt.get("cache_encodec", cfg["data"]["target_cache"])
     return kind, resolve_bundle_path(path, base_dir)
 

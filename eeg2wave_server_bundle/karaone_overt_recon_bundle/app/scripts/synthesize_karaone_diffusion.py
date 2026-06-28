@@ -17,6 +17,7 @@ if str(BUNDLE_DIR) not in sys.path:
 from src.audio_features import AudioFeatureConfig, load_mel_vocoder
 from src.karaone_recon.data import KaraOneTrialDataset
 from src.karaone_recon.diffusion import DiffusionConfig, EEGLatentDiffusion
+from src.karaone_recon.rendered_metrics import load_whisper_asr, transcribe_label_metrics
 from src.karaone_recon.synth import build_codec_backend, denormalize_latent
 from src.karaone_recon.targets import KaraOneTargets
 from src.utils import ensure_dir, load_simple_yaml, load_wav_fixed, resolve_bundle_path, resolve_target_cache, save_wav
@@ -32,6 +33,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=None, help="DDIM sampling steps (default: ckpt's)")
     parser.add_argument("--num-samples", type=int, default=2, help="draws per trial (shows generative diversity)")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--asr-model", default=None, help="optional local/cached Whisper model for rendered-audio ASR metrics")
+    parser.add_argument("--asr-allow-download", action="store_true", help="allow Whisper to download --asr-model if not cached")
+    parser.add_argument("--asr-download-root", default=None, help="optional Whisper model cache/download directory")
     return parser.parse_args()
 
 
@@ -110,6 +114,8 @@ def main() -> None:
     args = parse_args()
     cfg = load_simple_yaml(args.config)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    asr_model, asr_status = load_whisper_asr(args.asr_model, device, args.asr_allow_download, args.asr_download_root)
+    print(f"[asr] {asr_status}")
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model = EEGLatentDiffusion(DiffusionConfig(**ckpt["diffusion_config"])).to(device)
     model.load_state_dict(ckpt["model_state"], strict=True)
@@ -203,34 +209,48 @@ def main() -> None:
             )
             wavs[f"sample{s + 1}"] = _scale_to_rms(wav, target_rms)
 
-        sample1 = wavs.get("sample1")
-        if sample1 is not None:
-            sample_active = _active_metrics(sample1, original)
-            oracle_active = _active_metrics(wavs[oracle_kind], original)
-            metric_rows.append(
-                {
-                    "subject": entry.subject,
-                    "label": entry.label,
-                    "trial_index": int(entry.trial_index),
-                    "sample1_env_corr": _env_corr(sample1, original),
-                    "oracle_env_corr": _env_corr(wavs[oracle_kind], original),
-                    "sample1_rms_over_orig": _rms(sample1) / max(_rms(original), 1e-8),
-                    "oracle_rms_over_orig": _rms(wavs[oracle_kind]) / max(_rms(original), 1e-8),
-                    "sample1_active_env_corr": sample_active["active_env_corr"],
-                    "oracle_active_env_corr": oracle_active["active_env_corr"],
-                    "sample1_voiced_rms_over_orig": sample_active["voiced_rms_over_orig"],
-                    "oracle_voiced_rms_over_orig": oracle_active["voiced_rms_over_orig"],
-                    "sample1_peak_over_orig": sample_active["peak_over_orig"],
-                    "oracle_peak_over_orig": oracle_active["peak_over_orig"],
-                    "sample1_active_duration_ratio": sample_active["active_duration_ratio"],
-                    "oracle_active_duration_ratio": oracle_active["active_duration_ratio"],
-                }
-            )
-
         for kind, wav in wavs.items():
             filename = f"{tag}_{kind}.wav"
             save_wav(out_dir / filename, wav, sample_rate)
             manifest.append([entry.subject, entry.label, entry.stage, entry.trial_index, args.split, kind, filename, _rms(wav)])
+
+        sample1 = wavs.get("sample1")
+        if sample1 is not None:
+            sample_active = _active_metrics(sample1, original)
+            oracle_active = _active_metrics(wavs[oracle_kind], original)
+            metric_row = {
+                "subject": entry.subject,
+                "label": entry.label,
+                "trial_index": int(entry.trial_index),
+                "sample1_env_corr": _env_corr(sample1, original),
+                "oracle_env_corr": _env_corr(wavs[oracle_kind], original),
+                "sample1_rms_over_orig": _rms(sample1) / max(_rms(original), 1e-8),
+                "oracle_rms_over_orig": _rms(wavs[oracle_kind]) / max(_rms(original), 1e-8),
+                "sample1_active_env_corr": sample_active["active_env_corr"],
+                "oracle_active_env_corr": oracle_active["active_env_corr"],
+                "sample1_voiced_rms_over_orig": sample_active["voiced_rms_over_orig"],
+                "oracle_voiced_rms_over_orig": oracle_active["voiced_rms_over_orig"],
+                "sample1_peak_over_orig": sample_active["peak_over_orig"],
+                "oracle_peak_over_orig": oracle_active["peak_over_orig"],
+                "sample1_active_duration_ratio": sample_active["active_duration_ratio"],
+                "oracle_active_duration_ratio": oracle_active["active_duration_ratio"],
+            }
+            if asr_model is not None:
+                for wav_kind, prefix in (
+                    ("sample1", "sample1_asr"),
+                    (oracle_kind, "oracle_asr"),
+                    ("zeroeeg", "zeroeeg_asr"),
+                    ("mean_latent", "mean_asr"),
+                    ("original", "original_asr"),
+                ):
+                    wav_path = out_dir / f"{tag}_{wav_kind}.wav"
+                    try:
+                        asr_metrics = transcribe_label_metrics(asr_model, wav_path, entry.label, fp16=str(device).startswith("cuda"))
+                    except Exception as exc:  # noqa: BLE001
+                        asr_metrics = {"text": "", "label_hit": False, "cer": None, "wer": None, "candidate": "", "error": str(exc)}
+                    metric_row.update({f"{prefix}_{name}": value for name, value in asr_metrics.items()})
+            metric_rows.append(metric_row)
+
     with (out_dir / "listening_manifest.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(["subject", "label", "stage", "trial_index", "split", "wav_type", "file", "rms"])
@@ -238,11 +258,20 @@ def main() -> None:
     def _mean(key: str) -> float:
         return float(np.mean([row[key] for row in metric_rows])) if metric_rows else 0.0
 
+    def _mean_optional(key: str) -> float | None:
+        values = [row[key] for row in metric_rows if key in row and row[key] is not None]
+        return float(np.mean(values)) if values else None
+
+    def _hit_rate(key: str) -> float | None:
+        values = [float(bool(row[key])) for row in metric_rows if key in row]
+        return float(np.mean(values)) if values else None
+
     synth_metrics = {
         "split": args.split,
         "n": len(metric_rows),
         "target_kind": target_kind,
         "vocoder": "griffinlim" if target_kind == "mel" else "encodec",
+        "asr": asr_status,
         "oracle_kind": "oracle_encodec" if target_kind == "encodec_latent" else "oracle_griffinlim",
         "sample1_env_corr_mean": _mean("sample1_env_corr"),
         "oracle_env_corr_mean": _mean("oracle_env_corr"),
@@ -254,6 +283,16 @@ def main() -> None:
         "oracle_peak_over_orig_mean": _mean("oracle_peak_over_orig"),
         "sample1_active_duration_ratio_mean": _mean("sample1_active_duration_ratio"),
         "oracle_active_duration_ratio_mean": _mean("oracle_active_duration_ratio"),
+        "sample1_asr_label_acc": _hit_rate("sample1_asr_label_hit"),
+        "oracle_asr_label_acc": _hit_rate("oracle_asr_label_hit"),
+        "zeroeeg_asr_label_acc": _hit_rate("zeroeeg_asr_label_hit"),
+        "mean_asr_label_acc": _hit_rate("mean_asr_label_hit"),
+        "original_asr_label_acc": _hit_rate("original_asr_label_hit"),
+        "sample1_asr_cer_mean": _mean_optional("sample1_asr_cer"),
+        "oracle_asr_cer_mean": _mean_optional("oracle_asr_cer"),
+        "zeroeeg_asr_cer_mean": _mean_optional("zeroeeg_asr_cer"),
+        "mean_asr_cer_mean": _mean_optional("mean_asr_cer"),
+        "original_asr_cer_mean": _mean_optional("original_asr_cer"),
         "per_trial": metric_rows,
     }
     (out_dir / "synth_metrics.json").write_text(json.dumps(synth_metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

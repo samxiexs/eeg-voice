@@ -1,3 +1,5 @@
+nwwwwssswsswwwwindiw
+
 # KaraOne data analysis
 
 - Data root: `/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/karaone_overt_recon_bundle/app/../data/karaone`

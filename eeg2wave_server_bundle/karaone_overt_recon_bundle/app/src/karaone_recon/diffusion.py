@@ -42,6 +42,7 @@ class DiffusionConfig:
     transformer_layers: int = 4
     transformer_heads: int = 4
     patch_stride: int = 4
+    instance_norm: bool = False
     timesteps: int = 1000
     schedule: str = "cosine"
     x0_clip: float = 8.0           # clamp predicted x0 during sampling (z-scored latent is ~unit scale)
@@ -114,6 +115,7 @@ class EEGLatentDiffusion(nn.Module):
                 transformer_layers=int(cfg.transformer_layers),
                 transformer_heads=int(cfg.transformer_heads),
                 patch_stride=int(cfg.patch_stride),
+                instance_norm=bool(cfg.instance_norm),
             )
         else:
             self.eeg_encoder = SpatialTemporalEEGEncoder(
@@ -126,6 +128,7 @@ class EEGLatentDiffusion(nn.Module):
                 channel_dropout=0.15,
                 dropout=cfg.dropout,
                 num_channel_experts=cfg.num_channel_experts,
+                instance_norm=bool(cfg.instance_norm),
             )
         # The encoder's FiLM expects a cond vector; we use a single learned bias
         # (task-only, subject-agnostic). Shape [1, time_dim].
@@ -158,10 +161,14 @@ class EEGLatentDiffusion(nn.Module):
 
     # -- conditioning -------------------------------------------------------
     def encode_cond(self, eeg: torch.Tensor, eeg_valid_len: torch.Tensor | None = None) -> torch.Tensor:
-        """EEG -> per-frame conditioning [B, cond_ch, T]. (eeg_valid_len reserved; the
-        encoder already adaptive-pools to T; kept for signature parity.)"""
+        """EEG -> per-frame conditioning [B, cond_ch, T].
+
+        The valid length mask must reach the encoder so padded EEG tails do not
+        influence instance normalization, Transformer key padding, or pooled
+        conditioning frames. This mirrors the regression path's masking behavior.
+        """
         cond_vec = self.enc_cond_bias.expand(eeg.shape[0], -1)
-        enc, _ = self.eeg_encoder(eeg, cond_vec)  # [B, d_model, T]
+        enc, _ = self.eeg_encoder(eeg, cond_vec, eeg_valid_len)  # [B, d_model, T]
         return self.cond_proj(enc)  # [B, cond_ch, T]
 
     # -- denoiser -----------------------------------------------------------

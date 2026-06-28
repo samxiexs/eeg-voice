@@ -233,8 +233,12 @@ def compute_losses(
     lambda_ctc: float = 0.0,
     lambda_hubert_aux: float = 0.0,
     lambda_hubert_clip: float = 0.0,
+    lambda_residual_l1: float = 0.0,
+    lambda_residual_mse: float = 0.0,
+    lambda_residual_cos: float = 0.0,
     hubert_seq: torch.Tensor | None = None,
     hubert_summary: torch.Tensor | None = None,
+    residual_target: torch.Tensor | None = None,
     target_decoder_scale: torch.Tensor | None = None,
     supcon_temperature: float = 0.1,
     clip_temperature: float = 0.07,
@@ -303,6 +307,18 @@ def compute_losses(
     if pred_hubert is not None and hubert_summary is not None and lambda_hubert_clip > 0.0:
         hubert_clip = clip_alignment(pred_hubert.mean(dim=1), hubert_summary, temperature=clip_temperature)
 
+    pred_residual = out.get("pred_residual")
+    residual_l1 = pred.new_tensor(0.0)
+    residual_mse = pred.new_tensor(0.0)
+    residual_cos = pred.new_tensor(0.0)
+    if pred_residual is not None and residual_target is not None:
+        if lambda_residual_l1 > 0.0:
+            residual_l1 = F.smooth_l1_loss(pred_residual, residual_target)
+        if lambda_residual_mse > 0.0:
+            residual_mse = F.mse_loss(pred_residual, residual_target)
+        if lambda_residual_cos > 0.0:
+            residual_cos = 1.0 - F.cosine_similarity(pred_residual, residual_target, dim=-1).mean()
+
     total = (
         lambda_recon_cos * recon_cos
         + lambda_recon_mse * recon_mse
@@ -323,6 +339,9 @@ def compute_losses(
         + lambda_ctc * ctc
         + lambda_hubert_aux * hubert_aux
         + lambda_hubert_clip * hubert_clip
+        + lambda_residual_l1 * residual_l1
+        + lambda_residual_mse * residual_mse
+        + lambda_residual_cos * residual_cos
     )
     return {
         "total": total,
@@ -347,4 +366,7 @@ def compute_losses(
         "ctc": ctc.detach(),
         "hubert_aux": hubert_aux.detach(),
         "hubert_clip": hubert_clip.detach(),
+        "residual_l1": residual_l1.detach(),
+        "residual_mse": residual_mse.detach(),
+        "residual_cos": residual_cos.detach(),
     }

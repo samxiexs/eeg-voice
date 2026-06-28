@@ -32,19 +32,40 @@ from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, resolve
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train KaraOne EEG -> EnCodec latent reconstruction.")
+    parser = argparse.ArgumentParser(description="Train KaraOne EEG -> acoustic target reconstruction.")
     parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "karaone.yaml"))
     parser.add_argument("--stages", default=None, help="comma list, e.g. overt_like or overt_like,thinking")
     parser.add_argument("--model", choices=["baseline", "moe"], default="baseline")
     parser.add_argument("--target", choices=["mel", "encodec_latent"], default=None, help="acoustic target (default: config target.kind)")
     parser.add_argument("--lambda-gan", type=float, default=None, help="override train.lambda_gan (adversarial anti-collapse)")
     parser.add_argument("--lambda-dtw", type=float, default=None, help="override train.lambda_dtw (DTW-aligned recon)")
+    parser.add_argument(
+        "--residual-mean",
+        action="store_true",
+        help="predict target residual over the global mean target; final pred = global_mean + delta",
+    )
+    parser.add_argument("--no-zero-init-residual", action="store_true", help="do not zero-initialize the residual output head")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--run-suffix", default=None)
     parser.add_argument("--init-from", default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--max-steps", type=int, default=None)
     return parser.parse_args()
+
+
+def _zero_init_output_heads(model: KaraOneEEG2Codec) -> None:
+    for expert in model.experts:
+        final = expert[-1]
+        if isinstance(final, torch.nn.Linear):
+            torch.nn.init.zeros_(final.weight)
+            if final.bias is not None:
+                torch.nn.init.zeros_(final.bias)
+
+
+def _apply_global_mean_residual(out: dict[str, torch.Tensor], global_mean: torch.Tensor) -> dict[str, torch.Tensor]:
+    raw_delta = out["pred_latent"]
+    pred = global_mean.unsqueeze(0).expand_as(raw_delta) + raw_delta
+    return {**out, "pred_residual": raw_delta, "pred_latent": pred}
 
 
 def _load_common(cfg: dict, stages: tuple[str, ...], target_kind: str | None = None):
@@ -70,9 +91,11 @@ def main() -> None:
     set_seed(int(train_cfg.get("seed", 7)))
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     stages = tuple((args.stages or cfg["data"].get("stages", "overt_like")).split(","))
-    target_kind = args.target or str(cfg.get("target", {}).get("kind", "encodec_latent"))
+    target_kind = args.target or str(cfg.get("target", {}).get("kind", "mel"))
+    residual_mean = bool(args.residual_mean)
     root, targets, common = _load_common(cfg, stages, target_kind)
     print(f"[target] kind={target_kind} D={targets.D} T={targets.T}")
+    print(f"[prediction] mode={'residual_global_mean' if residual_mean else 'direct_target'}")
     if target_kind == "encodec_latent" and not targets.has_complete_audio_metadata:
         print("[target] WARNING: EnCodec cache is legacy/incomplete; rebuild with scripts/extract_karaone_targets.py --target encodec_latent --force")
 
@@ -135,6 +158,9 @@ def main() -> None:
             hubert_steps=int(aux_targets.T) if aux_targets is not None else 50,
         )
     ).to(device)
+    if residual_mean and not args.no_zero_init_residual:
+        _zero_init_output_heads(model)
+        print("[prediction] zero-initialized acoustic output head; initial prediction is global mean + delta")
     use_domain_adv = bool(da_cfg.get("adversarial", False))
     lambda_domain_adv = float(da_cfg.get("lambda_domain_adv", 0.0)) if use_domain_adv else 0.0
     print(f"[domain] instance_norm={bool(da_cfg.get('instance_norm', False))} adversarial={use_domain_adv} lambda={lambda_domain_adv}")
@@ -180,6 +206,9 @@ def main() -> None:
             "lambda_ctc": 0.0,
             "lambda_hubert_aux": 0.0,
             "lambda_hubert_clip": 0.0,
+            "lambda_residual_l1": 0.2 if residual_mean else 0.0,
+            "lambda_residual_mse": 0.5 if residual_mean else 0.0,
+            "lambda_residual_cos": 0.0,
             "supcon_temperature": 0.1,
             "clip_temperature": 0.07,
             "dtw_band": 0.2,
@@ -200,6 +229,12 @@ def main() -> None:
         disc = AcousticDiscriminator().to(device)
         disc_opt = torch.optim.AdamW(disc.parameters(), lr=float(train_cfg.get("lr", 3e-4)), weight_decay=1e-4)
     print(f"[loss] dtw={loss_kwargs['lambda_dtw']} gan={lambda_gan}")
+    if residual_mean:
+        print(
+            "[loss] residual over mean "
+            f"l1={loss_kwargs['lambda_residual_l1']} mse={loss_kwargs['lambda_residual_mse']} "
+            f"cos={loss_kwargs['lambda_residual_cos']}"
+        )
 
     run = f"karaone_{args.model}_{'_'.join(stages)}_{args.run_suffix or 'v1'}"
     run_dir = resolve_bundle_path(cfg["output"]["root"], BUNDLE_DIR) / run
@@ -215,9 +250,14 @@ def main() -> None:
         "train_recon_mse",
         "train_content_acc",
         "train_std_ratio",
+        "train_residual_mse",
         "val_pred_cos",
         "val_zero_cos",
+        "val_mean_cos",
         "val_gain",
+        "val_residual_cos",
+        "val_mel_corr",
+        "val_mcd",
     ]
     with history_csv.open("w", encoding="utf-8", newline="") as handle:
         csv.writer(handle).writerow(csv_fields)
@@ -232,10 +272,13 @@ def main() -> None:
                 "label_vocab": train_ds.label_vocab,
                 "target_mean": targets.target_mean,
                 "target_std": targets.target_std,
+                "target_global_mean_norm": targets.global_mean_norm,
                 "default_decoder_scales": targets.default_decoder_scales,
                 "val_pred_over_mean_cos_gain": float(val_gain),
                 "model_kind": args.model,
                 "target_kind": target_kind,
+                "prediction_mode": "residual_global_mean" if residual_mean else "direct_target",
+                "residual_mean": bool(residual_mean),
             },
             path,
         )
@@ -243,6 +286,7 @@ def main() -> None:
     best_gain = -1e9
     epochs_no_improve = 0
     patience = int(train_cfg.get("early_stop_patience", 0))  # 0 = disabled
+    global_mean_t = torch.from_numpy(targets.global_mean_norm).to(device).float()
     for epoch in range(epochs):
         model.train()
         agg: dict[str, float] = {}
@@ -261,6 +305,10 @@ def main() -> None:
                 lambda_domain=grl_lambda,
             )
             target_seq = batch["target_seq"].to(device)
+            residual_target = None
+            if residual_mean:
+                out = _apply_global_mean_residual(out, global_mean_t)
+                residual_target = target_seq - global_mean_t.unsqueeze(0).expand_as(target_seq)
             losses = compute_losses(
                 out,
                 target_seq,
@@ -269,6 +317,7 @@ def main() -> None:
                 batch["target_log_rms"].to(device),
                 hubert_seq=batch["hubert_seq"].to(device) if "hubert_seq" in batch else None,
                 hubert_summary=batch["hubert_summary"].to(device) if "hubert_summary" in batch else None,
+                residual_target=residual_target,
                 target_decoder_scale=batch["target_decoder_scale"].to(device),
                 **loss_kwargs,
             )
@@ -307,7 +356,16 @@ def main() -> None:
                 break
         sched.step()
         train_metrics = {name: value / max(seen, 1) for name, value in agg.items()}
-        val_metrics = evaluate(model, val_ds, targets, device=device, batch_size=batch_size, aux_targets=aux_targets)
+        val_metrics = evaluate(
+            model,
+            val_ds,
+            targets,
+            device=device,
+            batch_size=batch_size,
+            aux_targets=aux_targets,
+            residual_mean=residual_mean,
+            target_kind=target_kind,
+        )
         # Select on gain vs the STABLE global-mean baseline (pred_over_mean), not vs the
         # zero-EEG baseline: the latter is noisy/untrained early and was selecting epoch ~1.
         gain = float(val_metrics["pred_over_mean_cos_gain"])
@@ -317,6 +375,7 @@ def main() -> None:
             f"content_acc={train_metrics['content_acc']:.3f} "
             f"std={train_metrics['std_ratio']:.3f} | val pred={val_metrics['pred_recon_cos']:.3f} "
             f"mean={val_metrics['mean_recon_cos']:.3f} gain(vs mean)={gain:+.3f}"
+            + (f" mcd={val_metrics['pred_mcd']:.3f}" if "pred_mcd" in val_metrics else "")
         )
         with history_jsonl.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"epoch": epoch, "train": train_metrics, "val": val_metrics}) + "\n")
@@ -329,9 +388,14 @@ def main() -> None:
                     train_metrics["recon_mse"],
                     train_metrics["content_acc"],
                     train_metrics["std_ratio"],
+                    train_metrics.get("residual_mse", 0.0),
                     val_metrics["pred_recon_cos"],
                     val_metrics["zeroeeg_recon_cos"],
+                    val_metrics["mean_recon_cos"],
                     gain,
+                    val_metrics.get("pred_residual_cos", 0.0),
+                    val_metrics.get("pred_mel_corr", 0.0),
+                    val_metrics.get("pred_mcd", 0.0),
                 ]
             )
         if gain > best_gain:
@@ -356,10 +420,33 @@ def main() -> None:
             break
 
     save_ckpt(run_dir / "checkpoints" / "last.pt", best_gain)
+    best_path = run_dir / "checkpoints" / "best.pt"
+    if best_path.exists():
+        best_ckpt = torch.load(best_path, map_location=device, weights_only=False)
+        model.load_state_dict(best_ckpt["model_state"], strict=False)
+        print(f"[eval] loaded best checkpoint for final metrics: {best_path}")
     final = {
         "selection": {"criterion": "val pred_over_mean_cos_gain", "best_val_gain": best_gain},
-        "test": evaluate(model, test_ds, targets, device=device, batch_size=batch_size, aux_targets=aux_targets),
-        "subject_test": evaluate(model, subject_test, targets, device=device, batch_size=batch_size, aux_targets=aux_targets),
+        "test": evaluate(
+            model,
+            test_ds,
+            targets,
+            device=device,
+            batch_size=batch_size,
+            aux_targets=aux_targets,
+            residual_mean=residual_mean,
+            target_kind=target_kind,
+        ),
+        "subject_test": evaluate(
+            model,
+            subject_test,
+            targets,
+            device=device,
+            batch_size=batch_size,
+            aux_targets=aux_targets,
+            residual_mean=residual_mean,
+            target_kind=target_kind,
+        ),
     }
     write_json(run_dir / "metrics" / "test_metrics.json", final)
     print(json.dumps(final["selection"], indent=2))

@@ -41,6 +41,7 @@ def main() -> None:
         print(f"[eval] checkpoint has {len(unexpected)} unexpected keys; ignored")
     root = resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR)
     target_kind = str(ckpt.get("target_kind", cfg.get("target", {}).get("kind", "encodec_latent")))
+    residual_mean = bool(ckpt.get("residual_mean", False)) or str(ckpt.get("prediction_mode", "")) == "residual_global_mean"
     _, cache = resolve_target_cache(cfg, BUNDLE_DIR, target_kind)
     targets = KaraOneTargets(cache, data_root=root)
     split_protocol = "subject_holdout" if args.split == "subject_test" else str(cfg["data"].get("split_protocol", "trial"))
@@ -53,7 +54,15 @@ def main() -> None:
         heldout_subjects=cfg["data"].get("heldout_subjects", ["P02", "MM21"]),
         eeg_len=int(cfg["data"].get("eeg_len", 1280)),
     )
-    metrics = evaluate(model, ds, targets, device=device, batch_size=int(cfg["train"].get("batch_size", 48)))
+    metrics = evaluate(
+        model,
+        ds,
+        targets,
+        device=device,
+        batch_size=int(cfg["train"].get("batch_size", 48)),
+        residual_mean=residual_mean,
+        target_kind=target_kind,
+    )
     if args.out:
         out = resolve_bundle_path(args.out, BUNDLE_DIR)
     else:

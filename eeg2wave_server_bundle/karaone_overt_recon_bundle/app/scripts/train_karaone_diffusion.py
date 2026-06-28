@@ -48,7 +48,8 @@ def evaluate_diffusion(model, dataset, targets, device, batch_size, steps) -> di
     gm = torch.from_numpy(targets.global_mean_norm).to(device).float()
     totals: dict[str, float] = defaultdict(float)
     count = 0
-    pred_summaries, pred_flat, target_flat = [], [], []
+    pred_summaries, zero_summaries, mean_summaries = [], [], []
+    pred_flat, target_flat = [], []
     subjects, labels, trials = [], [], []
     for batch in loader:
         eeg = batch["eeg"].to(device)
@@ -63,6 +64,8 @@ def evaluate_diffusion(model, dataset, targets, device, batch_size, steps) -> di
         totals["mean_recon_cos"] += float(F.cosine_similarity(gm_b, target, dim=-1).mean(dim=1).sum())
         count += b
         pred_summaries.append(pred.mean(dim=1).cpu().numpy())
+        zero_summaries.append(zero.mean(dim=1).cpu().numpy())
+        mean_summaries.append(gm_b.mean(dim=1).cpu().numpy())
         pred_flat.append(pred.reshape(b, -1).cpu().numpy())
         target_flat.append(target.reshape(b, -1).cpu().numpy())
         subjects.extend([str(s) for s in batch["subject"]])
@@ -71,6 +74,8 @@ def evaluate_diffusion(model, dataset, targets, device, batch_size, steps) -> di
 
     out = {name: value / max(count, 1) for name, value in totals.items()}
     pred_summary = np.concatenate(pred_summaries, axis=0)
+    zero_summary = np.concatenate(zero_summaries, axis=0)
+    mean_summary = np.concatenate(mean_summaries, axis=0)
     pred_matrix = np.concatenate(pred_flat, axis=0)
     target_matrix = np.concatenate(target_flat, axis=0)
     pred_std = pred_matrix.std(axis=0)
@@ -85,6 +90,8 @@ def evaluate_diffusion(model, dataset, targets, device, batch_size, steps) -> di
         }
     )
     out.update({f"pred_{k}": v for k, v in _retrieval_stats(pred_summary, subjects, labels, trials, targets).items()})
+    out.update({f"zeroeeg_{k}": v for k, v in _retrieval_stats(zero_summary, subjects, labels, trials, targets).items()})
+    out.update({f"mean_{k}": v for k, v in _retrieval_stats(mean_summary, subjects, labels, trials, targets).items()})
     return out
 
 
@@ -92,6 +99,7 @@ def main() -> None:
     args = parse_args()
     cfg = load_simple_yaml(args.config)
     dcfg = cfg.get("diffusion", {})
+    da_cfg = cfg.get("domain_adapt", {})
     train_cfg = cfg["train"]
     set_seed(int(train_cfg.get("seed", 7)))
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -114,7 +122,15 @@ def main() -> None:
     train_ds = KaraOneTrialDataset(split="train", **common)
     val_ds = KaraOneTrialDataset(split="val", **common)
     test_ds = KaraOneTrialDataset(split="test", **common)
-    print(f"[data] stages={stages} train={len(train_ds)} val={len(val_ds)} test={len(test_ds)}")
+    subject_test = KaraOneTrialDataset(
+        split="subject_test",
+        split_protocol="subject_holdout",
+        **{k: v for k, v in common.items() if k != "split_protocol"},
+    )
+    print(
+        f"[data] stages={stages} train={len(train_ds)} val={len(val_ds)} test={len(test_ds)} "
+        f"subject_test={len(subject_test)}"
+    )
 
     num_channel_experts = 1 if args.model == "baseline" else max(4, int(dcfg.get("num_channel_experts", 4)))
     model = EEGLatentDiffusion(
@@ -134,6 +150,7 @@ def main() -> None:
             transformer_layers=int(cfg["model"].get("transformer_layers", 4)),
             transformer_heads=int(cfg["model"].get("transformer_heads", 4)),
             patch_stride=int(cfg["model"].get("patch_stride", 4)),
+            instance_norm=bool(da_cfg.get("instance_norm", False)),
             timesteps=int(dcfg.get("timesteps", 1000)),
             schedule=str(dcfg.get("schedule", "cosine")),
             x0_clip=float(dcfg.get("x0_clip", 8.0)),
@@ -242,6 +259,7 @@ def main() -> None:
         "selection": {"criterion": "val pred_over_mean_cos_gain", "best_val_gain": best_gain},
         "last_val": last_val,
         "test": evaluate_diffusion(model, test_ds, targets, device, batch_size, ddim_steps),
+        "subject_test": evaluate_diffusion(model, subject_test, targets, device, batch_size, ddim_steps),
     }
     write_json(run_dir / "metrics" / "test_metrics.json", final)
     print(json.dumps(final["selection"], indent=2))
