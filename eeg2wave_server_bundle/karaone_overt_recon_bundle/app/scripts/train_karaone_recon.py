@@ -44,6 +44,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="predict target residual over the global mean target; final pred = global_mean + delta",
     )
+    parser.add_argument("--env-objective", action="store_true", help="enable active/envelope-guided Mel reconstruction losses")
+    parser.add_argument(
+        "--selection",
+        choices=["pred_over_mean_cos_gain", "mel_env_composite"],
+        default="pred_over_mean_cos_gain",
+        help="validation checkpoint selection criterion",
+    )
     parser.add_argument("--no-zero-init-residual", action="store_true", help="do not zero-initialize the residual output head")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--run-suffix", default=None)
@@ -66,6 +73,18 @@ def _apply_global_mean_residual(out: dict[str, torch.Tensor], global_mean: torch
     raw_delta = out["pred_latent"]
     pred = global_mean.unsqueeze(0).expand_as(raw_delta) + raw_delta
     return {**out, "pred_residual": raw_delta, "pred_latent": pred}
+
+
+def _selection_score(metrics: dict, criterion: str) -> float:
+    if criterion == "mel_env_composite":
+        return float(
+            metrics.get("pred_over_mean_cos_gain", 0.0)
+            + metrics.get("pred_mel_corr_gain", 0.0)
+            + 0.02 * metrics.get("pred_mcd_gain", 0.0)
+            + 0.5 * metrics.get("pred_energy_corr_gain", 0.0)
+            - 0.2 * max(0.0, metrics.get("pred_pairwise_corr_median", 0.0) - 0.85)
+        )
+    return float(metrics["pred_over_mean_cos_gain"])
 
 
 def _load_common(cfg: dict, stages: tuple[str, ...], target_kind: str | None = None):
@@ -209,11 +228,32 @@ def main() -> None:
             "lambda_residual_l1": 0.2 if residual_mean else 0.0,
             "lambda_residual_mse": 0.5 if residual_mean else 0.0,
             "lambda_residual_cos": 0.0,
+            "lambda_active_bce": 0.0,
+            "lambda_raw_energy_corr": 0.0,
+            "lambda_active_recon": 0.0,
+            "lambda_peak_energy": 0.0,
             "supcon_temperature": 0.1,
             "clip_temperature": 0.07,
             "dtw_band": 0.2,
         }.items()
     }
+    if args.env_objective:
+        env_defaults = {
+            "lambda_recon_mse": 0.2,
+            "lambda_residual_mse": 0.3 if residual_mean else 0.0,
+            "lambda_residual_l1": 0.2 if residual_mean else 0.0,
+            "lambda_raw_energy_corr": 0.8,
+            "lambda_active_bce": 0.5,
+            "lambda_active_recon": 1.0,
+            "lambda_peak_energy": 0.5,
+            "lambda_frame_energy": 0.5,
+            "lambda_voiced_rms": 0.5,
+            "lambda_hubert_aux": 0.3,
+            "lambda_hubert_clip": 0.3,
+            "lambda_ctc": 0.2,
+        }
+        for name, value in env_defaults.items():
+            loss_kwargs[name] = float(train_cfg.get(f"env_{name}", value))
     # HuBERT-derived losses are only meaningful when the aux cache is present.
     if aux_targets is None:
         loss_kwargs["lambda_hubert_aux"] = 0.0
@@ -229,6 +269,13 @@ def main() -> None:
         disc = AcousticDiscriminator().to(device)
         disc_opt = torch.optim.AdamW(disc.parameters(), lr=float(train_cfg.get("lr", 3e-4)), weight_decay=1e-4)
     print(f"[loss] dtw={loss_kwargs['lambda_dtw']} gan={lambda_gan}")
+    if args.env_objective:
+        print(
+            "[loss] env objective "
+            f"active_bce={loss_kwargs['lambda_active_bce']} raw_energy_corr={loss_kwargs['lambda_raw_energy_corr']} "
+            f"active_recon={loss_kwargs['lambda_active_recon']} peak_energy={loss_kwargs['lambda_peak_energy']} "
+            f"selection={args.selection}"
+        )
     if residual_mean:
         print(
             "[loss] residual over mean "
@@ -258,11 +305,14 @@ def main() -> None:
         "val_residual_cos",
         "val_mel_corr",
         "val_mcd",
+        "val_energy_corr",
+        "val_active_recon_mse",
+        "val_selection_score",
     ]
     with history_csv.open("w", encoding="utf-8", newline="") as handle:
         csv.writer(handle).writerow(csv_fields)
 
-    def save_ckpt(path: Path, val_gain: float) -> None:
+    def save_ckpt(path: Path, val_score: float, val_gain: float) -> None:
         torch.save(
             {
                 "model_state": model.state_dict(),
@@ -275,18 +325,24 @@ def main() -> None:
                 "target_global_mean_norm": targets.global_mean_norm,
                 "default_decoder_scales": targets.default_decoder_scales,
                 "val_pred_over_mean_cos_gain": float(val_gain),
+                "val_selection_score": float(val_score),
                 "model_kind": args.model,
                 "target_kind": target_kind,
                 "prediction_mode": "residual_global_mean" if residual_mean else "direct_target",
                 "residual_mean": bool(residual_mean),
+                "env_objective": bool(args.env_objective),
+                "selection": str(args.selection),
             },
             path,
         )
 
-    best_gain = -1e9
+    best_score = -1e9
+    best_val_gain = -1e9
     epochs_no_improve = 0
     patience = int(train_cfg.get("early_stop_patience", 0))  # 0 = disabled
     global_mean_t = torch.from_numpy(targets.global_mean_norm).to(device).float()
+    target_mean_t = torch.from_numpy(targets.target_mean).to(device).float()
+    target_std_t = torch.from_numpy(targets.target_std).to(device).float()
     for epoch in range(epochs):
         model.train()
         agg: dict[str, float] = {}
@@ -318,6 +374,8 @@ def main() -> None:
                 hubert_seq=batch["hubert_seq"].to(device) if "hubert_seq" in batch else None,
                 hubert_summary=batch["hubert_summary"].to(device) if "hubert_summary" in batch else None,
                 residual_target=residual_target,
+                target_mean=target_mean_t,
+                target_std=target_std_t,
                 target_decoder_scale=batch["target_decoder_scale"].to(device),
                 **loss_kwargs,
             )
@@ -369,6 +427,7 @@ def main() -> None:
         # Select on gain vs the STABLE global-mean baseline (pred_over_mean), not vs the
         # zero-EEG baseline: the latter is noisy/untrained early and was selecting epoch ~1.
         gain = float(val_metrics["pred_over_mean_cos_gain"])
+        selection_score = _selection_score(val_metrics, args.selection)
         print(
             f"epoch {epoch:03d} total={train_metrics['total']:.3f} "
             f"recon_cos={train_metrics['recon_cos']:.3f} mse={train_metrics['recon_mse']:.3f} "
@@ -376,6 +435,7 @@ def main() -> None:
             f"std={train_metrics['std_ratio']:.3f} | val pred={val_metrics['pred_recon_cos']:.3f} "
             f"mean={val_metrics['mean_recon_cos']:.3f} gain(vs mean)={gain:+.3f}"
             + (f" mcd={val_metrics['pred_mcd']:.3f}" if "pred_mcd" in val_metrics else "")
+            + f" select={selection_score:+.3f}"
         )
         with history_jsonl.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"epoch": epoch, "train": train_metrics, "val": val_metrics}) + "\n")
@@ -396,12 +456,16 @@ def main() -> None:
                     val_metrics.get("pred_residual_cos", 0.0),
                     val_metrics.get("pred_mel_corr", 0.0),
                     val_metrics.get("pred_mcd", 0.0),
+                    val_metrics.get("pred_energy_corr", 0.0),
+                    val_metrics.get("pred_active_recon_mse", 0.0),
+                    selection_score,
                 ]
             )
-        if gain > best_gain:
-            best_gain = gain
+        if selection_score > best_score:
+            best_score = selection_score
+            best_val_gain = gain
             epochs_no_improve = 0
-            save_ckpt(run_dir / "checkpoints" / "best.pt", best_gain)
+            save_ckpt(run_dir / "checkpoints" / "best.pt", best_score, best_val_gain)
         else:
             epochs_no_improve += 1
         # Live training curves: regenerate the PNG each epoch (never break training on a plot error).
@@ -416,17 +480,21 @@ def main() -> None:
         # Early stopping on the stable val gain (treats the 120ep over-fitting documented
         # in MODEL_TECH; 20ep was cleanest). patience=0 disables.
         if patience > 0 and epochs_no_improve >= patience:
-            print(f"[early-stop] no val-gain improvement for {patience} epochs (best={best_gain:+.4f}); stopping at epoch {epoch}")
+            print(f"[early-stop] no val selection improvement for {patience} epochs (best={best_score:+.4f}); stopping at epoch {epoch}")
             break
 
-    save_ckpt(run_dir / "checkpoints" / "last.pt", best_gain)
+    save_ckpt(run_dir / "checkpoints" / "last.pt", best_score, best_val_gain)
     best_path = run_dir / "checkpoints" / "best.pt"
     if best_path.exists():
         best_ckpt = torch.load(best_path, map_location=device, weights_only=False)
         model.load_state_dict(best_ckpt["model_state"], strict=False)
         print(f"[eval] loaded best checkpoint for final metrics: {best_path}")
     final = {
-        "selection": {"criterion": "val pred_over_mean_cos_gain", "best_val_gain": best_gain},
+        "selection": {
+            "criterion": str(args.selection),
+            "best_val_score": best_score,
+            "best_val_pred_over_mean_cos_gain": best_val_gain,
+        },
         "test": evaluate(
             model,
             test_ds,

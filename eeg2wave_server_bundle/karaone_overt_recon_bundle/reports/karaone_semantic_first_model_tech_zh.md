@@ -1,7 +1,7 @@
 # KaraOne 语义优先 EEG-to-Speech 当前模型技术说明
 
-> 版本：2026-06-28 静态复核版  
-> 范围：只针对 `karaone_overt_recon_bundle`。本轮没有实际跑训练/验证，只做代码级复核、运行入口整理、结构文档化。  
+> 版本：2026-06-28i
+> 范围：只针对 `karaone_overt_recon_bundle`。本轮没有实际跑训练/验证，只做代码级复核、运行入口整理、结构文档化。
 > 核心目标：EEG -> Speech Generation，而不是 EEG 分类、通道选择或单纯 speech recognition。
 
 ---
@@ -184,7 +184,7 @@ per-channel temporal stats
 stage_embedding(stage_idx) -> FiLM condition
 ```
 
-作用是告诉 encoder 当前 EEG 来自哪个 cognitive/speech stage。  
+作用是告诉 encoder 当前 EEG 来自哪个 cognitive/speech stage。
 当前没有 subject embedding；`subject_idx` 只为接口兼容与 DANN train-only head 服务。
 
 ### 4.3 输出头
@@ -278,7 +278,7 @@ semantic trainer 最终写出：
 
 ## 7. 生成式声学路径现状
 
-训练入口：`app/scripts/train_karaone_diffusion.py`  
+训练入口：`app/scripts/train_karaone_diffusion.py`
 模型：`app/src/karaone_recon/diffusion.py`
 
 当前支持：
@@ -521,19 +521,19 @@ thinking + speaking = thinking,overt_like
 
 ## 10. 当前实现质量复核
 
-| 项目 | 当前状态 | 判断 |
-|---|---|---|
-| `eeg_valid_len` mask | regression/conformer/diffusion path 均有使用 | 基本到位 |
-| `subject_test` | semantic 和 diffusion trainer 均输出 | 到位 |
-| zeroeeg baseline | semantic/regression/diffusion eval 均有 | 到位 |
-| mean_target baseline | cosine/MSE 到位；retrieval 已补齐 | 到位 |
-| oracle_codec ceiling | synthesis scripts 输出 | 到位，但只对 renderable acoustic checkpoints 有意义 |
-| HuBERT semantic target | `resolve_target_cache()` + semantic trainer 支持 | 到位 |
-| semantic-first objective | acoustic loss 置零，HuBERT 为主目标 | 到位 |
-| MoE priority | 默认 baseline，MoE ablation | 符合路线 |
-| multi-stage | `--stages` 支持 stage-aware 训练 | 部分到位，尚非 fusion |
-| semantic-conditioned flow | 尚未实现 | 后续 Phase 3 |
-| ASR metrics | 可选 Whisper hook | 到位，但短音素需谨慎解释 |
+| 项目                      | 当前状态                                           | 判断                                                |
+| ------------------------- | -------------------------------------------------- | --------------------------------------------------- |
+| `eeg_valid_len` mask    | regression/conformer/diffusion path 均有使用       | 基本到位                                            |
+| `subject_test`          | semantic 和 diffusion trainer 均输出               | 到位                                                |
+| zeroeeg baseline          | semantic/regression/diffusion eval 均有            | 到位                                                |
+| mean_target baseline      | cosine/MSE 到位；retrieval 已补齐                  | 到位                                                |
+| oracle_codec ceiling      | synthesis scripts 输出                             | 到位，但只对 renderable acoustic checkpoints 有意义 |
+| HuBERT semantic target    | `resolve_target_cache()` + semantic trainer 支持 | 到位                                                |
+| semantic-first objective  | acoustic loss 置零，HuBERT 为主目标                | 到位                                                |
+| MoE priority              | 默认 baseline，MoE ablation                        | 符合路线                                            |
+| multi-stage               | `--stages` 支持 stage-aware 训练                 | 部分到位，尚非 fusion                               |
+| semantic-conditioned flow | 尚未实现                                           | 后续 Phase 3                                        |
+| ASR metrics               | 可选 Whisper hook                                  | 到位，但短音素需谨慎解释                            |
 
 总体判断：**优化方向实现得比较干净，已经适合作为下一轮训练实验的主入口**。下一步不应该继续堆 encoder，而应该先用 Phase 1 的 semantic metrics 判断 EEG 是否真的超过 zero/mean，再决定是否进入 semantic-conditioned acoustic rendering。
 

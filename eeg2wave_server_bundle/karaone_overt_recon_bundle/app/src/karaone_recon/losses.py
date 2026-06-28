@@ -172,6 +172,107 @@ def voiced_region_rms_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Te
     return F.smooth_l1_loss(torch.log(pred_rms), torch.log(target_rms))
 
 
+def _feature_stats(
+    seq: torch.Tensor,
+    target_mean: torch.Tensor | None,
+    target_std: torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    if target_mean is None or target_std is None:
+        return None
+    mean = target_mean.to(device=seq.device, dtype=seq.dtype).reshape(1, 1, -1)
+    std = target_std.to(device=seq.device, dtype=seq.dtype).reshape(1, 1, -1).clamp_min(1e-6)
+    if mean.shape[-1] != seq.shape[-1] or std.shape[-1] != seq.shape[-1]:
+        return None
+    return mean, std
+
+
+def raw_mel_energy(
+    seq: torch.Tensor,
+    target_mean: torch.Tensor | None,
+    target_std: torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    stats = _feature_stats(seq, target_mean, target_std)
+    if stats is None:
+        return None
+    mean, std = stats
+    raw_mel = seq * std + mean
+    energy = torch.exp(raw_mel.clamp(min=-12.0, max=6.0)).mean(dim=-1).clamp_min(1e-8)
+    return energy, torch.log(energy)
+
+
+def active_mask_from_energy(energy: torch.Tensor) -> torch.Tensor:
+    mean = energy.mean(dim=1, keepdim=True)
+    std = energy.std(dim=1, keepdim=True, unbiased=False)
+    peak = energy.max(dim=1, keepdim=True).values
+    threshold = torch.maximum(mean + 0.5 * std, 0.1 * peak)
+    mask = (energy >= threshold).to(energy.dtype)
+    fallback = torch.zeros_like(mask).scatter_(1, energy.argmax(dim=1, keepdim=True), 1.0)
+    return torch.where(mask.sum(dim=1, keepdim=True) > 0, mask, fallback).detach()
+
+
+def _corr_loss_1d(pred: torch.Tensor, target: torch.Tensor, weight: torch.Tensor | None = None) -> torch.Tensor:
+    if weight is not None:
+        weight = weight.to(pred.dtype)
+        denom = weight.sum(dim=1, keepdim=True).clamp_min(1.0)
+        pred_mean = (pred * weight).sum(dim=1, keepdim=True) / denom
+        target_mean = (target * weight).sum(dim=1, keepdim=True) / denom
+        pred = (pred - pred_mean) * weight
+        target = (target - target_mean) * weight
+    else:
+        pred = pred - pred.mean(dim=1, keepdim=True)
+        target = target - target.mean(dim=1, keepdim=True)
+    corr = (pred * target).sum(dim=1) / (pred.norm(dim=1) * target.norm(dim=1) + 1e-8)
+    return (1.0 - corr).mean()
+
+
+def active_bce_loss(pred_active_logits: torch.Tensor, active_mask: torch.Tensor) -> torch.Tensor:
+    pos_rate = active_mask.mean().clamp(min=1e-4, max=1.0 - 1e-4)
+    pos_weight = ((1.0 - pos_rate) / pos_rate).clamp(min=1.0, max=10.0)
+    return F.binary_cross_entropy_with_logits(pred_active_logits, active_mask, pos_weight=pos_weight)
+
+
+def active_recon_loss(pred: torch.Tensor, target: torch.Tensor, active_mask: torch.Tensor) -> torch.Tensor:
+    weight = active_mask.unsqueeze(-1).to(pred.dtype)
+    per_dim = F.smooth_l1_loss(pred, target, reduction="none")
+    denom = (weight.sum() * pred.shape[-1]).clamp_min(1.0)
+    return (per_dim * weight).sum() / denom
+
+
+def peak_energy_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    target_mean: torch.Tensor | None,
+    target_std: torch.Tensor | None,
+    top_frac: float = 0.15,
+) -> torch.Tensor:
+    pred_payload = raw_mel_energy(pred, target_mean, target_std)
+    target_payload = raw_mel_energy(target, target_mean, target_std)
+    if pred_payload is None or target_payload is None:
+        return pred.new_tensor(0.0)
+    _, pred_log_energy = pred_payload
+    target_energy, target_log_energy = target_payload
+    k = max(1, int(round(float(top_frac) * target.shape[1])))
+    idx = target_energy.topk(k=min(k, target.shape[1]), dim=1).indices
+    pred_top = pred_log_energy.gather(1, idx)
+    target_top = target_log_energy.gather(1, idx)
+    return F.smooth_l1_loss(pred_top, target_top)
+
+
+def raw_energy_corr_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    target_mean: torch.Tensor | None,
+    target_std: torch.Tensor | None,
+) -> torch.Tensor:
+    pred_payload = raw_mel_energy(pred, target_mean, target_std)
+    target_payload = raw_mel_energy(target, target_mean, target_std)
+    if pred_payload is None or target_payload is None:
+        return pred.new_tensor(0.0)
+    _, pred_log_energy = pred_payload
+    _, target_log_energy = target_payload
+    return _corr_loss_1d(pred_log_energy, target_log_energy)
+
+
 def decoder_scale_loss(pred_log_scale: torch.Tensor, target_decoder_scale: torch.Tensor | None) -> torch.Tensor:
     if target_decoder_scale is None:
         return pred_log_scale.new_tensor(0.0)
@@ -236,9 +337,15 @@ def compute_losses(
     lambda_residual_l1: float = 0.0,
     lambda_residual_mse: float = 0.0,
     lambda_residual_cos: float = 0.0,
+    lambda_active_bce: float = 0.0,
+    lambda_raw_energy_corr: float = 0.0,
+    lambda_active_recon: float = 0.0,
+    lambda_peak_energy: float = 0.0,
     hubert_seq: torch.Tensor | None = None,
     hubert_summary: torch.Tensor | None = None,
     residual_target: torch.Tensor | None = None,
+    target_mean: torch.Tensor | None = None,
+    target_std: torch.Tensor | None = None,
     target_decoder_scale: torch.Tensor | None = None,
     supcon_temperature: float = 0.1,
     clip_temperature: float = 0.07,
@@ -319,6 +426,25 @@ def compute_losses(
         if lambda_residual_cos > 0.0:
             residual_cos = 1.0 - F.cosine_similarity(pred_residual, residual_target, dim=-1).mean()
 
+    active_bce = pred.new_tensor(0.0)
+    raw_energy_corr = pred.new_tensor(0.0)
+    active_recon = pred.new_tensor(0.0)
+    peak_energy = pred.new_tensor(0.0)
+    target_energy_payload = raw_mel_energy(target_seq, target_mean, target_std)
+    if target_energy_payload is not None and (
+        lambda_active_bce > 0.0 or lambda_raw_energy_corr > 0.0 or lambda_active_recon > 0.0 or lambda_peak_energy > 0.0
+    ):
+        target_energy, _ = target_energy_payload
+        active_mask = active_mask_from_energy(target_energy)
+        if lambda_active_bce > 0.0 and "pred_active_logits" in out:
+            active_bce = active_bce_loss(out["pred_active_logits"], active_mask)
+        if lambda_raw_energy_corr > 0.0:
+            raw_energy_corr = raw_energy_corr_loss(pred, target_seq, target_mean, target_std)
+        if lambda_active_recon > 0.0:
+            active_recon = active_recon_loss(pred, target_seq, active_mask)
+        if lambda_peak_energy > 0.0:
+            peak_energy = peak_energy_loss(pred, target_seq, target_mean, target_std)
+
     total = (
         lambda_recon_cos * recon_cos
         + lambda_recon_mse * recon_mse
@@ -342,6 +468,10 @@ def compute_losses(
         + lambda_residual_l1 * residual_l1
         + lambda_residual_mse * residual_mse
         + lambda_residual_cos * residual_cos
+        + lambda_active_bce * active_bce
+        + lambda_raw_energy_corr * raw_energy_corr
+        + lambda_active_recon * active_recon
+        + lambda_peak_energy * peak_energy
     )
     return {
         "total": total,
@@ -369,4 +499,8 @@ def compute_losses(
         "residual_l1": residual_l1.detach(),
         "residual_mse": residual_mse.detach(),
         "residual_cos": residual_cos.detach(),
+        "active_bce": active_bce.detach(),
+        "raw_energy_corr": raw_energy_corr.detach(),
+        "active_recon": active_recon.detach(),
+        "peak_energy": peak_energy.detach(),
     }

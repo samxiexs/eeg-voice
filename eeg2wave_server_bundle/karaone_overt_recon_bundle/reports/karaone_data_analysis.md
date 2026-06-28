@@ -1,4 +1,14 @@
-nwwwwssswsswwwwindiw
+nwwwwssgtswsswwwwindiw
+
+CKPT=artifacts/outputs_karaone/karaone_baseline_overt_like_melenv_overt_v2/checkpoints/best.pt \
+
+SPLIT=subject_test \
+
+LIMIT=-1 \
+
+DEVICE=cpu \
+
+bash run_semantic_first.sh synth_regression
 
 # KaraOne data analysis
 

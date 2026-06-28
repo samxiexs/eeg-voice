@@ -169,6 +169,12 @@ class KaraOneEEG2Codec(nn.Module):
             nn.GELU(),
             nn.Linear(d, 1),
         )
+        self.active_head = nn.Sequential(
+            nn.LayerNorm(cfg.content_dim + cfg.speaker_dim),
+            nn.Linear(cfg.content_dim + cfg.speaker_dim, d),
+            nn.GELU(),
+            nn.Linear(d, 1),
+        )
         self.decoder_scale_head = nn.Sequential(
             nn.LayerNorm(cfg.speaker_dim),
             nn.Linear(cfg.speaker_dim, d),
@@ -237,11 +243,13 @@ class KaraOneEEG2Codec(nn.Module):
 
         pred_log_rms = self.log_rms_head(torch.cat([content_seq.mean(dim=1), global_embed], dim=-1)).squeeze(-1)
         pred_frame_log_energy = self.frame_energy_head(expert_input).squeeze(-1)
+        pred_active_logits = self.active_head(expert_input).squeeze(-1)
         pred_log_decoder_scale = self.decoder_scale_head(global_embed)
         out = {
             "pred_latent": pred_latent,
             "pred_log_rms": pred_log_rms,
             "pred_frame_log_energy": pred_frame_log_energy,
+            "pred_active_logits": pred_active_logits,
             "pred_log_decoder_scale": pred_log_decoder_scale,
             "content_embed": content_embed,
             "content_logits": self.content_classifier(pooled),

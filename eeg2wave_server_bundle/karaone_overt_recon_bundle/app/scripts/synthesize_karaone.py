@@ -46,6 +46,44 @@ def _scale_to_rms(audio: np.ndarray, target_rms: float, max_gain: float = 20.0) 
     return (audio * gain).astype(np.float32)
 
 
+def _resample_1d(values: np.ndarray, n: int) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float64)
+    if values.size == 0:
+        return np.ones(n, dtype=np.float64)
+    if values.size == n:
+        return values
+    src = np.linspace(0.0, 1.0, num=values.size)
+    dst = np.linspace(0.0, 1.0, num=n)
+    return np.interp(dst, src, values)
+
+
+def _calibrate_frame_envelope(
+    audio: np.ndarray,
+    frame_log_energy: np.ndarray | None,
+    hop: int = 256,
+    max_gain: float = 12.0,
+) -> np.ndarray:
+    if frame_log_energy is None:
+        return audio.astype(np.float32)
+    audio = np.asarray(audio, dtype=np.float32)
+    n_frames = max(1, int(np.ceil(len(audio) / float(hop))))
+    current = _envelope(audio, hop=hop)
+    if current.size < n_frames:
+        current = np.pad(current, (0, n_frames - current.size), mode="edge")
+    current = current[:n_frames].clip(min=1e-5)
+    target = np.sqrt(np.exp(np.asarray(frame_log_energy, dtype=np.float64).clip(min=-20.0, max=8.0)))
+    target = _resample_1d(target, n_frames).clip(min=1e-5)
+    # Use the predicted frame energy as a contour, not an absolute loudness source.
+    target = target / (np.median(target) + 1e-8) * (np.median(current) + 1e-8)
+    gain = np.clip(target / current, 1.0 / max_gain, max_gain)
+    sample_gain = np.repeat(gain, hop)
+    if sample_gain.size < len(audio):
+        sample_gain = np.pad(sample_gain, (0, len(audio) - sample_gain.size), mode="edge")
+    return (audio * sample_gain[: len(audio)]).astype(np.float32)
+
+
 def _envelope(audio: np.ndarray, hop: int = 256) -> np.ndarray:
     n = len(audio) // hop
     if n < 2:
@@ -206,6 +244,11 @@ def main() -> None:
             zero = targets.global_mean_norm.astype(np.float32) + zero
         pred_log_rms = pred_out["pred_log_rms"].squeeze(0)
         zero_log_rms = zero_out["pred_log_rms"].squeeze(0)
+        pred_frame_log_energy = (
+            pred_out["pred_frame_log_energy"].squeeze(0).cpu().numpy()
+            if "pred_frame_log_energy" in pred_out
+            else None
+        )
         pred_decoder_scale = targets.default_decoder_scales
         zero_decoder_scale = targets.default_decoder_scales
         if has_trained_scale_head:
@@ -242,6 +285,10 @@ def main() -> None:
             "zeroeeg": zero_wav,
             "pred": pred_wav,
             "pred_scaled": _scale_to_rms(pred_wav, float(np.exp(float(pred_log_rms.item())))),
+            "pred_env_scaled": _scale_to_rms(
+                _calibrate_frame_envelope(pred_wav, pred_frame_log_energy, hop=int(tgt_cfg.get("mel_hop", 256))),
+                float(np.exp(float(pred_log_rms.item()))),
+            ),
             "zeroeeg_scaled": _scale_to_rms(zero_wav, float(np.exp(float(zero_log_rms.item())))),
         }
         for kind, wav in wavs.items():
@@ -251,27 +298,35 @@ def main() -> None:
         # Oracle = GT target through the SAME vocoder => the vocoder ceiling. Reporting
         # pred vs oracle (not just vs original) separates "model error" from "vocoder loss".
         pred_active = _active_metrics(wavs["pred_scaled"], original)
+        pred_env_active = _active_metrics(wavs["pred_env_scaled"], original)
         oracle_active = _active_metrics(oracle, original)
         metric_row = {
             "subject": entry.subject,
             "label": entry.label,
             "trial_index": int(entry.trial_index),
             "pred_env_corr": _env_corr(wavs["pred_scaled"], original),
+            "pred_env_scaled_env_corr": _env_corr(wavs["pred_env_scaled"], original),
             "oracle_env_corr": _env_corr(oracle, original),
             "pred_rms_over_orig": _rms(wavs["pred_scaled"]) / max(_rms(original), 1e-8),
+            "pred_env_scaled_rms_over_orig": _rms(wavs["pred_env_scaled"]) / max(_rms(original), 1e-8),
             "oracle_rms_over_orig": _rms(oracle) / max(_rms(original), 1e-8),
             "pred_active_env_corr": pred_active["active_env_corr"],
+            "pred_env_scaled_active_env_corr": pred_env_active["active_env_corr"],
             "oracle_active_env_corr": oracle_active["active_env_corr"],
             "pred_voiced_rms_over_orig": pred_active["voiced_rms_over_orig"],
+            "pred_env_scaled_voiced_rms_over_orig": pred_env_active["voiced_rms_over_orig"],
             "oracle_voiced_rms_over_orig": oracle_active["voiced_rms_over_orig"],
             "pred_peak_over_orig": pred_active["peak_over_orig"],
+            "pred_env_scaled_peak_over_orig": pred_env_active["peak_over_orig"],
             "oracle_peak_over_orig": oracle_active["peak_over_orig"],
             "pred_active_duration_ratio": pred_active["active_duration_ratio"],
+            "pred_env_scaled_active_duration_ratio": pred_env_active["active_duration_ratio"],
             "oracle_active_duration_ratio": oracle_active["active_duration_ratio"],
         }
         if asr_model is not None:
             for wav_kind, prefix in (
                 ("pred_scaled", "pred_asr"),
+                ("pred_env_scaled", "pred_env_scaled_asr"),
                 (oracle_kind, "oracle_asr"),
                 ("zeroeeg_scaled", "zeroeeg_asr"),
                 ("mean_latent", "mean_asr"),
@@ -309,23 +364,31 @@ def main() -> None:
         "asr": asr_status,
         "oracle_kind": oracle_kind if metric_rows else ("oracle_encodec" if target_kind == "encodec_latent" else "oracle_griffinlim"),
         "pred_env_corr_mean": _mean("pred_env_corr"),
+        "pred_env_scaled_env_corr_mean": _mean("pred_env_scaled_env_corr"),
         "oracle_env_corr_mean": _mean("oracle_env_corr"),  # vocoder ceiling
         "pred_rms_over_orig_mean": _mean("pred_rms_over_orig"),
+        "pred_env_scaled_rms_over_orig_mean": _mean("pred_env_scaled_rms_over_orig"),
         "oracle_rms_over_orig_mean": _mean("oracle_rms_over_orig"),
         "pred_active_env_corr_mean": _mean("pred_active_env_corr"),
+        "pred_env_scaled_active_env_corr_mean": _mean("pred_env_scaled_active_env_corr"),
         "oracle_active_env_corr_mean": _mean("oracle_active_env_corr"),
         "pred_voiced_rms_over_orig_mean": _mean("pred_voiced_rms_over_orig"),
+        "pred_env_scaled_voiced_rms_over_orig_mean": _mean("pred_env_scaled_voiced_rms_over_orig"),
         "oracle_voiced_rms_over_orig_mean": _mean("oracle_voiced_rms_over_orig"),
         "pred_peak_over_orig_mean": _mean("pred_peak_over_orig"),
+        "pred_env_scaled_peak_over_orig_mean": _mean("pred_env_scaled_peak_over_orig"),
         "oracle_peak_over_orig_mean": _mean("oracle_peak_over_orig"),
         "pred_active_duration_ratio_mean": _mean("pred_active_duration_ratio"),
+        "pred_env_scaled_active_duration_ratio_mean": _mean("pred_env_scaled_active_duration_ratio"),
         "oracle_active_duration_ratio_mean": _mean("oracle_active_duration_ratio"),
         "pred_asr_label_acc": _hit_rate("pred_asr_label_hit"),
+        "pred_env_scaled_asr_label_acc": _hit_rate("pred_env_scaled_asr_label_hit"),
         "oracle_asr_label_acc": _hit_rate("oracle_asr_label_hit"),
         "zeroeeg_asr_label_acc": _hit_rate("zeroeeg_asr_label_hit"),
         "mean_asr_label_acc": _hit_rate("mean_asr_label_hit"),
         "original_asr_label_acc": _hit_rate("original_asr_label_hit"),
         "pred_asr_cer_mean": _mean_optional("pred_asr_cer"),
+        "pred_env_scaled_asr_cer_mean": _mean_optional("pred_env_scaled_asr_cer"),
         "oracle_asr_cer_mean": _mean_optional("oracle_asr_cer"),
         "zeroeeg_asr_cer_mean": _mean_optional("zeroeeg_asr_cer"),
         "mean_asr_cer_mean": _mean_optional("mean_asr_cer"),
@@ -335,10 +398,13 @@ def main() -> None:
     (out_dir / "synth_metrics.json").write_text(json.dumps(synth_metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(
         f"[oracle] env_corr pred={synth_metrics['pred_env_corr_mean']:.3f} "
+        f"env_scaled={synth_metrics['pred_env_scaled_env_corr_mean']:.3f} "
         f"oracle(ceiling)={synth_metrics['oracle_env_corr_mean']:.3f} | "
         f"active_env pred={synth_metrics['pred_active_env_corr_mean']:.3f} "
+        f"env_scaled={synth_metrics['pred_env_scaled_active_env_corr_mean']:.3f} "
         f"oracle={synth_metrics['oracle_active_env_corr_mean']:.3f} | "
         f"voiced_rms/orig pred={synth_metrics['pred_voiced_rms_over_orig_mean']:.3f} "
+        f"env_scaled={synth_metrics['pred_env_scaled_voiced_rms_over_orig_mean']:.3f} "
         f"oracle={synth_metrics['oracle_voiced_rms_over_orig_mean']:.3f}"
     )
     print(f"[done] wrote {len(manifest)} wav rows to {out_dir}")

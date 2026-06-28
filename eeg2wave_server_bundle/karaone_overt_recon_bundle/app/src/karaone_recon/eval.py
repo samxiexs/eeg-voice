@@ -32,6 +32,25 @@ def _sample_pcc(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     )
 
 
+def _weighted_pcc_1d(a: np.ndarray, b: np.ndarray, weight: np.ndarray) -> np.ndarray:
+    out = np.zeros(a.shape[0], dtype=np.float32)
+    for i in range(a.shape[0]):
+        w = weight[i].astype(np.float64)
+        if float(w.sum()) < 2.0:
+            out[i] = 0.0
+            continue
+        x = a[i].astype(np.float64)
+        y = b[i].astype(np.float64)
+        w = w / max(float(w.sum()), 1e-8)
+        xm = float((x * w).sum())
+        ym = float((y * w).sum())
+        xc = (x - xm) * w
+        yc = (y - ym) * w
+        den = float(np.sqrt((xc * (x - xm)).sum()) * np.sqrt((yc * (y - ym)).sum())) + 1e-8
+        out[i] = float((xc * (y - ym)).sum() / den)
+    return out
+
+
 def _dct_matrix(n_in: int, n_out: int) -> np.ndarray:
     n = np.arange(n_in, dtype=np.float64)[None, :]
     k = np.arange(n_out, dtype=np.float64)[:, None]
@@ -62,6 +81,28 @@ def _mel_metrics(pred_norm: np.ndarray, target_norm: np.ndarray, mean_norm: np.n
     coef = 10.0 / np.log(10.0) * np.sqrt(2.0)
     pred_mcd = coef * np.sqrt(np.square(pred_mfcc[:, start:] - target_mfcc[:, start:]).sum(axis=1) + 1e-8)
     mean_mcd = coef * np.sqrt(np.square(mean_mfcc[:, start:] - target_mfcc[:, start:]).sum(axis=1) + 1e-8)
+    pred_energy = np.exp(np.clip(pred_raw, -12.0, 6.0)).mean(axis=-1).clip(min=1e-8)
+    target_energy = np.exp(np.clip(target_raw, -12.0, 6.0)).mean(axis=-1).clip(min=1e-8)
+    mean_energy = np.exp(np.clip(mean_raw, -12.0, 6.0)).mean(axis=-1).clip(min=1e-8)
+    target_energy_mean = target_energy.mean(axis=1, keepdims=True)
+    target_energy_std = target_energy.std(axis=1, keepdims=True)
+    target_energy_peak = target_energy.max(axis=1, keepdims=True)
+    active = target_energy >= np.maximum(target_energy_mean + 0.5 * target_energy_std, 0.1 * target_energy_peak)
+    fallback = np.zeros_like(active, dtype=bool)
+    fallback[np.arange(active.shape[0]), target_energy.argmax(axis=1)] = True
+    active = np.where(active.sum(axis=1, keepdims=True) > 0, active, fallback).astype(np.float32)
+    pred_log_energy = np.log(pred_energy)
+    target_log_energy = np.log(target_energy)
+    mean_log_energy = np.log(mean_energy)
+    active_weight = active[..., None]
+    pred_active_mse = np.square(pred_raw - target_raw) * active_weight
+    mean_active_mse = np.square(mean_raw - target_raw) * active_weight
+    denom = np.maximum(active_weight.sum(axis=(1, 2)) * d, 1.0)
+    pred_active_mse = pred_active_mse.sum(axis=(1, 2)) / denom
+    mean_active_mse = mean_active_mse.sum(axis=(1, 2)) / denom
+    active_peak_target = np.maximum((target_energy * active).max(axis=1), 1e-8)
+    active_peak_pred = (pred_energy * active).max(axis=1)
+    active_peak_mean = (mean_energy * active).max(axis=1)
     return {
         "pred_mel_corr": float(_sample_pcc(pred_flat, target_flat).mean()),
         "mean_mel_corr": float(_sample_pcc(mean_flat, target_flat).mean()),
@@ -69,6 +110,17 @@ def _mel_metrics(pred_norm: np.ndarray, target_norm: np.ndarray, mean_norm: np.n
         "pred_mcd": float(pred_mcd.reshape(-1, t).mean(axis=1).mean()),
         "mean_mcd": float(mean_mcd.reshape(-1, t).mean(axis=1).mean()),
         "pred_mcd_gain": float(mean_mcd.mean() - pred_mcd.mean()),
+        "pred_energy_corr": float(_sample_pcc(pred_log_energy, target_log_energy).mean()),
+        "mean_energy_corr": float(_sample_pcc(mean_log_energy, target_log_energy).mean()),
+        "pred_energy_corr_gain": float(_sample_pcc(pred_log_energy, target_log_energy).mean() - _sample_pcc(mean_log_energy, target_log_energy).mean()),
+        "pred_active_energy_corr": float(_weighted_pcc_1d(pred_log_energy, target_log_energy, active).mean()),
+        "mean_active_energy_corr": float(_weighted_pcc_1d(mean_log_energy, target_log_energy, active).mean()),
+        "pred_active_recon_mse": float(pred_active_mse.mean()),
+        "mean_active_recon_mse": float(mean_active_mse.mean()),
+        "pred_active_recon_mse_gain": float(mean_active_mse.mean() - pred_active_mse.mean()),
+        "pred_active_peak_ratio": float(np.mean(active_peak_pred / active_peak_target)),
+        "mean_active_peak_ratio": float(np.mean(active_peak_mean / active_peak_target)),
+        "target_active_frame_rate": float(active.mean()),
     }
 
 
