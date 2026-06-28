@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 
 from .alignment import shift_sequence_np
 from .data import KaraOneTrialDataset
+from .prototypes import TorchSemanticMelPrototypes
 from .targets import KaraOneTargets
 
 
@@ -174,6 +175,8 @@ def evaluate(
     aux_targets: KaraOneTargets | None = None,
     residual_mean: bool = False,
     target_kind: str | None = None,
+    semantic_prototypes: TorchSemanticMelPrototypes | None = None,
+    semantic_prototype_residual: bool = False,
 ) -> dict[str, Any]:
     model.eval()
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -183,11 +186,13 @@ def evaluate(
     pred_summaries: list[np.ndarray] = []
     zero_summaries: list[np.ndarray] = []
     mean_summaries: list[np.ndarray] = []
+    proto_summaries: list[np.ndarray] = []
     pred_flat: list[np.ndarray] = []
     target_flat: list[np.ndarray] = []
     pred_seq: list[np.ndarray] = []
     target_seq: list[np.ndarray] = []
     mean_seq: list[np.ndarray] = []
+    proto_seq: list[np.ndarray] = []
     pred_aligned_seq: list[np.ndarray] = []
     oracle_aligned_seq: list[np.ndarray] = []
     pred_lag_values: list[np.ndarray] = []
@@ -215,35 +220,50 @@ def evaluate(
         zero_out = model(torch.zeros_like(eeg), subject_idx, stage_idx, valid_len)
         raw_pred = out["pred_latent"]
         raw_zero_pred = zero_out["pred_latent"]
-        if residual_mean:
+        if semantic_prototype_residual and semantic_prototypes is not None and "semantic_token_logits" in out:
+            token_mask = batch.get("semantic_token_mask")
+            token_mask_t = token_mask.to(device) if token_mask is not None else None
+            proto_batch = semantic_prototypes.prototype_from_logits(out["semantic_token_logits"], token_mask_t)
+            zero_proto_batch = semantic_prototypes.prototype_from_logits(zero_out["semantic_token_logits"], token_mask_t)
+            mean_batch = global_mean.unsqueeze(0).expand_as(target)
+            pred = proto_batch + raw_pred
+            zero_pred = zero_proto_batch + raw_zero_pred
+        elif residual_mean:
             mean_batch = global_mean.unsqueeze(0).expand_as(target)
             pred = mean_batch + raw_pred
             zero_pred = mean_batch + raw_zero_pred
+            proto_batch = mean_batch
         else:
             mean_batch = global_mean.unsqueeze(0).expand_as(target)
             pred = raw_pred
             zero_pred = raw_zero_pred
+            proto_batch = mean_batch
         b = int(eeg.shape[0])
 
         pred_cos = F.cosine_similarity(pred, target, dim=-1).mean(dim=1)
         zero_cos = F.cosine_similarity(zero_pred, target, dim=-1).mean(dim=1)
         mean_cos = F.cosine_similarity(mean_batch, target, dim=-1).mean(dim=1)
+        proto_cos = F.cosine_similarity(proto_batch, target, dim=-1).mean(dim=1)
         pred_mse = F.mse_loss(pred, target, reduction="none").mean(dim=(1, 2))
         zero_mse = F.mse_loss(zero_pred, target, reduction="none").mean(dim=(1, 2))
         mean_mse = F.mse_loss(mean_batch, target, reduction="none").mean(dim=(1, 2))
+        proto_mse = F.mse_loss(proto_batch, target, reduction="none").mean(dim=(1, 2))
         content_acc = (out["content_logits"].argmax(dim=-1).cpu() == batch["label_idx"]).float()
 
         metrics = {
             "pred_recon_cos": pred_cos.detach().cpu().numpy(),
             "zeroeeg_recon_cos": zero_cos.detach().cpu().numpy(),
             "mean_recon_cos": mean_cos.detach().cpu().numpy(),
+            "semantic_proto_recon_cos": proto_cos.detach().cpu().numpy(),
             "pred_recon_mse": pred_mse.detach().cpu().numpy(),
             "zeroeeg_recon_mse": zero_mse.detach().cpu().numpy(),
             "mean_recon_mse": mean_mse.detach().cpu().numpy(),
+            "semantic_proto_recon_mse": proto_mse.detach().cpu().numpy(),
             "content_acc": content_acc.numpy(),
         }
-        if residual_mean:
-            residual_target = target - mean_batch
+        if residual_mean or semantic_prototype_residual:
+            residual_base = proto_batch if semantic_prototype_residual else mean_batch
+            residual_target = target - residual_base
             residual_cos = F.cosine_similarity(raw_pred, residual_target, dim=-1).mean(dim=1)
             zero_residual_cos = F.cosine_similarity(raw_zero_pred, residual_target, dim=-1).mean(dim=1)
             residual_mse = F.mse_loss(raw_pred, residual_target, reduction="none").mean(dim=(1, 2))
@@ -269,6 +289,7 @@ def evaluate(
         pred_np = pred.detach().cpu().numpy()
         zero_np = zero_pred.detach().cpu().numpy()
         mean_np = global_mean.unsqueeze(0).expand_as(target).detach().cpu().numpy()
+        proto_np = proto_batch.detach().cpu().numpy()
         tgt_np = target.detach().cpu().numpy()
         if "lag_mel_frames" in batch:
             oracle_frames = batch["lag_mel_frames"].detach().cpu().numpy().astype(np.int32)
@@ -293,11 +314,13 @@ def evaluate(
         pred_summaries.append(pred_np.mean(axis=1))
         zero_summaries.append(zero_np.mean(axis=1))
         mean_summaries.append(mean_np.mean(axis=1))
+        proto_summaries.append(proto_np.mean(axis=1))
         pred_flat.append(pred_np.reshape(pred_np.shape[0], -1))
         target_flat.append(tgt_np.reshape(tgt_np.shape[0], -1))
         pred_seq.append(pred_np)
         target_seq.append(tgt_np)
         mean_seq.append(mean_np)
+        proto_seq.append(proto_np)
         subjects.extend([str(item) for item in batch["subject"]])
         labels.extend([str(item) for item in batch["label"]])
         trials.extend([int(item) for item in batch["trial_index"]])
@@ -314,6 +337,7 @@ def evaluate(
     pred_summary = np.concatenate(pred_summaries, axis=0)
     zero_summary = np.concatenate(zero_summaries, axis=0)
     mean_summary = np.concatenate(mean_summaries, axis=0)
+    proto_summary = np.concatenate(proto_summaries, axis=0) if proto_summaries else mean_summary
     pred_matrix = np.concatenate(pred_flat, axis=0)
     target_matrix = np.concatenate(target_flat, axis=0)
     pred_std = pred_matrix.std(axis=0)
@@ -326,6 +350,7 @@ def evaluate(
             "n": int(count),
             "pred_over_zero_cos_gain": out_metrics["pred_recon_cos"] - out_metrics["zeroeeg_recon_cos"],
             "pred_over_mean_cos_gain": out_metrics["pred_recon_cos"] - out_metrics["mean_recon_cos"],
+            "pred_over_semantic_proto_cos_gain": out_metrics["pred_recon_cos"] - out_metrics["semantic_proto_recon_cos"],
             "pred_std_ratio_median": float(np.median(pred_std / np.maximum(target_std, 1e-6))),
             "pred_pairwise_corr_median": _corr_median(pred_matrix),
             "pred_pcc": float(np.mean(pcc)),
@@ -336,19 +361,40 @@ def evaluate(
             {
                 "prediction_mode": "residual_global_mean",
                 "pred_over_mean_mse_gain": out_metrics["mean_recon_mse"] - out_metrics["pred_recon_mse"],
+                "pred_over_semantic_proto_mse_gain": out_metrics["semantic_proto_recon_mse"] - out_metrics["pred_recon_mse"],
                 "pred_residual_cos_gain": out_metrics["pred_residual_cos"] - out_metrics["zeroeeg_residual_cos"],
                 "pred_residual_mse_gain": out_metrics["zeroeeg_residual_mse"] - out_metrics["pred_residual_mse"],
             }
         )
+    if semantic_prototype_residual:
+        out_metrics["prediction_mode"] = "semantic_prototype_residual"
+        out_metrics["pred_over_semantic_proto_mse_gain"] = out_metrics["semantic_proto_recon_mse"] - out_metrics["pred_recon_mse"]
     if str(target_kind or "").lower() == "mel":
+        pred_seq_np = np.concatenate(pred_seq, axis=0)
+        target_seq_np = np.concatenate(target_seq, axis=0)
+        mean_seq_np = np.concatenate(mean_seq, axis=0)
         out_metrics.update(
             _mel_metrics(
-                np.concatenate(pred_seq, axis=0),
-                np.concatenate(target_seq, axis=0),
-                np.concatenate(mean_seq, axis=0),
+                pred_seq_np,
+                target_seq_np,
+                mean_seq_np,
                 targets,
             )
         )
+        if proto_seq:
+            proto_metrics = _mel_metrics(np.concatenate(proto_seq, axis=0), target_seq_np, mean_seq_np, targets)
+            out_metrics.update(
+                {
+                    "semantic_proto_mel_corr": proto_metrics["pred_mel_corr"],
+                    "semantic_proto_mcd": proto_metrics["pred_mcd"],
+                    "semantic_proto_energy_corr": proto_metrics["pred_energy_corr"],
+                    "semantic_proto_active_recon_mse": proto_metrics["pred_active_recon_mse"],
+                    "pred_over_semantic_proto_mel_corr_gain": out_metrics["pred_mel_corr"] - proto_metrics["pred_mel_corr"],
+                    "pred_over_semantic_proto_mcd_gain": proto_metrics["pred_mcd"] - out_metrics["pred_mcd"],
+                    "pred_over_semantic_proto_energy_corr_gain": out_metrics["pred_energy_corr"] - proto_metrics["pred_energy_corr"],
+                    "pred_over_semantic_proto_active_recon_mse_gain": proto_metrics["pred_active_recon_mse"] - out_metrics["pred_active_recon_mse"],
+                }
+            )
         if pred_aligned_seq:
             aligned_metrics = _mel_metrics(
                 np.concatenate(pred_aligned_seq, axis=0),
@@ -386,6 +432,7 @@ def evaluate(
     out_metrics.update({f"pred_{k}": v for k, v in _retrieval_stats(pred_summary, subjects, labels, trials, targets).items()})
     out_metrics.update({f"zeroeeg_{k}": v for k, v in _retrieval_stats(zero_summary, subjects, labels, trials, targets).items()})
     out_metrics.update({f"mean_{k}": v for k, v in _retrieval_stats(mean_summary, subjects, labels, trials, targets).items()})
+    out_metrics.update({f"semantic_proto_{k}": v for k, v in _retrieval_stats(proto_summary, subjects, labels, trials, targets).items()})
 
     # HuBERT-space content metrics (more trustworthy than mel-PCC; WS3).
     if aux_targets is not None and hubert_n > 0:

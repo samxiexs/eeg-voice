@@ -79,3 +79,19 @@ def kmeans_tokens(features: np.ndarray, k: int = 64, iters: int = 30, seed: int 
         if shift < 1e-7:
             break
     return labels, centers
+
+
+def assign_tokens_to_centroids(features: np.ndarray, centroids: np.ndarray) -> np.ndarray:
+    x = np.asarray(features, dtype=np.float32)
+    centers = np.asarray(centroids, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"expected [N,D] features, got {x.shape}")
+    if centers.ndim != 2 or centers.shape[1] != x.shape[1]:
+        raise ValueError(f"centroids shape {centers.shape} incompatible with features {x.shape}")
+    chunks = []
+    center_norm = np.sum(centers * centers, axis=1, keepdims=True).T
+    for start in range(0, x.shape[0], 4096):
+        chunk = x[start : start + 4096]
+        dist = np.sum(chunk * chunk, axis=1, keepdims=True) - 2.0 * (chunk @ centers.T) + center_norm
+        chunks.append(np.argmin(dist, axis=1).astype(np.int64))
+    return np.concatenate(chunks, axis=0)

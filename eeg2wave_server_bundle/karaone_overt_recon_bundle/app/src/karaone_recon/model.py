@@ -52,6 +52,7 @@ class KaraOneConfig:
     transformer_layers: int = 4
     transformer_heads: int = 4
     patch_stride: int = 4
+    use_channel_reliability: bool = False
     decoder_scale_dim: int = 1
     # WS1 cross-subject domain adaptation
     instance_norm: bool = False        # per-trial RevIN normalization in the encoder (no subject id)
@@ -88,6 +89,7 @@ class KaraOneEEG2Codec(nn.Module):
                 transformer_layers=int(cfg.transformer_layers),
                 transformer_heads=int(cfg.transformer_heads),
                 patch_stride=int(cfg.patch_stride),
+                use_channel_reliability=bool(cfg.use_channel_reliability),
             )
         else:
             self.encoder = SpatialTemporalEEGEncoder(
@@ -101,6 +103,7 @@ class KaraOneEEG2Codec(nn.Module):
                 dropout=cfg.dropout,
                 num_channel_experts=cfg.num_channel_experts,
                 instance_norm=cfg.instance_norm,
+                use_channel_reliability=bool(cfg.use_channel_reliability),
             )
         d = cfg.d_model
         self.content_seq_head = nn.Sequential(

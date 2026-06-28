@@ -152,6 +152,16 @@ def prompt_ctc_loss(ctc_logits: torch.Tensor, label_idx: torch.Tensor) -> torch.
     targets = label_idx.long().clamp_min(0) + 1  # blank=0, labels start at 1
     input_lengths = torch.full((b,), int(t), device=ctc_logits.device, dtype=torch.long)
     target_lengths = torch.ones((b,), device=ctc_logits.device, dtype=torch.long)
+    if ctc_logits.device.type == "mps":
+        loss = F.ctc_loss(
+            log_probs.cpu(),
+            targets.cpu(),
+            input_lengths.cpu(),
+            target_lengths.cpu(),
+            blank=0,
+            zero_infinity=True,
+        )
+        return loss.to(ctc_logits.device)
     return F.ctc_loss(log_probs, targets, input_lengths, target_lengths, blank=0, zero_infinity=True)
 
 

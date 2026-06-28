@@ -86,6 +86,17 @@ def _channel_dropout(eeg: torch.Tensor, p: float, training: bool) -> torch.Tenso
     return eeg * keep
 
 
+def _temporal_pool_1d(x: torch.Tensor, target_steps: int) -> torch.Tensor:
+    if x.shape[-1] == target_steps:
+        return x
+    if x.device.type == "mps" and x.shape[-1] % int(target_steps) != 0:
+        # PyTorch MPS currently does not implement non-divisible adaptive_avg_pool1d.
+        # Linear interpolation preserves the intended fixed-length temporal projection
+        # without forcing the whole encoder activation back to CPU.
+        return F.interpolate(x, size=int(target_steps), mode="linear", align_corners=False)
+    return F.adaptive_avg_pool1d(x, int(target_steps))
+
+
 class ChannelMoEFrontend(nn.Module):
     """Channel-selecting + channel-clustering MoE front-end for raw EEG.
 
@@ -244,13 +255,18 @@ class TransformerEEGEncoder(nn.Module):
         transformer_layers: int = 4,
         transformer_heads: int = 4,
         patch_stride: int = 4,
+        use_channel_reliability: bool = False,
     ):
         super().__init__()
         self.channel_dropout_p = float(channel_dropout)
         self.instance_norm = bool(instance_norm)
         self.num_channel_experts = int(num_channel_experts)
+        self.use_channel_reliability = bool(use_channel_reliability)
         self.target_steps = int(target_steps)
         self.encoder_kind = str(encoder_kind)
+        if self.use_channel_reliability:
+            self.channel_reliability = nn.Sequential(nn.Linear(2, 16), nn.GELU(), nn.Linear(16, 1))
+            self.channel_reliability_bias = nn.Parameter(torch.zeros(in_channels))
         if self.num_channel_experts > 1:
             self.spatial = ChannelMoEFrontend(
                 in_channels=in_channels,
@@ -305,15 +321,22 @@ class TransformerEEGEncoder(nn.Module):
         in_len = int(eeg.shape[-1])
         if self.instance_norm:
             eeg = _instance_norm(eeg, valid_len)
+        aux: dict[str, torch.Tensor] = {}
+        if self.use_channel_reliability:
+            stats = torch.stack([eeg.mean(dim=-1), eeg.std(dim=-1)], dim=-1)
+            gate = torch.sigmoid(self.channel_reliability(stats).squeeze(-1) + self.channel_reliability_bias)
+            eeg = eeg * gate.unsqueeze(-1)
+            aux["channel_reliability_gate"] = gate
         x = _channel_dropout(eeg, self.channel_dropout_p, self.training)
         if self.num_channel_experts > 1:
-            x, aux = self.spatial(x)
+            x, spatial_aux = self.spatial(x)
+            aux.update(spatial_aux)
         else:
-            x, aux = self.spatial(x), {}
+            x = self.spatial(x)
         x = self.spatial_film(x, cond)
         x = self.patch(x)
         if x.shape[-1] != self.target_steps:
-            x = F.adaptive_avg_pool1d(x, self.target_steps)
+            x = _temporal_pool_1d(x, self.target_steps)
         seq = x.transpose(1, 2) + self.pos[:, : self.target_steps]
         key_mask = _key_padding_mask(valid_len, in_len, self.target_steps, seq.device)
         for block in self.blocks:
@@ -340,11 +363,16 @@ class SpatialTemporalEEGEncoder(nn.Module):
         dropout: float = 0.15,
         num_channel_experts: int = 1,
         instance_norm: bool = False,
+        use_channel_reliability: bool = False,
     ):
         super().__init__()
         self.channel_dropout_p = float(channel_dropout)
         self.instance_norm = bool(instance_norm)
         self.num_channel_experts = int(num_channel_experts)
+        self.use_channel_reliability = bool(use_channel_reliability)
+        if self.use_channel_reliability:
+            self.channel_reliability = nn.Sequential(nn.Linear(2, 16), nn.GELU(), nn.Linear(16, 1))
+            self.channel_reliability_bias = nn.Parameter(torch.zeros(in_channels))
         if self.num_channel_experts > 1:
             # Channel-selecting + channel-clustering MoE spatial front-end.
             self.spatial = ChannelMoEFrontend(
@@ -381,14 +409,21 @@ class SpatialTemporalEEGEncoder(nn.Module):
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         if self.instance_norm:
             eeg = _instance_norm(eeg, valid_len)
+        aux: dict[str, torch.Tensor] = {}
+        if self.use_channel_reliability:
+            stats = torch.stack([eeg.mean(dim=-1), eeg.std(dim=-1)], dim=-1)
+            gate = torch.sigmoid(self.channel_reliability(stats).squeeze(-1) + self.channel_reliability_bias)
+            eeg = eeg * gate.unsqueeze(-1)
+            aux["channel_reliability_gate"] = gate
         x = _channel_dropout(eeg, self.channel_dropout_p, self.training)
         if self.num_channel_experts > 1:
-            x, aux = self.spatial(x)
+            x, spatial_aux = self.spatial(x)
+            aux.update(spatial_aux)
         else:
-            x, aux = self.spatial(x), {}
+            x = self.spatial(x)
         x = self.spatial_film(x, cond)
         for block in self.blocks:
             x = block(x, cond)
         if x.shape[-1] != self.target_steps:
-            x = F.adaptive_avg_pool1d(x, self.target_steps)
+            x = _temporal_pool_1d(x, self.target_steps)
         return x, aux

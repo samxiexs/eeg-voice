@@ -8,6 +8,7 @@ from pathlib import Path
 
 import math
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
@@ -27,6 +28,8 @@ from src.karaone_recon.discriminator import (
 from src.karaone_recon.eval import evaluate
 from src.karaone_recon.losses import compute_losses
 from src.karaone_recon.model import KaraOneConfig, KaraOneEEG2Codec
+from src.karaone_recon.prototypes import KaraOneSemanticMelPrototypes, TorchSemanticMelPrototypes
+from src.karaone_recon.semantic_tokens import KaraOneSemanticTokenTargets
 from src.karaone_recon.targets import KaraOneTargets
 from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, resolve_target_cache, set_seed, write_json
 
@@ -47,9 +50,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--env-objective", action="store_true", help="enable active/envelope-guided Mel reconstruction losses")
     parser.add_argument("--alignment-objective", action="store_true", help="enable v3 lag-aware aligned Mel/env losses")
     parser.add_argument("--alignment-cache", default=None, help="optional KaraOne alignment cache npz")
+    parser.add_argument("--semantic-prototype-residual", action="store_true", help="v4: predict residual over EEG-predicted semantic Mel prototype")
+    parser.add_argument("--semantic-token-cache", default=None, help="HuBERT semantic-token cache for v4")
+    parser.add_argument("--semantic-prototype-cache", default=None, help="train-split-only semantic Mel prototype cache for v4")
+    parser.add_argument("--channel-reliability", action="store_true", help="enable lightweight all-channel reliability gate")
     parser.add_argument(
         "--selection",
-        choices=["pred_over_mean_cos_gain", "mel_env_composite", "alignment_composite"],
+        choices=["pred_over_mean_cos_gain", "mel_env_composite", "alignment_composite", "semantic_proto_composite"],
         default="pred_over_mean_cos_gain",
         help="validation checkpoint selection criterion",
     )
@@ -77,7 +84,44 @@ def _apply_global_mean_residual(out: dict[str, torch.Tensor], global_mean: torch
     return {**out, "pred_residual": raw_delta, "pred_latent": pred}
 
 
+def _apply_semantic_prototype_residual(
+    out: dict[str, torch.Tensor],
+    prototypes: TorchSemanticMelPrototypes,
+    semantic_token_mask: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    if "semantic_token_logits" not in out:
+        raise KeyError("semantic-prototype residual requires semantic_token_logits in model output")
+    raw_delta = out["pred_latent"]
+    proto = prototypes.prototype_from_logits(out["semantic_token_logits"], semantic_token_mask)
+    if proto.shape != raw_delta.shape:
+        raise ValueError(f"semantic prototype shape {tuple(proto.shape)} != residual shape {tuple(raw_delta.shape)}")
+    lag_prior = prototypes.lag_from_logits(out["semantic_token_logits"], semantic_token_mask)
+    lag_residual = out.get("pred_lag_mu", torch.zeros_like(lag_prior))
+    return {
+        **out,
+        "semantic_proto": proto,
+        "pred_residual": raw_delta,
+        "pred_latent": proto + raw_delta,
+        "semantic_lag_prior": lag_prior,
+        "pred_lag_residual": lag_residual,
+        "pred_lag_mu": lag_prior + lag_residual,
+    }
+
+
 def _selection_score(metrics: dict, criterion: str) -> float:
+    if criterion == "semantic_proto_composite":
+        semantic_gain = metrics.get("pred_hubert_within_subject_label_top1", 0.0) - metrics.get(
+            "mean_within_subject_label_top1", 0.0
+        )
+        residual_gain = metrics.get("pred_over_semantic_proto_mel_corr_gain", 0.0)
+        return float(
+            metrics.get("pred_mel_corr_gain", 0.0)
+            + 0.6 * metrics.get("pred_energy_corr_gain", 0.0)
+            + 0.8 * residual_gain
+            + 0.6 * semantic_gain
+            + 0.02 * metrics.get("pred_mcd_gain", 0.0)
+            - 0.35 * max(0.0, metrics.get("pred_pairwise_corr_median", 0.0) - 0.85)
+        )
     if criterion == "alignment_composite":
         semantic_gain = metrics.get("pred_hubert_within_subject_label_top1", 0.0) - metrics.get(
             "mean_within_subject_label_top1", 0.0
@@ -99,6 +143,58 @@ def _selection_score(metrics: dict, criterion: str) -> float:
             - 0.2 * max(0.0, metrics.get("pred_pairwise_corr_median", 0.0) - 0.85)
         )
     return float(metrics["pred_over_mean_cos_gain"])
+
+
+@torch.no_grad()
+def _write_channel_diagnostics(
+    model: KaraOneEEG2Codec,
+    dataset: KaraOneTrialDataset,
+    device: str | torch.device,
+    run_dir: Path,
+    split: str,
+    batch_size: int = 64,
+) -> None:
+    model.eval()
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    rows = []
+    for batch in loader:
+        out = model(
+            batch["eeg"].to(device),
+            batch["subject_idx"].to(device),
+            batch["stage_idx"].to(device),
+            batch["eeg_valid_len"].to(device),
+        )
+        gate = out.get("channel_reliability_gate", out.get("channel_gate"))
+        if gate is None:
+            return
+        gate_np = gate.detach().cpu().numpy()
+        for i in range(gate_np.shape[0]):
+            rows.append(
+                {
+                    "subject": str(batch["subject"][i]),
+                    "label": str(batch["label"][i]),
+                    "stage": str(batch["stage"][i]),
+                    "gate": gate_np[i].astype(float),
+                }
+            )
+    if not rows:
+        return
+
+    def group_mean(key: str) -> dict[str, list[float]]:
+        grouped: dict[str, list[np.ndarray]] = {}
+        for row in rows:
+            grouped.setdefault(str(row[key]), []).append(row["gate"])
+        return {name: np.stack(vals, axis=0).mean(axis=0).astype(float).tolist() for name, vals in grouped.items()}
+
+    payload = {
+        "split": split,
+        "n": len(rows),
+        "overall_mean": np.stack([row["gate"] for row in rows], axis=0).mean(axis=0).astype(float).tolist(),
+        "by_subject": group_mean("subject"),
+        "by_label": group_mean("label"),
+        "by_stage": group_mean("stage"),
+    }
+    write_json(run_dir / "metrics" / f"channel_reliability_{split}.json", payload)
 
 
 def _load_common(cfg: dict, stages: tuple[str, ...], target_kind: str | None = None):
@@ -126,6 +222,9 @@ def main() -> None:
     stages = tuple((args.stages or cfg["data"].get("stages", "overt_like")).split(","))
     target_kind = args.target or str(cfg.get("target", {}).get("kind", "mel"))
     residual_mean = bool(args.residual_mean)
+    semantic_proto_residual = bool(args.semantic_prototype_residual)
+    if semantic_proto_residual and residual_mean:
+        raise ValueError("--semantic-prototype-residual and --residual-mean are mutually exclusive")
     root, targets, common = _load_common(cfg, stages, target_kind)
     alignment_cache = args.alignment_cache or cfg.get("alignment", {}).get("cache")
     alignment_path = None
@@ -141,7 +240,12 @@ def main() -> None:
     elif args.alignment_objective:
         raise FileNotFoundError("alignment objective requires --alignment-cache or alignment.cache in config")
     print(f"[target] kind={target_kind} D={targets.D} T={targets.T}")
-    print(f"[prediction] mode={'residual_global_mean' if residual_mean else 'direct_target'}")
+    prediction_mode = (
+        "semantic_prototype_residual"
+        if semantic_proto_residual
+        else ("residual_global_mean" if residual_mean else "direct_target")
+    )
+    print(f"[prediction] mode={prediction_mode}")
     if target_kind == "encodec_latent" and not targets.has_complete_audio_metadata:
         print("[target] WARNING: EnCodec cache is legacy/incomplete; rebuild with scripts/extract_karaone_targets.py --target encodec_latent --force")
 
@@ -157,6 +261,36 @@ def main() -> None:
             print(f"[hubert] aux target T={aux_targets.T} D={aux_targets.D} ({hubert_path.name})")
         else:
             print(f"[hubert] cache not found ({hubert_path.name}); HuBERT aux head disabled")
+
+    token_targets = None
+    prototype_cache = None
+    prototype_tensors = None
+    if semantic_proto_residual:
+        token_cache_raw = args.semantic_token_cache or tgt_cfg.get("cache_hubert_tokens_trainonly") or tgt_cfg.get("cache_hubert_tokens")
+        proto_cache_raw = args.semantic_prototype_cache or tgt_cfg.get("cache_semantic_mel_prototypes")
+        if not token_cache_raw:
+            raise ValueError("v4 semantic-prototype residual requires --semantic-token-cache or target.cache_hubert_tokens")
+        if not proto_cache_raw:
+            raise ValueError("v4 semantic-prototype residual requires --semantic-prototype-cache or target.cache_semantic_mel_prototypes")
+        token_path = resolve_bundle_path(token_cache_raw, BUNDLE_DIR)
+        proto_path = resolve_bundle_path(proto_cache_raw, BUNDLE_DIR)
+        if not token_path.exists():
+            raise FileNotFoundError(f"Missing semantic-token cache: {token_path}")
+        if not proto_path.exists():
+            raise FileNotFoundError(f"Missing semantic prototype cache: {proto_path}")
+        token_targets = KaraOneSemanticTokenTargets(token_path)
+        prototype_cache = KaraOneSemanticMelPrototypes(proto_path)
+        if prototype_cache.vocab_size != token_targets.vocab_size:
+            raise ValueError(f"prototype vocab={prototype_cache.vocab_size} != token cache vocab={token_targets.vocab_size}")
+        if prototype_cache.target_steps != targets.T or prototype_cache.target_dim != targets.D:
+            raise ValueError(
+                f"prototype target shape {(prototype_cache.target_steps, prototype_cache.target_dim)} "
+                f"!= target shape {(targets.T, targets.D)}"
+            )
+        prototype_tensors = prototype_cache.to_tensors(device)
+        common["semantic_token_targets"] = token_targets
+        print(f"[v4] semantic token cache={token_path}")
+        print(f"[v4] semantic Mel prototype cache={proto_path} (train split only)")
 
     train_ds = KaraOneTrialDataset(split="train", aux_targets=aux_targets, **common)
     val_ds = KaraOneTrialDataset(split="val", aux_targets=aux_targets, **common)
@@ -202,11 +336,14 @@ def main() -> None:
             use_domain_adv=bool(da_cfg.get("adversarial", False)),
             hubert_dim=int(aux_targets.D) if aux_targets is not None else 0,
             hubert_steps=int(aux_targets.T) if aux_targets is not None else 50,
+            semantic_token_vocab=int(token_targets.vocab_size) if token_targets is not None else 0,
+            semantic_token_steps=int(token_targets.T) if token_targets is not None else 50,
+            use_channel_reliability=bool(args.channel_reliability),
         )
     ).to(device)
-    if residual_mean and not args.no_zero_init_residual:
+    if (residual_mean or semantic_proto_residual) and not args.no_zero_init_residual:
         _zero_init_output_heads(model)
-        print("[prediction] zero-initialized acoustic output head; initial prediction is global mean + delta")
+        print("[prediction] zero-initialized acoustic output head; initial prediction starts from its prototype prior")
     use_domain_adv = bool(da_cfg.get("adversarial", False))
     lambda_domain_adv = float(da_cfg.get("lambda_domain_adv", 0.0)) if use_domain_adv else 0.0
     print(f"[domain] instance_norm={bool(da_cfg.get('instance_norm', False))} adversarial={use_domain_adv} lambda={lambda_domain_adv}")
@@ -252,8 +389,8 @@ def main() -> None:
             "lambda_ctc": 0.0,
             "lambda_hubert_aux": 0.0,
             "lambda_hubert_clip": 0.0,
-            "lambda_residual_l1": 0.2 if residual_mean else 0.0,
-            "lambda_residual_mse": 0.5 if residual_mean else 0.0,
+            "lambda_residual_l1": 0.2 if (residual_mean or semantic_proto_residual) else 0.0,
+            "lambda_residual_mse": 0.5 if (residual_mean or semantic_proto_residual) else 0.0,
             "lambda_residual_cos": 0.0,
             "lambda_active_bce": 0.0,
             "lambda_raw_energy_corr": 0.0,
@@ -265,7 +402,7 @@ def main() -> None:
             "lambda_aligned_active_recon": 0.0,
             "lambda_aligned_peak_energy": 0.0,
             "lambda_lag": 0.0,
-            "lambda_semantic_token_ce": 0.0,
+            "lambda_semantic_token_ce": 1.0 if semantic_proto_residual else 0.0,
             "supcon_temperature": 0.1,
             "clip_temperature": 0.07,
             "dtw_band": 0.2,
@@ -305,6 +442,7 @@ def main() -> None:
             "lambda_hubert_aux": 0.3,
             "lambda_hubert_clip": 0.3,
             "lambda_ctc": 0.2,
+            "lambda_semantic_token_ce": 1.0 if semantic_proto_residual else 0.0,
         }
         for name, value in align_defaults.items():
             loss_kwargs[name] = float(train_cfg.get(f"align_{name}", value))
@@ -312,6 +450,8 @@ def main() -> None:
     if aux_targets is None:
         loss_kwargs["lambda_hubert_aux"] = 0.0
         loss_kwargs["lambda_hubert_clip"] = 0.0
+    if not semantic_proto_residual:
+        loss_kwargs["lambda_semantic_token_ce"] = 0.0
     if args.lambda_dtw is not None:
         loss_kwargs["lambda_dtw"] = float(args.lambda_dtw)
 
@@ -344,6 +484,14 @@ def main() -> None:
             f"l1={loss_kwargs['lambda_residual_l1']} mse={loss_kwargs['lambda_residual_mse']} "
             f"cos={loss_kwargs['lambda_residual_cos']}"
         )
+    if semantic_proto_residual:
+        print(
+            "[loss] v4 semantic prototype residual "
+            f"token_ce={loss_kwargs['lambda_semantic_token_ce']} "
+            f"residual_l1={loss_kwargs['lambda_residual_l1']} residual_mse={loss_kwargs['lambda_residual_mse']}"
+        )
+    if args.channel_reliability:
+        print("[channel] all 62 channels enabled with lightweight reliability gate")
 
     run = f"karaone_{args.model}_{'_'.join(stages)}_{args.run_suffix or 'v1'}"
     run_dir = resolve_bundle_path(cfg["output"]["root"], BUNDLE_DIR) / run
@@ -393,8 +541,11 @@ def main() -> None:
                 "val_selection_score": float(val_score),
                 "model_kind": args.model,
                 "target_kind": target_kind,
-                "prediction_mode": "residual_global_mean" if residual_mean else "direct_target",
+                "prediction_mode": prediction_mode,
                 "residual_mean": bool(residual_mean),
+                "semantic_prototype_residual": bool(semantic_proto_residual),
+                "semantic_prototype_cache": str(prototype_cache.path) if prototype_cache is not None else None,
+                "semantic_token_cache": str(token_targets.path) if token_targets is not None else None,
                 "env_objective": bool(args.env_objective),
                 "selection": str(args.selection),
                 "alignment_objective": bool(args.alignment_objective),
@@ -429,7 +580,16 @@ def main() -> None:
             )
             target_seq = batch["target_seq"].to(device)
             residual_target = None
-            if residual_mean:
+            if semantic_proto_residual:
+                if prototype_tensors is None:
+                    raise RuntimeError("semantic prototype tensors are not initialized")
+                out = _apply_semantic_prototype_residual(
+                    out,
+                    prototype_tensors,
+                    batch["semantic_token_mask"].to(device) if "semantic_token_mask" in batch else None,
+                )
+                residual_target = target_seq - out["semantic_proto"].detach()
+            elif residual_mean:
                 out = _apply_global_mean_residual(out, global_mean_t)
                 residual_target = target_seq - global_mean_t.unsqueeze(0).expand_as(target_seq)
             losses = compute_losses(
@@ -447,6 +607,8 @@ def main() -> None:
                 lag_sec=batch["lag_sec"].to(device) if "lag_sec" in batch else None,
                 lag_mel_frames=batch["lag_mel_frames"].to(device) if "lag_mel_frames" in batch else None,
                 lag_confidence=batch["lag_confidence"].to(device) if "lag_confidence" in batch else None,
+                semantic_token_targets=batch["semantic_token_targets"].to(device) if "semantic_token_targets" in batch else None,
+                semantic_token_mask=batch["semantic_token_mask"].to(device) if "semantic_token_mask" in batch else None,
                 **loss_kwargs,
             )
             total = losses["total"]
@@ -493,6 +655,8 @@ def main() -> None:
             aux_targets=aux_targets,
             residual_mean=residual_mean,
             target_kind=target_kind,
+            semantic_prototypes=prototype_tensors,
+            semantic_prototype_residual=semantic_proto_residual,
         )
         # Select on gain vs the STABLE global-mean baseline (pred_over_mean), not vs the
         # zero-EEG baseline: the latter is noisy/untrained early and was selecting epoch ~1.
@@ -579,6 +743,8 @@ def main() -> None:
             aux_targets=aux_targets,
             residual_mean=residual_mean,
             target_kind=target_kind,
+            semantic_prototypes=prototype_tensors,
+            semantic_prototype_residual=semantic_proto_residual,
         ),
         "subject_test": evaluate(
             model,
@@ -589,8 +755,15 @@ def main() -> None:
             aux_targets=aux_targets,
             residual_mean=residual_mean,
             target_kind=target_kind,
+            semantic_prototypes=prototype_tensors,
+            semantic_prototype_residual=semantic_proto_residual,
         ),
     }
+    try:
+        _write_channel_diagnostics(model, train_ds, device, run_dir, "train", batch_size=batch_size)
+        _write_channel_diagnostics(model, subject_test, device, run_dir, "subject_test", batch_size=batch_size)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[channel] diagnostics skipped ({exc})")
     write_json(run_dir / "metrics" / "test_metrics.json", final)
     print(json.dumps(final["selection"], indent=2))
     print(f"[done] {run_dir}")

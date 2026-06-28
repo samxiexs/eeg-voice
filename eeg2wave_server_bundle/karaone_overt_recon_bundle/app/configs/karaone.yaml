@@ -28,6 +28,8 @@ target:
   cache_mel: ../artifacts/audio_targets/karaone_trial_mel.npz
   cache_encodec: ../artifacts/audio_targets/karaone_trial_encodec_latents.npz
   cache_hubert_tokens: ../artifacts/audio_targets/karaone_trial_hubert_tokens_k64.npz
+  cache_hubert_tokens_trainonly: ../artifacts/audio_targets/karaone_trial_hubert_tokens_k64_trainonly.npz
+  cache_semantic_mel_prototypes: ../artifacts/audio_targets/karaone_v4_semantic_mel_prototypes_trainonly.npz
   n_mels: 80
   mel_n_fft: 1024
   mel_hop: 256
