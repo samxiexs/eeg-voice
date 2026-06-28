@@ -10,6 +10,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from .alignment import KaraOneAlignment
+from .semantic_tokens import KaraOneSemanticTokenTargets
 from .targets import KaraOneTargets
 
 
@@ -34,6 +36,8 @@ class KaraOneTrialDataset(Dataset):
         heldout_subjects: Iterable[str] = ("P02", "MM21"),
         eeg_len: int = 1280,
         aux_targets: KaraOneTargets | None = None,
+        alignment_cache: str | Path | None = None,
+        semantic_token_targets: KaraOneSemanticTokenTargets | None = None,
     ):
         self.root = Path(data_root)
         self.targets = targets
@@ -41,6 +45,8 @@ class KaraOneTrialDataset(Dataset):
         # the content-bearing auxiliary head + retrieval metrics; the main `targets`
         # (mel/encodec) still drives waveform rendering.
         self.aux_targets = aux_targets
+        self.alignment = KaraOneAlignment(alignment_cache) if alignment_cache else None
+        self.semantic_token_targets = semantic_token_targets
         self.split = str(split)
         self.stages = tuple(stages)
         self.split_protocol = str(split_protocol)
@@ -224,4 +230,54 @@ class KaraOneTrialDataset(Dataset):
             else:
                 item["hubert_seq"] = torch.zeros(self.aux_targets.T, self.aux_targets.D, dtype=torch.float32)
                 item["hubert_summary"] = torch.zeros(self.aux_targets.D, dtype=torch.float32)
+        if self.semantic_token_targets is not None:
+            if self.semantic_token_targets.has_trial(entry.subject, entry.trial_index):
+                item["semantic_token_targets"] = torch.from_numpy(
+                    self.semantic_token_targets.tokens(entry.subject, entry.trial_index)
+                ).long()
+                item["semantic_token_mask"] = torch.from_numpy(
+                    self.semantic_token_targets.mask(entry.subject, entry.trial_index)
+                ).float()
+            else:
+                item["semantic_token_targets"] = torch.zeros(self.semantic_token_targets.T, dtype=torch.long)
+                item["semantic_token_mask"] = torch.zeros(self.semantic_token_targets.T, dtype=torch.float32)
+        if self.alignment is not None:
+            rec = self.alignment.get(entry.subject, entry.stage, entry.trial_index)
+            subject_median = float(self.alignment.subject_median_lag_sec.get(entry.subject, 0.0))
+            if rec is None:
+                lag_sec = subject_median
+                lag_frames = int(round(lag_sec / max(self.alignment.mel_hop_sec, 1e-6)))
+                confidence = 0.0
+                eeg_valid_sec = float(valid_len) / 256.0
+                audio_sec = 0.0
+                eeg_peak_t = audio_peak_t = eeg_com_t = audio_com_t = eeg_onset_t = audio_onset_t = 0.0
+            else:
+                lag_sec = float(rec.lag_sec if rec.lag_confidence > 0.0 else subject_median)
+                lag_frames = int(round(lag_sec / max(self.alignment.mel_hop_sec, 1e-6)))
+                confidence = float(rec.lag_confidence)
+                eeg_valid_sec = float(rec.eeg_valid_sec)
+                audio_sec = float(rec.audio_sec)
+                eeg_peak_t = float(rec.eeg_peak_t)
+                audio_peak_t = float(rec.audio_peak_t)
+                eeg_com_t = float(rec.eeg_com_t)
+                audio_com_t = float(rec.audio_com_t)
+                eeg_onset_t = float(rec.eeg_onset_t)
+                audio_onset_t = float(rec.audio_onset_t)
+            item.update(
+                {
+                    "lag_sec": torch.tensor(lag_sec, dtype=torch.float32),
+                    "lag_mel_frames": torch.tensor(lag_frames, dtype=torch.long),
+                    "lag_confidence": torch.tensor(confidence, dtype=torch.float32),
+                    "alignment_available": torch.tensor(1.0 if confidence > 0.0 else 0.0, dtype=torch.float32),
+                    "alignment_mel_hop_sec": torch.tensor(self.alignment.mel_hop_sec, dtype=torch.float32),
+                    "eeg_valid_sec": torch.tensor(eeg_valid_sec, dtype=torch.float32),
+                    "audio_sec": torch.tensor(audio_sec, dtype=torch.float32),
+                    "eeg_peak_t": torch.tensor(eeg_peak_t, dtype=torch.float32),
+                    "audio_peak_t": torch.tensor(audio_peak_t, dtype=torch.float32),
+                    "eeg_com_t": torch.tensor(eeg_com_t, dtype=torch.float32),
+                    "audio_com_t": torch.tensor(audio_com_t, dtype=torch.float32),
+                    "eeg_onset_t": torch.tensor(eeg_onset_t, dtype=torch.float32),
+                    "audio_onset_t": torch.tensor(audio_onset_t, dtype=torch.float32),
+                }
+            )
         return item

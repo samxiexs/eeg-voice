@@ -44,6 +44,12 @@ def main() -> None:
     residual_mean = bool(ckpt.get("residual_mean", False)) or str(ckpt.get("prediction_mode", "")) == "residual_global_mean"
     _, cache = resolve_target_cache(cfg, BUNDLE_DIR, target_kind)
     targets = KaraOneTargets(cache, data_root=root)
+    alignment_cache = ckpt.get("alignment_cache")
+    if not alignment_cache and bool(ckpt.get("alignment_objective", False)):
+        alignment_cache = cfg.get("alignment", {}).get("cache")
+    alignment_path = resolve_bundle_path(alignment_cache, BUNDLE_DIR) if alignment_cache else None
+    if alignment_path is not None and not alignment_path.exists():
+        alignment_path = None
     split_protocol = "subject_holdout" if args.split == "subject_test" else str(cfg["data"].get("split_protocol", "trial"))
     ds = KaraOneTrialDataset(
         data_root=root,
@@ -53,6 +59,7 @@ def main() -> None:
         split_protocol=split_protocol,
         heldout_subjects=cfg["data"].get("heldout_subjects", ["P02", "MM21"]),
         eeg_len=int(cfg["data"].get("eeg_len", 1280)),
+        alignment_cache=alignment_path,
     )
     metrics = evaluate(
         model,

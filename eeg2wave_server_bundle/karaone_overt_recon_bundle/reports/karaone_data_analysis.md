@@ -1,5 +1,17 @@
 nwwwwssgtswsswwwwindiw
 
+```
+cd /Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/karaone_overt_recon_bundle
+```
+
+```
+cd /Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/karaone_overt_recon_bundle
+```
+
+```
+cd /Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/karaone_overt_recon_bundle
+```
+
 CKPT=artifacts/outputs_karaone/karaone_baseline_overt_like_melenv_overt_v2/checkpoints/best.pt \
 
 SPLIT=subject_test \

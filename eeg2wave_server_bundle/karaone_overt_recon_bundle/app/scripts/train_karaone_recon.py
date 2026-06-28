@@ -45,9 +45,11 @@ def parse_args() -> argparse.Namespace:
         help="predict target residual over the global mean target; final pred = global_mean + delta",
     )
     parser.add_argument("--env-objective", action="store_true", help="enable active/envelope-guided Mel reconstruction losses")
+    parser.add_argument("--alignment-objective", action="store_true", help="enable v3 lag-aware aligned Mel/env losses")
+    parser.add_argument("--alignment-cache", default=None, help="optional KaraOne alignment cache npz")
     parser.add_argument(
         "--selection",
-        choices=["pred_over_mean_cos_gain", "mel_env_composite"],
+        choices=["pred_over_mean_cos_gain", "mel_env_composite", "alignment_composite"],
         default="pred_over_mean_cos_gain",
         help="validation checkpoint selection criterion",
     )
@@ -76,6 +78,18 @@ def _apply_global_mean_residual(out: dict[str, torch.Tensor], global_mean: torch
 
 
 def _selection_score(metrics: dict, criterion: str) -> float:
+    if criterion == "alignment_composite":
+        semantic_gain = metrics.get("pred_hubert_within_subject_label_top1", 0.0) - metrics.get(
+            "mean_within_subject_label_top1", 0.0
+        )
+        return float(
+            metrics.get("aligned_pred_mel_corr_gain", metrics.get("pred_mel_corr_gain", 0.0))
+            + 0.8 * metrics.get("aligned_pred_energy_corr_gain", metrics.get("pred_energy_corr_gain", 0.0))
+            + 0.8 * semantic_gain
+            + 0.3 * metrics.get("lag_score", 0.0)
+            + 0.02 * metrics.get("aligned_pred_mcd_gain", metrics.get("pred_mcd_gain", 0.0))
+            - 0.2 * max(0.0, metrics.get("pred_pairwise_corr_median", 0.0) - 0.85)
+        )
     if criterion == "mel_env_composite":
         return float(
             metrics.get("pred_over_mean_cos_gain", 0.0)
@@ -113,6 +127,19 @@ def main() -> None:
     target_kind = args.target or str(cfg.get("target", {}).get("kind", "mel"))
     residual_mean = bool(args.residual_mean)
     root, targets, common = _load_common(cfg, stages, target_kind)
+    alignment_cache = args.alignment_cache or cfg.get("alignment", {}).get("cache")
+    alignment_path = None
+    if alignment_cache:
+        alignment_path = resolve_bundle_path(alignment_cache, BUNDLE_DIR)
+        if not alignment_path.exists():
+            if args.alignment_objective:
+                raise FileNotFoundError(f"Missing alignment cache: {alignment_path}")
+            alignment_path = None
+    if alignment_path is not None:
+        common["alignment_cache"] = alignment_path
+        print(f"[alignment] cache={alignment_path}")
+    elif args.alignment_objective:
+        raise FileNotFoundError("alignment objective requires --alignment-cache or alignment.cache in config")
     print(f"[target] kind={target_kind} D={targets.D} T={targets.T}")
     print(f"[prediction] mode={'residual_global_mean' if residual_mean else 'direct_target'}")
     if target_kind == "encodec_latent" and not targets.has_complete_audio_metadata:
@@ -232,6 +259,13 @@ def main() -> None:
             "lambda_raw_energy_corr": 0.0,
             "lambda_active_recon": 0.0,
             "lambda_peak_energy": 0.0,
+            "lambda_aligned_recon_cos": 0.0,
+            "lambda_aligned_recon_mse": 0.0,
+            "lambda_aligned_raw_energy_corr": 0.0,
+            "lambda_aligned_active_recon": 0.0,
+            "lambda_aligned_peak_energy": 0.0,
+            "lambda_lag": 0.0,
+            "lambda_semantic_token_ce": 0.0,
             "supcon_temperature": 0.1,
             "clip_temperature": 0.07,
             "dtw_band": 0.2,
@@ -254,6 +288,26 @@ def main() -> None:
         }
         for name, value in env_defaults.items():
             loss_kwargs[name] = float(train_cfg.get(f"env_{name}", value))
+    if args.alignment_objective:
+        align_defaults = {
+            "lambda_recon_cos": 0.2,
+            "lambda_recon_mse": 0.1,
+            "lambda_dtw": 0.0,
+            "lambda_aligned_recon_cos": 1.0,
+            "lambda_aligned_recon_mse": 0.2,
+            "lambda_aligned_raw_energy_corr": 0.8,
+            "lambda_aligned_active_recon": 1.0,
+            "lambda_aligned_peak_energy": 0.5,
+            "lambda_active_bce": 0.5,
+            "lambda_lag": 0.3,
+            "lambda_frame_energy": 0.5,
+            "lambda_voiced_rms": 0.5,
+            "lambda_hubert_aux": 0.3,
+            "lambda_hubert_clip": 0.3,
+            "lambda_ctc": 0.2,
+        }
+        for name, value in align_defaults.items():
+            loss_kwargs[name] = float(train_cfg.get(f"align_{name}", value))
     # HuBERT-derived losses are only meaningful when the aux cache is present.
     if aux_targets is None:
         loss_kwargs["lambda_hubert_aux"] = 0.0
@@ -275,6 +329,14 @@ def main() -> None:
             f"active_bce={loss_kwargs['lambda_active_bce']} raw_energy_corr={loss_kwargs['lambda_raw_energy_corr']} "
             f"active_recon={loss_kwargs['lambda_active_recon']} peak_energy={loss_kwargs['lambda_peak_energy']} "
             f"selection={args.selection}"
+        )
+    if args.alignment_objective:
+        print(
+            "[loss] alignment objective "
+            f"aligned_cos={loss_kwargs['lambda_aligned_recon_cos']} "
+            f"aligned_energy={loss_kwargs['lambda_aligned_raw_energy_corr']} "
+            f"aligned_active={loss_kwargs['lambda_aligned_active_recon']} "
+            f"lag={loss_kwargs['lambda_lag']} selection={args.selection}"
         )
     if residual_mean:
         print(
@@ -307,6 +369,9 @@ def main() -> None:
         "val_mcd",
         "val_energy_corr",
         "val_active_recon_mse",
+        "val_aligned_mel_corr",
+        "val_aligned_energy_corr",
+        "val_lag_mae_sec",
         "val_selection_score",
     ]
     with history_csv.open("w", encoding="utf-8", newline="") as handle:
@@ -332,6 +397,8 @@ def main() -> None:
                 "residual_mean": bool(residual_mean),
                 "env_objective": bool(args.env_objective),
                 "selection": str(args.selection),
+                "alignment_objective": bool(args.alignment_objective),
+                "alignment_cache": str(alignment_path) if alignment_path is not None else None,
             },
             path,
         )
@@ -377,6 +444,9 @@ def main() -> None:
                 target_mean=target_mean_t,
                 target_std=target_std_t,
                 target_decoder_scale=batch["target_decoder_scale"].to(device),
+                lag_sec=batch["lag_sec"].to(device) if "lag_sec" in batch else None,
+                lag_mel_frames=batch["lag_mel_frames"].to(device) if "lag_mel_frames" in batch else None,
+                lag_confidence=batch["lag_confidence"].to(device) if "lag_confidence" in batch else None,
                 **loss_kwargs,
             )
             total = losses["total"]
@@ -435,6 +505,8 @@ def main() -> None:
             f"std={train_metrics['std_ratio']:.3f} | val pred={val_metrics['pred_recon_cos']:.3f} "
             f"mean={val_metrics['mean_recon_cos']:.3f} gain(vs mean)={gain:+.3f}"
             + (f" mcd={val_metrics['pred_mcd']:.3f}" if "pred_mcd" in val_metrics else "")
+            + (f" aligned_mel={val_metrics['aligned_pred_mel_corr']:.3f}" if "aligned_pred_mel_corr" in val_metrics else "")
+            + (f" lag_mae={val_metrics['lag_mae_sec']:.3f}" if "lag_mae_sec" in val_metrics else "")
             + f" select={selection_score:+.3f}"
         )
         with history_jsonl.open("a", encoding="utf-8") as handle:
@@ -458,6 +530,9 @@ def main() -> None:
                     val_metrics.get("pred_mcd", 0.0),
                     val_metrics.get("pred_energy_corr", 0.0),
                     val_metrics.get("pred_active_recon_mse", 0.0),
+                    val_metrics.get("aligned_pred_mel_corr", 0.0),
+                    val_metrics.get("aligned_pred_energy_corr", 0.0),
+                    val_metrics.get("lag_mae_sec", 0.0),
                     selection_score,
                 ]
             )

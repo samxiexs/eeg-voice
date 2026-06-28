@@ -59,6 +59,9 @@ class KaraOneConfig:
     # WS3 HuBERT auxiliary content head (0/absent => disabled)
     hubert_dim: int = 0
     hubert_steps: int = 50
+    # v3 alignment-aware semantic-token heads (0/absent => disabled).
+    semantic_token_vocab: int = 0
+    semantic_token_steps: int = 50
 
 
 class KaraOneEEG2Codec(nn.Module):
@@ -175,6 +178,13 @@ class KaraOneEEG2Codec(nn.Module):
             nn.GELU(),
             nn.Linear(d, 1),
         )
+        self.lag_head = nn.Sequential(
+            nn.LayerNorm(d + cfg.speaker_dim),
+            nn.Linear(d + cfg.speaker_dim, d),
+            nn.GELU(),
+            nn.Dropout(cfg.dropout),
+            nn.Linear(d, 2),
+        )
         self.decoder_scale_head = nn.Sequential(
             nn.LayerNorm(cfg.speaker_dim),
             nn.Linear(cfg.speaker_dim, d),
@@ -210,6 +220,16 @@ class KaraOneEEG2Codec(nn.Module):
                 nn.Dropout(cfg.dropout),
                 nn.Linear(d, self.hubert_dim),
             )
+        self.semantic_token_vocab = int(cfg.semantic_token_vocab)
+        self.semantic_token_steps = int(cfg.semantic_token_steps)
+        if self.semantic_token_vocab > 0:
+            self.semantic_token_head = nn.Sequential(
+                nn.LayerNorm(cfg.content_dim),
+                nn.Linear(cfg.content_dim, d),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(d, self.semantic_token_vocab),
+            )
 
     def forward(
         self,
@@ -244,12 +264,15 @@ class KaraOneEEG2Codec(nn.Module):
         pred_log_rms = self.log_rms_head(torch.cat([content_seq.mean(dim=1), global_embed], dim=-1)).squeeze(-1)
         pred_frame_log_energy = self.frame_energy_head(expert_input).squeeze(-1)
         pred_active_logits = self.active_head(expert_input).squeeze(-1)
+        lag_params = self.lag_head(torch.cat([pooled, global_embed], dim=-1))
         pred_log_decoder_scale = self.decoder_scale_head(global_embed)
         out = {
             "pred_latent": pred_latent,
             "pred_log_rms": pred_log_rms,
             "pred_frame_log_energy": pred_frame_log_energy,
             "pred_active_logits": pred_active_logits,
+            "pred_lag_mu": lag_params[:, 0],
+            "pred_lag_log_sigma": lag_params[:, 1].clamp(min=-5.0, max=3.0),
             "pred_log_decoder_scale": pred_log_decoder_scale,
             "content_embed": content_embed,
             "content_logits": self.content_classifier(pooled),
@@ -268,6 +291,11 @@ class KaraOneEEG2Codec(nn.Module):
                 content_seq.transpose(1, 2), size=self.hubert_steps, mode="linear", align_corners=False
             ).transpose(1, 2)
             out["pred_hubert"] = self.hubert_head(content_t)  # [B, hubert_steps, hubert_dim]
+        if self.semantic_token_vocab > 0:
+            token_t = F.interpolate(
+                content_seq.transpose(1, 2), size=self.semantic_token_steps, mode="linear", align_corners=False
+            ).transpose(1, 2)
+            out["semantic_token_logits"] = self.semantic_token_head(token_t)
         out.update(channel_aux)  # channel_gate, channel_assign, channel_balance (if encoder MoE on)
         return out
 

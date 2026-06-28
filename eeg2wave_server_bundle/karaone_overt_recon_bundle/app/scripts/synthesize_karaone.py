@@ -15,6 +15,7 @@ if str(BUNDLE_DIR) not in sys.path:
     sys.path.insert(0, str(BUNDLE_DIR))
 
 from src.audio_features import AudioFeatureConfig, load_mel_vocoder
+from src.karaone_recon.alignment import shift_sequence_np
 from src.karaone_recon.data import KaraOneTrialDataset
 from src.karaone_recon.model import KaraOneConfig, KaraOneEEG2Codec
 from src.karaone_recon.rendered_metrics import load_whisper_asr, transcribe_label_metrics
@@ -171,6 +172,7 @@ def main() -> None:
     model.eval()
     has_trained_scale_head = any(str(key).startswith("decoder_scale_head.") for key in ckpt.get("model_state", {}))
     residual_mean = bool(ckpt.get("residual_mean", False)) or str(ckpt.get("prediction_mode", "")) == "residual_global_mean"
+    use_lag_correction = bool(ckpt.get("alignment_objective", False))
     root = resolve_bundle_path(cfg["data"]["root"], BUNDLE_DIR)
     target_kind = str(ckpt.get("target_kind", cfg.get("target", {}).get("kind", "encodec_latent")))
     _, cache = resolve_target_cache(cfg, BUNDLE_DIR, target_kind)
@@ -209,7 +211,8 @@ def main() -> None:
     sample_rate = int(backend.sample_rate)
     print(
         f"[synth] target={target_kind} vocoder={'griffinlim' if target_kind=='mel' else 'encodec'} "
-        f"mode={'residual_global_mean' if residual_mean else 'direct_target'} sr={sample_rate}"
+        f"mode={'residual_global_mean' if residual_mean else 'direct_target'} "
+        f"lag_correction={use_lag_correction} sr={sample_rate}"
     )
     out_dir = ensure_dir(
         args.out_dir
@@ -242,6 +245,16 @@ def main() -> None:
         if residual_mean:
             pred = targets.global_mean_norm.astype(np.float32) + pred
             zero = targets.global_mean_norm.astype(np.float32) + zero
+        pred_lag_sec = float(pred_out.get("pred_lag_mu", torch.zeros(1, device=device)).view(-1)[0].detach().cpu())
+        zero_lag_sec = float(zero_out.get("pred_lag_mu", torch.zeros(1, device=device)).view(-1)[0].detach().cpu())
+        lag_hop_sec = float(cfg.get("target", {}).get("mel_hop", 256)) / float(cfg.get("audio", {}).get("sample_rate", 16000))
+        pred_lag_frames = int(np.clip(np.rint(pred_lag_sec / max(lag_hop_sec, 1e-6)), -pred.shape[0] + 1, pred.shape[0] - 1))
+        zero_lag_frames = int(np.clip(np.rint(zero_lag_sec / max(lag_hop_sec, 1e-6)), -zero.shape[0] + 1, zero.shape[0] - 1))
+        pred_unaligned = pred.copy()
+        zero_unaligned = zero.copy()
+        if use_lag_correction:
+            pred = shift_sequence_np(pred, -pred_lag_frames)
+            zero = shift_sequence_np(zero, -zero_lag_frames)
         pred_log_rms = pred_out["pred_log_rms"].squeeze(0)
         zero_log_rms = zero_out["pred_log_rms"].squeeze(0)
         pred_frame_log_energy = (
@@ -283,6 +296,10 @@ def main() -> None:
             oracle_kind: oracle,
             "mean_latent": mean_wav,
             "zeroeeg": zero_wav,
+            "pred_unaligned": backend.decode(
+                denormalize_latent(pred_unaligned, targets.target_mean, targets.target_std),
+                decoder_scales=pred_decoder_scale,
+            ),
             "pred": pred_wav,
             "pred_scaled": _scale_to_rms(pred_wav, float(np.exp(float(pred_log_rms.item())))),
             "pred_env_scaled": _scale_to_rms(
@@ -322,6 +339,10 @@ def main() -> None:
             "pred_active_duration_ratio": pred_active["active_duration_ratio"],
             "pred_env_scaled_active_duration_ratio": pred_env_active["active_duration_ratio"],
             "oracle_active_duration_ratio": oracle_active["active_duration_ratio"],
+            "pred_lag_sec": pred_lag_sec,
+            "pred_lag_frames": pred_lag_frames,
+            "zero_lag_sec": zero_lag_sec,
+            "lag_corrected": bool(use_lag_correction),
         }
         if asr_model is not None:
             for wav_kind, prefix in (
@@ -361,6 +382,7 @@ def main() -> None:
         "target_kind": target_kind,
         "vocoder": "griffinlim" if target_kind == "mel" else "encodec",
         "prediction_mode": "residual_global_mean" if residual_mean else "direct_target",
+        "lag_corrected": bool(use_lag_correction),
         "asr": asr_status,
         "oracle_kind": oracle_kind if metric_rows else ("oracle_encodec" if target_kind == "encodec_latent" else "oracle_griffinlim"),
         "pred_env_corr_mean": _mean("pred_env_corr"),
@@ -381,6 +403,7 @@ def main() -> None:
         "pred_active_duration_ratio_mean": _mean("pred_active_duration_ratio"),
         "pred_env_scaled_active_duration_ratio_mean": _mean("pred_env_scaled_active_duration_ratio"),
         "oracle_active_duration_ratio_mean": _mean("oracle_active_duration_ratio"),
+        "pred_lag_sec_mean": _mean("pred_lag_sec"),
         "pred_asr_label_acc": _hit_rate("pred_asr_label_hit"),
         "pred_env_scaled_asr_label_acc": _hit_rate("pred_env_scaled_asr_label_hit"),
         "oracle_asr_label_acc": _hit_rate("oracle_asr_label_hit"),

@@ -27,6 +27,7 @@ target:
   kind: encodec_latent       # encodec_latent mainline | mel baseline
   cache_mel: ../artifacts/audio_targets/karaone_trial_mel.npz
   cache_encodec: ../artifacts/audio_targets/karaone_trial_encodec_latents.npz
+  cache_hubert_tokens: ../artifacts/audio_targets/karaone_trial_hubert_tokens_k64.npz
   n_mels: 80
   mel_n_fft: 1024
   mel_hop: 256
@@ -36,6 +37,9 @@ target:
   cache_hubert: ../artifacts/audio_targets/karaone_trial_hubert.npz
   hubert_ssl_path: ../../feis_subject_aware_bundle/models/hubert-base-ls960
   hubert_steps: 50
+
+alignment:
+  cache: ../artifacts/alignment/karaone_overt_like_alignment.npz
 
 # WS1 cross-subject domain adaptation. instance_norm = per-trial RevIN (no subject id);
 # adversarial = subject-DANN (uses subject id at TRAIN time only, to REMOVE it).

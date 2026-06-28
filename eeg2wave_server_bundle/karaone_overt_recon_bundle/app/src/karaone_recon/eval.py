@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+from .alignment import shift_sequence_np
 from .data import KaraOneTrialDataset
 from .targets import KaraOneTargets
 
@@ -187,6 +188,13 @@ def evaluate(
     pred_seq: list[np.ndarray] = []
     target_seq: list[np.ndarray] = []
     mean_seq: list[np.ndarray] = []
+    pred_aligned_seq: list[np.ndarray] = []
+    oracle_aligned_seq: list[np.ndarray] = []
+    pred_lag_values: list[np.ndarray] = []
+    target_lag_values: list[np.ndarray] = []
+    lag_conf_values: list[np.ndarray] = []
+    peak_offset_values: list[np.ndarray] = []
+    onset_offset_values: list[np.ndarray] = []
     subjects: list[str] = []
     labels: list[str] = []
     trials: list[int] = []
@@ -262,6 +270,26 @@ def evaluate(
         zero_np = zero_pred.detach().cpu().numpy()
         mean_np = global_mean.unsqueeze(0).expand_as(target).detach().cpu().numpy()
         tgt_np = target.detach().cpu().numpy()
+        if "lag_mel_frames" in batch:
+            oracle_frames = batch["lag_mel_frames"].detach().cpu().numpy().astype(np.int32)
+            hop_sec = float(batch.get("alignment_mel_hop_sec", torch.tensor([0.016]))[0])
+            pred_lag_sec = out.get("pred_lag_mu", torch.zeros((b,), device=device)).detach().cpu().numpy().astype(np.float32)
+            pred_frames = np.rint(pred_lag_sec / max(hop_sec, 1e-6)).astype(np.int32)
+            max_shift = max(1, int(pred_np.shape[1] * 0.75))
+            pred_frames = np.clip(pred_frames, -max_shift, max_shift)
+            pred_aligned_seq.append(np.stack([shift_sequence_np(pred_np[i], -int(pred_frames[i])) for i in range(b)], axis=0))
+            oracle_aligned_seq.append(np.stack([shift_sequence_np(pred_np[i], -int(oracle_frames[i])) for i in range(b)], axis=0))
+            pred_lag_values.append(pred_lag_sec)
+            target_lag_values.append(batch["lag_sec"].detach().cpu().numpy().astype(np.float32))
+            lag_conf_values.append(batch["lag_confidence"].detach().cpu().numpy().astype(np.float32))
+            if "eeg_peak_t" in batch and "audio_peak_t" in batch:
+                peak_offset_values.append(
+                    (batch["eeg_peak_t"] - batch["audio_peak_t"]).detach().cpu().numpy().astype(np.float32)
+                )
+            if "eeg_onset_t" in batch and "audio_onset_t" in batch:
+                onset_offset_values.append(
+                    (batch["eeg_onset_t"] - batch["audio_onset_t"]).detach().cpu().numpy().astype(np.float32)
+                )
         pred_summaries.append(pred_np.mean(axis=1))
         zero_summaries.append(zero_np.mean(axis=1))
         mean_summaries.append(mean_np.mean(axis=1))
@@ -321,6 +349,40 @@ def evaluate(
                 targets,
             )
         )
+        if pred_aligned_seq:
+            aligned_metrics = _mel_metrics(
+                np.concatenate(pred_aligned_seq, axis=0),
+                np.concatenate(target_seq, axis=0),
+                np.concatenate(mean_seq, axis=0),
+                targets,
+            )
+            out_metrics.update({f"aligned_{name}": value for name, value in aligned_metrics.items()})
+            oracle_aligned_metrics = _mel_metrics(
+                np.concatenate(oracle_aligned_seq, axis=0),
+                np.concatenate(target_seq, axis=0),
+                np.concatenate(mean_seq, axis=0),
+                targets,
+            )
+            out_metrics.update({f"oracle_aligned_{name}": value for name, value in oracle_aligned_metrics.items()})
+    if pred_lag_values:
+        pred_lag = np.concatenate(pred_lag_values, axis=0)
+        target_lag = np.concatenate(target_lag_values, axis=0)
+        conf = np.concatenate(lag_conf_values, axis=0)
+        active = conf > 0.0
+        if active.any():
+            out_metrics["lag_mae_sec"] = float(np.mean(np.abs(pred_lag[active] - target_lag[active])))
+            out_metrics["lag_rmse_sec"] = float(np.sqrt(np.mean(np.square(pred_lag[active] - target_lag[active]))))
+            out_metrics["lag_target_median_sec"] = float(np.median(target_lag[active]))
+            out_metrics["lag_pred_median_sec"] = float(np.median(pred_lag[active]))
+            out_metrics["lag_confidence_mean"] = float(np.mean(conf[active]))
+            out_metrics["lag_score"] = float(max(0.0, 1.0 - out_metrics["lag_mae_sec"] / 0.75))
+            out_metrics["energy_com_error"] = out_metrics["lag_mae_sec"]
+            if peak_offset_values:
+                peak_offset = np.concatenate(peak_offset_values, axis=0)
+                out_metrics["peak_error"] = float(np.mean(np.abs(pred_lag[active] - peak_offset[active])))
+            if onset_offset_values:
+                onset_offset = np.concatenate(onset_offset_values, axis=0)
+                out_metrics["active_onset_error"] = float(np.mean(np.abs(pred_lag[active] - onset_offset[active])))
     out_metrics.update({f"pred_{k}": v for k, v in _retrieval_stats(pred_summary, subjects, labels, trials, targets).items()})
     out_metrics.update({f"zeroeeg_{k}": v for k, v in _retrieval_stats(zero_summary, subjects, labels, trials, targets).items()})
     out_metrics.update({f"mean_{k}": v for k, v in _retrieval_stats(mean_summary, subjects, labels, trials, targets).items()})

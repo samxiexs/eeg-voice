@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from .alignment import shift_sequence_torch
+
 
 def _dtw_path(cost: np.ndarray, band: float) -> tuple[np.ndarray, np.ndarray]:
     """Banded (Sakoe-Chiba) DTW backtrace. cost[T,T] -> aligned index arrays (pi, pj)."""
@@ -258,6 +260,43 @@ def peak_energy_loss(
     return F.smooth_l1_loss(pred_top, target_top)
 
 
+def lag_regression_loss(
+    pred_lag_mu: torch.Tensor,
+    pred_lag_log_sigma: torch.Tensor,
+    target_lag_sec: torch.Tensor,
+    lag_confidence: torch.Tensor | None = None,
+) -> torch.Tensor:
+    target = target_lag_sec.to(device=pred_lag_mu.device, dtype=pred_lag_mu.dtype).view_as(pred_lag_mu)
+    conf = (
+        torch.ones_like(target)
+        if lag_confidence is None
+        else lag_confidence.to(device=pred_lag_mu.device, dtype=pred_lag_mu.dtype).view_as(pred_lag_mu).clamp(0.0, 1.0)
+    )
+    sigma = pred_lag_log_sigma.exp().clamp_min(1e-4)
+    nll = F.smooth_l1_loss(pred_lag_mu / sigma, target / sigma, reduction="none") + 0.05 * pred_lag_log_sigma
+    denom = conf.sum().clamp_min(1.0)
+    return (nll * conf).sum() / denom
+
+
+def semantic_token_ce_loss(logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+    if logits.ndim != 3:
+        return logits.new_tensor(0.0)
+    tgt = targets.to(device=logits.device, dtype=torch.long)
+    if tgt.ndim != 2:
+        return logits.new_tensor(0.0)
+    if logits.shape[1] != tgt.shape[1]:
+        logits = F.interpolate(logits.transpose(1, 2), size=tgt.shape[1], mode="linear", align_corners=False).transpose(1, 2)
+    if mask is None:
+        active = tgt >= 0
+    else:
+        active = mask.to(device=logits.device).bool() & (tgt >= 0)
+    if not bool(active.any()):
+        return logits.new_tensor(0.0)
+    vocab = logits.shape[-1]
+    tgt = tgt.clamp(min=0, max=max(vocab - 1, 0))
+    return F.cross_entropy(logits[active], tgt[active])
+
+
 def raw_energy_corr_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
@@ -341,12 +380,24 @@ def compute_losses(
     lambda_raw_energy_corr: float = 0.0,
     lambda_active_recon: float = 0.0,
     lambda_peak_energy: float = 0.0,
+    lambda_aligned_recon_cos: float = 0.0,
+    lambda_aligned_recon_mse: float = 0.0,
+    lambda_aligned_raw_energy_corr: float = 0.0,
+    lambda_aligned_active_recon: float = 0.0,
+    lambda_aligned_peak_energy: float = 0.0,
+    lambda_lag: float = 0.0,
+    lambda_semantic_token_ce: float = 0.0,
     hubert_seq: torch.Tensor | None = None,
     hubert_summary: torch.Tensor | None = None,
     residual_target: torch.Tensor | None = None,
     target_mean: torch.Tensor | None = None,
     target_std: torch.Tensor | None = None,
     target_decoder_scale: torch.Tensor | None = None,
+    lag_sec: torch.Tensor | None = None,
+    lag_mel_frames: torch.Tensor | None = None,
+    lag_confidence: torch.Tensor | None = None,
+    semantic_token_targets: torch.Tensor | None = None,
+    semantic_token_mask: torch.Tensor | None = None,
     supcon_temperature: float = 0.1,
     clip_temperature: float = 0.07,
     dtw_band: float = 0.2,
@@ -433,6 +484,7 @@ def compute_losses(
     target_energy_payload = raw_mel_energy(target_seq, target_mean, target_std)
     if target_energy_payload is not None and (
         lambda_active_bce > 0.0 or lambda_raw_energy_corr > 0.0 or lambda_active_recon > 0.0 or lambda_peak_energy > 0.0
+        or lambda_aligned_raw_energy_corr > 0.0 or lambda_aligned_active_recon > 0.0 or lambda_aligned_peak_energy > 0.0
     ):
         target_energy, _ = target_energy_payload
         active_mask = active_mask_from_energy(target_energy)
@@ -444,6 +496,47 @@ def compute_losses(
             active_recon = active_recon_loss(pred, target_seq, active_mask)
         if lambda_peak_energy > 0.0:
             peak_energy = peak_energy_loss(pred, target_seq, target_mean, target_std)
+
+    aligned_recon_cos = pred.new_tensor(0.0)
+    aligned_recon_mse = pred.new_tensor(0.0)
+    aligned_raw_energy_corr = pred.new_tensor(0.0)
+    aligned_active_recon = pred.new_tensor(0.0)
+    aligned_peak_energy = pred.new_tensor(0.0)
+    aligned_pred = None
+    if lag_mel_frames is not None and (
+        lambda_aligned_recon_cos > 0.0
+        or lambda_aligned_recon_mse > 0.0
+        or lambda_aligned_raw_energy_corr > 0.0
+        or lambda_aligned_active_recon > 0.0
+        or lambda_aligned_peak_energy > 0.0
+    ):
+        aligned_pred = shift_sequence_torch(pred, -lag_mel_frames.to(pred.device))
+        if lambda_aligned_recon_cos > 0.0:
+            aligned_recon_cos = 1.0 - F.cosine_similarity(aligned_pred, target_seq, dim=-1).mean()
+        if lambda_aligned_recon_mse > 0.0:
+            aligned_recon_mse = F.mse_loss(aligned_pred, target_seq)
+        if lambda_aligned_raw_energy_corr > 0.0:
+            aligned_raw_energy_corr = raw_energy_corr_loss(aligned_pred, target_seq, target_mean, target_std)
+        if target_energy_payload is not None:
+            target_energy, _ = target_energy_payload
+            active_mask = active_mask_from_energy(target_energy)
+            if lambda_aligned_active_recon > 0.0:
+                aligned_active_recon = active_recon_loss(aligned_pred, target_seq, active_mask)
+            if lambda_aligned_peak_energy > 0.0:
+                aligned_peak_energy = peak_energy_loss(aligned_pred, target_seq, target_mean, target_std)
+
+    lag_loss = pred.new_tensor(0.0)
+    if lambda_lag > 0.0 and lag_sec is not None and "pred_lag_mu" in out:
+        lag_loss = lag_regression_loss(
+            out["pred_lag_mu"],
+            out.get("pred_lag_log_sigma", torch.zeros_like(out["pred_lag_mu"])),
+            lag_sec,
+            lag_confidence,
+        )
+
+    semantic_token_ce = pred.new_tensor(0.0)
+    if lambda_semantic_token_ce > 0.0 and semantic_token_targets is not None and "semantic_token_logits" in out:
+        semantic_token_ce = semantic_token_ce_loss(out["semantic_token_logits"], semantic_token_targets, semantic_token_mask)
 
     total = (
         lambda_recon_cos * recon_cos
@@ -472,6 +565,13 @@ def compute_losses(
         + lambda_raw_energy_corr * raw_energy_corr
         + lambda_active_recon * active_recon
         + lambda_peak_energy * peak_energy
+        + lambda_aligned_recon_cos * aligned_recon_cos
+        + lambda_aligned_recon_mse * aligned_recon_mse
+        + lambda_aligned_raw_energy_corr * aligned_raw_energy_corr
+        + lambda_aligned_active_recon * aligned_active_recon
+        + lambda_aligned_peak_energy * aligned_peak_energy
+        + lambda_lag * lag_loss
+        + lambda_semantic_token_ce * semantic_token_ce
     )
     return {
         "total": total,
@@ -503,4 +603,11 @@ def compute_losses(
         "raw_energy_corr": raw_energy_corr.detach(),
         "active_recon": active_recon.detach(),
         "peak_energy": peak_energy.detach(),
+        "aligned_recon_cos": aligned_recon_cos.detach(),
+        "aligned_recon_mse": aligned_recon_mse.detach(),
+        "aligned_raw_energy_corr": aligned_raw_energy_corr.detach(),
+        "aligned_active_recon": aligned_active_recon.detach(),
+        "aligned_peak_energy": aligned_peak_energy.detach(),
+        "lag_loss": lag_loss.detach(),
+        "semantic_token_ce": semantic_token_ce.detach(),
     }
