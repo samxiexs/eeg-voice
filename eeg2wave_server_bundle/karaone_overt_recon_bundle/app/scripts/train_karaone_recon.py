@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import math
+import os
 
 import numpy as np
 import torch
@@ -32,6 +33,17 @@ from src.karaone_recon.prototypes import KaraOneSemanticMelPrototypes, TorchSema
 from src.karaone_recon.semantic_tokens import KaraOneSemanticTokenTargets
 from src.karaone_recon.targets import KaraOneTargets
 from src.utils import ensure_dir, load_simple_yaml, resolve_bundle_path, resolve_target_cache, set_seed, write_json
+
+try:
+    from tqdm.auto import tqdm
+except Exception:  # noqa: BLE001
+    tqdm = None
+
+
+def _progress_bar(iterable, *, total: int, desc: str):
+    if tqdm is None or os.environ.get("DISABLE_TQDM", "0") == "1":
+        return iterable
+    return tqdm(iterable, total=total, desc=desc, dynamic_ncols=True, leave=False)
 
 
 def parse_args() -> argparse.Namespace:
@@ -908,7 +920,8 @@ def main() -> None:
         # DANN gradient-reversal strength ramp (0 -> lambda_domain_adv) over training.
         progress = epoch / max(epochs - 1, 1)
         grl_lambda = lambda_domain_adv * (2.0 / (1.0 + math.exp(-10.0 * progress)) - 1.0) if use_domain_adv else 0.0
-        for batch in loader:
+        pbar = _progress_bar(loader, total=len(loader), desc=f"epoch {epoch + 1}/{epochs}")
+        for batch in pbar:
             subject_idx = batch["subject_idx"].to(device)
             out = model(
                 batch["eeg"].to(device),
@@ -1010,6 +1023,12 @@ def main() -> None:
             for name, value in losses.items():
                 agg[name] = agg.get(name, 0.0) + float(value.detach()) * b
             steps += 1
+            if tqdm is not None and hasattr(pbar, "set_postfix"):
+                pbar.set_postfix(
+                    total=f"{float(total.detach()):.3f}",
+                    cos=f"{float(losses['recon_cos']):.3f}",
+                    std=f"{float(losses['std_ratio']):.2f}",
+                )
             if args.max_steps and steps >= args.max_steps:
                 break
         sched.step()
