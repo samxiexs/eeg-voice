@@ -1,8 +1,8 @@
 # KaraOne 语义辅助 EEG-to-Speech 当前模型技术说明
 
-> 版本：2026-06-29  
-> 范围：`karaone_overt_recon_bundle` 当前 v5 实现。  
-> 当前主目标：未知 EEG -> 对应语音生成。推理时默认只输入 EEG，不使用真实 prompt label、真实 onset、真实 insert frame。  
+> 版本：2026-06-29
+> 范围：`karaone_overt_recon_bundle` 当前 v5 实现。
+> 当前主目标：未知 EEG -> 对应语音生成。推理时默认只输入 EEG，不使用真实 prompt label、真实 onset、真实 insert frame。
 > 当前主线：Temporal-Elastic Active Speech-Core EEG-to-Speech。
 
 ---
@@ -534,21 +534,22 @@ Smoke 只说明代码路径可运行，不代表模型性能。
 ### 11.1 主要风险
 
 1. **Thinking EEG 与 overt waveform 并非同步生成过程**
-   - thinking 阶段应优先看 active-shape、retrieval、semantic token，而不是严格位置。
 
+   - thinking 阶段应优先看 active-shape、retrieval、semantic token，而不是严格位置。
 2. **KaraOne 样本量小**
+
    - 14 subjects、约 1913 trials。
    - 不能指望大型 codec/flow decoder 从小数据中直接学完整 waveform generation。
-
 3. **Griffin-Lim renderer 上限有限**
+
    - Mel 好不等于 waveform 听感好。
    - 但 Griffin-Lim 离线、可控、可诊断，适合作为当前默认 renderer。
-
 4. **Active-core mean baseline 很强**
+
    - 成功必须证明 EEG-specific prediction 超过 mean/zeroeeg。
    - 只输出漂亮模板不是成功。
-
 5. **label 捷径风险**
+
    - label 只能作为弱辅助和诊断。
    - 如果 label_top1 高但 waveform 差，说明模型仍没有学到真正 EEG-to-audio generation。
 
