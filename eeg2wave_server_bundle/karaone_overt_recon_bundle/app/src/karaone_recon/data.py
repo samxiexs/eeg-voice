@@ -241,6 +241,47 @@ class KaraOneTrialDataset(Dataset):
             else:
                 item["semantic_token_targets"] = torch.zeros(self.semantic_token_targets.T, dtype=torch.long)
                 item["semantic_token_mask"] = torch.zeros(self.semantic_token_targets.T, dtype=torch.float32)
+        if bool(getattr(self.targets, "is_speech_core", False)):
+            for name in (
+                "core_mask",
+                "core_active_mask",
+                "core_pre_noise_mask",
+                "audio_active_mask",
+                "silence_mask",
+                "pre_noise_mask",
+                "active_envelope_norm",
+                "active_envelope_raw",
+                "ignore_initial_noise_mask",
+            ):
+                if self.targets.has_field(name):
+                    item[name] = torch.from_numpy(self.targets.field(entry.subject, entry.trial_index, name)).float()
+            for name in (
+                "core_start_frame",
+                "core_end_frame",
+                "core_insert_frame",
+                "audio_onset_frame",
+                "audio_peak_frame",
+                "audio_com_frame",
+                "active_duration_frames",
+                "active_start_frame",
+                "active_end_frame",
+                "active_center_frame",
+            ):
+                if self.targets.has_field(name):
+                    item[name] = torch.tensor(int(self.targets.field(entry.subject, entry.trial_index, name)), dtype=torch.long)
+            for name in ("core_log_rms", "core_peak", "core_energy", "active_rms", "active_peak"):
+                if self.targets.has_field(name):
+                    item[name] = torch.tensor(float(self.targets.field(entry.subject, entry.trial_index, name)), dtype=torch.float32)
+            if self.targets.has_field("core_insert_frame"):
+                shift_target = int(self.targets.field(entry.subject, entry.trial_index, "core_insert_frame")) - int(
+                    getattr(self.targets, "global_core_insert_frame", 0)
+                )
+                item["shift_target_frame"] = torch.tensor(shift_target, dtype=torch.long)
+            if self.targets.has_field("active_center_frame"):
+                shift_target = int(self.targets.field(entry.subject, entry.trial_index, "active_center_frame")) - int(
+                    getattr(self.targets, "global_core_insert_frame", 0)
+                )
+                item["shift_target_frame"] = torch.tensor(shift_target, dtype=torch.long)
         if self.alignment is not None:
             rec = self.alignment.get(entry.subject, entry.stage, entry.trial_index)
             subject_median = float(self.alignment.subject_median_lag_sec.get(entry.subject, 0.0))

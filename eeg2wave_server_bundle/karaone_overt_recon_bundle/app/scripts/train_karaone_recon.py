@@ -54,9 +54,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--semantic-token-cache", default=None, help="HuBERT semantic-token cache for v4")
     parser.add_argument("--semantic-prototype-cache", default=None, help="train-split-only semantic Mel prototype cache for v4")
     parser.add_argument("--channel-reliability", action="store_true", help="enable lightweight all-channel reliability gate")
+    parser.add_argument("--eeg-audio-direct", action="store_true", help="v4.1: EEG->Mel residual main path; labels/tokens are auxiliary only")
+    parser.add_argument("--speech-core-cache", default=None, help="v4.2 fixed-length speech-core Mel target cache")
+    parser.add_argument("--speech-core-objective", action="store_true", help="v4.2: train on active speech-core Mel instead of full 2s Mel")
+    parser.add_argument("--soft-shift-objective", action="store_true", help="v4.2: use soft shift-tolerant core reconstruction loss")
+    parser.add_argument("--active-loudness-objective", action="store_true", help="v4.2: emphasize core active loudness and silence suppression")
+    parser.add_argument("--shift-supervision", action="store_true", help="v4.2.1: supervise speech-core insert/shift head")
+    parser.add_argument("--anti-collapse-objective", action="store_true", help="v4.2.1: force EEG-specific prediction beyond zero/template collapse")
+    parser.add_argument("--local-loudness-synthesis", action="store_true", help="v4.2.1: mark checkpoint for local active-region loudness synthesis")
+    parser.add_argument("--temporal-elastic-objective", action="store_true", help="v5: active-core shape/duration/loudness objective")
+    parser.add_argument("--speech-token-ctc", action="store_true", help="use CTC over HuBERT semantic-token sequences, not prompt labels")
+    parser.add_argument("--trial-contrastive", action="store_true", help="enable trial-level EEG-audio InfoNCE alignment")
+    parser.add_argument("--label-aux-weight", type=float, default=None, help="weak label CE weight for diagnostics/regularization")
+    parser.add_argument("--lambda-label-supcon", type=float, default=None, help="override same-label supervised contrastive weight")
+    parser.add_argument("--lambda-prompt-ctc", type=float, default=None, help="override prompt-label CTC weight")
     parser.add_argument(
         "--selection",
-        choices=["pred_over_mean_cos_gain", "mel_env_composite", "alignment_composite", "semantic_proto_composite"],
+        choices=[
+            "pred_over_mean_cos_gain",
+            "mel_env_composite",
+            "alignment_composite",
+            "semantic_proto_composite",
+            "eeg_audio_generation",
+            "speech_core_generation",
+            "speech_core_generation_gated",
+            "temporal_elastic_generation_v5",
+        ],
         default="pred_over_mean_cos_gain",
         help="validation checkpoint selection criterion",
     )
@@ -109,6 +132,92 @@ def _apply_semantic_prototype_residual(
 
 
 def _selection_score(metrics: dict, criterion: str) -> float:
+    if criterion == "temporal_elastic_generation_v5":
+        trial_gain = metrics.get("pred_within_subject_trial_top3", 0.0) - max(
+            metrics.get("mean_within_subject_trial_top3", 0.0),
+            metrics.get("zeroeeg_within_subject_trial_top3", 0.0),
+        )
+        duration_ratio = max(float(metrics.get("active_duration_ratio", 1.0)), 1e-8)
+        rms_ratio = max(float(metrics.get("active_rms_ratio", 1.0)), 1e-8)
+        duration_score = math.exp(-abs(math.log(duration_ratio)))
+        loudness_score = math.exp(-abs(math.log(rms_ratio)))
+        duration_overstretch = max(0.0, duration_ratio - 1.4)
+        return float(
+            metrics.get("pred_over_zero_active_shape_gain", 0.0)
+            + metrics.get("pred_over_mean_active_shape_gain", 0.0)
+            + 0.8 * metrics.get("pred_over_zero_softdtw_gain", 0.0)
+            + 0.8 * metrics.get("pred_over_mean_softdtw_gain", 0.0)
+            + 0.8 * trial_gain
+            + 0.5 * metrics.get("semantic_token_over_zeroeeg_edit_gain", 0.0)
+            + 0.5 * duration_score
+            + 0.5 * loudness_score
+            - 0.3 * max(0.0, metrics.get("pred_pairwise_corr_median", 0.0) - 0.95)
+            - 0.3 * duration_overstretch
+            - 0.2 * metrics.get("silence_leakage", 0.0)
+        )
+    if criterion == "speech_core_generation_gated":
+        trial_gain = metrics.get("pred_within_subject_trial_top1", 0.0) - max(
+            metrics.get("mean_within_subject_trial_top1", 0.0),
+            metrics.get("zeroeeg_within_subject_trial_top1", 0.0),
+        )
+        token_gain = metrics.get("semantic_token_over_zeroeeg_edit_gain", 0.0)
+        score = (
+            metrics.get("core_mel_corr_gain", metrics.get("pred_mel_corr_gain", 0.0))
+            + 0.8 * metrics.get("core_energy_corr_gain", metrics.get("pred_energy_corr_gain", 0.0))
+            + 0.05 * metrics.get("core_mcd_gain", metrics.get("pred_mcd_gain", 0.0))
+            + 0.8 * trial_gain
+            + 0.5 * token_gain
+            + 0.3 * metrics.get("shift_score", metrics.get("lag_score", 0.0))
+        )
+        if metrics.get("core_mel_corr_gain", metrics.get("pred_mel_corr_gain", 0.0)) <= 0.0:
+            score -= 1.0
+        if metrics.get("core_mcd_gain", metrics.get("pred_mcd_gain", 0.0)) <= 0.0:
+            score -= 1.0
+        if metrics.get("pred_over_zero_cos_gain", 0.0) <= 0.0:
+            score -= 0.5
+        if metrics.get("pred_pairwise_corr_median", 0.0) > 0.95:
+            score -= 0.5
+        if metrics.get("pred_std_ratio_median", 0.0) < 0.05:
+            score -= 0.5
+        return float(score)
+    if criterion == "speech_core_generation":
+        trial_gain = metrics.get("pred_within_subject_trial_top1", 0.0) - metrics.get(
+            "mean_within_subject_trial_top1", 0.0
+        )
+        token_gain = max(
+            metrics.get("semantic_token_edit_gain", 0.0),
+            metrics.get("semantic_token_over_zeroeeg_edit_gain", 0.0),
+        )
+        return float(
+            metrics.get("core_mel_corr_gain", metrics.get("pred_mel_corr_gain", 0.0))
+            + 0.8 * metrics.get("core_energy_corr_gain", metrics.get("pred_energy_corr_gain", 0.0))
+            + 0.8 * metrics.get("active_rms_score", 0.0)
+            + 0.5 * token_gain
+            + 0.5 * metrics.get("pred_hubert_cos", 0.0)
+            + 0.3 * metrics.get("lag_score", 0.0)
+            + 0.2 * trial_gain
+            + 0.02 * metrics.get("core_mcd_gain", metrics.get("pred_mcd_gain", 0.0))
+            - 0.25 * max(0.0, metrics.get("pred_pairwise_corr_median", 0.0) - 0.85)
+            - 0.2 * metrics.get("silence_leakage", 0.0)
+        )
+    if criterion == "eeg_audio_generation":
+        trial_gain = metrics.get("pred_within_subject_trial_top1", 0.0) - metrics.get(
+            "mean_within_subject_trial_top1", 0.0
+        )
+        hubert_gain = metrics.get("pred_hubert_cos", 0.0)
+        token_gain = max(
+            metrics.get("semantic_token_edit_gain", 0.0),
+            metrics.get("semantic_token_over_zeroeeg_edit_gain", 0.0),
+        )
+        return float(
+            metrics.get("pred_mel_corr_gain", 0.0)
+            + 0.8 * metrics.get("pred_energy_corr_gain", 0.0)
+            + 0.8 * trial_gain
+            + 0.5 * hubert_gain
+            + 0.5 * token_gain
+            + 0.02 * metrics.get("pred_mcd_gain", 0.0)
+            - 0.25 * max(0.0, metrics.get("pred_pairwise_corr_median", 0.0) - 0.85)
+        )
     if criterion == "semantic_proto_composite":
         semantic_gain = metrics.get("pred_hubert_within_subject_label_top1", 0.0) - metrics.get(
             "mean_within_subject_label_top1", 0.0
@@ -223,9 +332,38 @@ def main() -> None:
     target_kind = args.target or str(cfg.get("target", {}).get("kind", "mel"))
     residual_mean = bool(args.residual_mean)
     semantic_proto_residual = bool(args.semantic_prototype_residual)
+    speech_core_objective = bool(args.speech_core_objective)
+    if speech_core_objective:
+        target_kind = "mel"
+        if not residual_mean:
+            residual_mean = True
+            print("[v4.2/v5] enabling --residual-mean for speech-core residual generation")
+    if args.eeg_audio_direct and semantic_proto_residual:
+        raise ValueError("--eeg-audio-direct is incompatible with --semantic-prototype-residual")
+    if speech_core_objective and semantic_proto_residual:
+        raise ValueError("--speech-core-objective is incompatible with --semantic-prototype-residual")
+    if args.eeg_audio_direct and not residual_mean:
+        residual_mean = True
+        print("[v4.1] enabling --residual-mean for EEG-to-audio direct generation")
     if semantic_proto_residual and residual_mean:
         raise ValueError("--semantic-prototype-residual and --residual-mean are mutually exclusive")
     root, targets, common = _load_common(cfg, stages, target_kind)
+    _, full_mel_cache_path = resolve_target_cache(cfg, BUNDLE_DIR, "mel")
+    full_mel_targets = KaraOneTargets(full_mel_cache_path, data_root=root)
+    speech_core_path = None
+    if speech_core_objective:
+        speech_core_raw = args.speech_core_cache or cfg.get("target", {}).get(
+            "cache_speech_core", "../artifacts/audio_targets/karaone_speech_core_targets.npz"
+        )
+        speech_core_path = resolve_bundle_path(speech_core_raw, BUNDLE_DIR)
+        if not speech_core_path.exists():
+            raise FileNotFoundError(f"Missing speech-core target cache: {speech_core_path}")
+        targets = KaraOneTargets(speech_core_path, data_root=root)
+        common["targets"] = targets
+        print(
+            f"[v4.2/v5] speech-core target cache={speech_core_path} "
+            f"core_T={targets.T} D={targets.D} full_T={targets.full_target_steps}"
+        )
     alignment_cache = args.alignment_cache or cfg.get("alignment", {}).get("cache")
     alignment_path = None
     if alignment_cache:
@@ -241,9 +379,13 @@ def main() -> None:
         raise FileNotFoundError("alignment objective requires --alignment-cache or alignment.cache in config")
     print(f"[target] kind={target_kind} D={targets.D} T={targets.T}")
     prediction_mode = (
-        "semantic_prototype_residual"
-        if semantic_proto_residual
-        else ("residual_global_mean" if residual_mean else "direct_target")
+        "speech_core_residual_mean"
+        if speech_core_objective
+        else (
+            "semantic_prototype_residual"
+            if semantic_proto_residual
+            else ("residual_global_mean" if residual_mean else "direct_target")
+        )
     )
     print(f"[prediction] mode={prediction_mode}")
     if target_kind == "encodec_latent" and not targets.has_complete_audio_metadata:
@@ -265,32 +407,44 @@ def main() -> None:
     token_targets = None
     prototype_cache = None
     prototype_tensors = None
-    if semantic_proto_residual:
+    needs_token_targets = bool(semantic_proto_residual or args.eeg_audio_direct or args.speech_token_ctc)
+    if needs_token_targets:
         token_cache_raw = args.semantic_token_cache or tgt_cfg.get("cache_hubert_tokens_trainonly") or tgt_cfg.get("cache_hubert_tokens")
-        proto_cache_raw = args.semantic_prototype_cache or tgt_cfg.get("cache_semantic_mel_prototypes")
         if not token_cache_raw:
-            raise ValueError("v4 semantic-prototype residual requires --semantic-token-cache or target.cache_hubert_tokens")
-        if not proto_cache_raw:
-            raise ValueError("v4 semantic-prototype residual requires --semantic-prototype-cache or target.cache_semantic_mel_prototypes")
+            raise ValueError("v4.1 EEG-audio direct requires --semantic-token-cache or target.cache_hubert_tokens")
         token_path = resolve_bundle_path(token_cache_raw, BUNDLE_DIR)
-        proto_path = resolve_bundle_path(proto_cache_raw, BUNDLE_DIR)
         if not token_path.exists():
             raise FileNotFoundError(f"Missing semantic-token cache: {token_path}")
-        if not proto_path.exists():
-            raise FileNotFoundError(f"Missing semantic prototype cache: {proto_path}")
         token_targets = KaraOneSemanticTokenTargets(token_path)
-        prototype_cache = KaraOneSemanticMelPrototypes(proto_path)
-        if prototype_cache.vocab_size != token_targets.vocab_size:
-            raise ValueError(f"prototype vocab={prototype_cache.vocab_size} != token cache vocab={token_targets.vocab_size}")
-        if prototype_cache.target_steps != targets.T or prototype_cache.target_dim != targets.D:
-            raise ValueError(
-                f"prototype target shape {(prototype_cache.target_steps, prototype_cache.target_dim)} "
-                f"!= target shape {(targets.T, targets.D)}"
-            )
-        prototype_tensors = prototype_cache.to_tensors(device)
         common["semantic_token_targets"] = token_targets
-        print(f"[v4] semantic token cache={token_path}")
-        print(f"[v4] semantic Mel prototype cache={proto_path} (train split only)")
+        print(f"[semantic] token cache={token_path}")
+
+    proto_cache_raw = args.semantic_prototype_cache or tgt_cfg.get("cache_semantic_mel_prototypes")
+    if proto_cache_raw and token_targets is not None:
+        proto_path = resolve_bundle_path(proto_cache_raw, BUNDLE_DIR)
+        if not proto_path.exists():
+            if semantic_proto_residual:
+                raise FileNotFoundError(f"Missing semantic prototype cache: {proto_path}")
+            print(f"[semantic] prototype diagnostic cache missing; continuing without it ({proto_path})")
+        else:
+            prototype_cache = KaraOneSemanticMelPrototypes(proto_path)
+            if prototype_cache.vocab_size != token_targets.vocab_size:
+                raise ValueError(f"prototype vocab={prototype_cache.vocab_size} != token cache vocab={token_targets.vocab_size}")
+            if prototype_cache.target_steps != targets.T or prototype_cache.target_dim != targets.D:
+                if semantic_proto_residual:
+                    raise ValueError(
+                        f"prototype target shape {(prototype_cache.target_steps, prototype_cache.target_dim)} "
+                        f"!= target shape {(targets.T, targets.D)}"
+                    )
+                print(
+                    f"[semantic] prototype diagnostic skipped; shape "
+                    f"{(prototype_cache.target_steps, prototype_cache.target_dim)} != target {(targets.T, targets.D)}"
+                )
+                prototype_cache = None
+            else:
+                prototype_tensors = prototype_cache.to_tensors(device)
+                role = "main residual prior" if semantic_proto_residual else "diagnostic only"
+                print(f"[semantic] Mel prototype cache={proto_path} ({role})")
 
     train_ds = KaraOneTrialDataset(split="train", aux_targets=aux_targets, **common)
     val_ds = KaraOneTrialDataset(split="val", aux_targets=aux_targets, **common)
@@ -307,6 +461,14 @@ def main() -> None:
     num_channel_experts = (
         1 if args.model == "baseline" else max(4, int(model_cfg.get("num_channel_experts", 4)))
     )
+    mel_hop_sec = float(cfg.get("target", {}).get("mel_hop", 256)) / float(cfg.get("audio", {}).get("sample_rate", 16000))
+    soft_shift_min_frames = int(round(-0.20 / max(mel_hop_sec, 1e-8)))
+    soft_shift_max_frames = int(round(1.00 / max(mel_hop_sec, 1e-8)))
+    soft_shift_step_frames = 1
+    shift_bins = 0
+    if speech_core_objective or args.soft_shift_objective:
+        shift_bins = int((soft_shift_max_frames - soft_shift_min_frames) // max(soft_shift_step_frames, 1) + 1)
+    duration_bins = int(getattr(targets, "full_target_steps", targets.T)) if args.temporal_elastic_objective else 0
     model = KaraOneEEG2Codec(
         KaraOneConfig(
             n_channels_eeg=int(model_cfg.get("n_channels_eeg", 62)),
@@ -339,6 +501,8 @@ def main() -> None:
             semantic_token_vocab=int(token_targets.vocab_size) if token_targets is not None else 0,
             semantic_token_steps=int(token_targets.T) if token_targets is not None else 50,
             use_channel_reliability=bool(args.channel_reliability),
+            shift_bins=shift_bins,
+            duration_bins=duration_bins,
         )
     ).to(device)
     if (residual_mean or semantic_proto_residual) and not args.no_zero_init_residual:
@@ -403,9 +567,30 @@ def main() -> None:
             "lambda_aligned_peak_energy": 0.0,
             "lambda_lag": 0.0,
             "lambda_semantic_token_ce": 1.0 if semantic_proto_residual else 0.0,
+            "lambda_speech_token_ctc": 0.0,
+            "lambda_trial_infonce": 0.0,
+            "lambda_soft_shift": 0.0,
+            "lambda_silence_suppression": 0.0,
+            "lambda_pre_noise_suppression": 0.0,
+            "lambda_shift_ce": 0.0,
+            "lambda_shift_reg": 0.0,
+            "lambda_zeroeeg_margin": 0.0,
+            "lambda_residual_variance": 0.0,
+            "lambda_pairwise_decorrelation": 0.0,
+            "lambda_core_shape_corr": 0.0,
+            "lambda_core_cos": 0.0,
+            "lambda_core_softdtw": 0.0,
+            "lambda_envelope_shape": 0.0,
+            "lambda_duration": 0.0,
+            "lambda_loudness": 0.0,
             "supcon_temperature": 0.1,
             "clip_temperature": 0.07,
             "dtw_band": 0.2,
+            "soft_shift_min_frames": soft_shift_min_frames,
+            "soft_shift_max_frames": soft_shift_max_frames,
+            "soft_shift_step_frames": soft_shift_step_frames,
+            "soft_shift_temperature": 0.08,
+            "temporal_elastic_softdtw_gamma": 0.08,
         }.items()
     }
     if args.env_objective:
@@ -446,12 +631,118 @@ def main() -> None:
         }
         for name, value in align_defaults.items():
             loss_kwargs[name] = float(train_cfg.get(f"align_{name}", value))
+    if args.eeg_audio_direct:
+        direct_defaults = {
+            "lambda_recon_cos": 1.0,
+            "lambda_recon_mse": 0.2,
+            "lambda_content_ce": 0.05,
+            "lambda_supcon": 0.0,
+            "lambda_proto": 0.0,
+            "lambda_ctc": 0.0,
+            "lambda_clip": 0.5,
+            "lambda_hubert_aux": 0.5,
+            "lambda_hubert_clip": 0.5,
+            "lambda_trial_infonce": 0.5 if args.trial_contrastive else 0.0,
+            "lambda_semantic_token_ce": 1.0 if token_targets is not None else 0.0,
+            "lambda_speech_token_ctc": 0.5 if args.speech_token_ctc and token_targets is not None else 0.0,
+            "lambda_residual_mse": 0.3,
+            "lambda_residual_l1": 0.2,
+            "lambda_raw_energy_corr": 0.5,
+            "lambda_active_recon": 0.5,
+            "lambda_peak_energy": 0.5,
+            "lambda_frame_energy": 0.5,
+            "lambda_voiced_rms": 0.5,
+            "lambda_lag": 0.2,
+        }
+        for name, value in direct_defaults.items():
+            loss_kwargs[name] = float(train_cfg.get(f"v41_{name}", value))
+    if speech_core_objective:
+        core_defaults = {
+            "lambda_recon_cos": 1.0,
+            "lambda_recon_mse": 0.2,
+            "lambda_content_ce": 0.05,
+            "lambda_supcon": 0.0,
+            "lambda_proto": 0.0,
+            "lambda_ctc": 0.0,
+            "lambda_clip": 0.5,
+            "lambda_hubert_aux": 0.5,
+            "lambda_hubert_clip": 0.5,
+            "lambda_trial_infonce": 0.5 if args.trial_contrastive else 0.0,
+            "lambda_semantic_token_ce": 1.0 if token_targets is not None else 0.0,
+            "lambda_speech_token_ctc": 0.5 if args.speech_token_ctc and token_targets is not None else 0.0,
+            "lambda_residual_mse": 0.3,
+            "lambda_residual_l1": 0.2,
+            "lambda_raw_energy_corr": 0.8,
+            "lambda_active_bce": 0.5,
+            "lambda_active_recon": 1.0,
+            "lambda_frame_energy": 0.5,
+            "lambda_voiced_rms": 0.5,
+            "lambda_log_rms": 0.6,
+            "lambda_lag": 0.2,
+            "lambda_peak_energy": 0.5,
+            "lambda_soft_shift": 1.0 if args.soft_shift_objective else 0.0,
+            "lambda_silence_suppression": 0.4 if args.active_loudness_objective else 0.0,
+            "lambda_pre_noise_suppression": 0.4 if args.active_loudness_objective else 0.0,
+        }
+        for name, value in core_defaults.items():
+            loss_kwargs[name] = float(train_cfg.get(f"v42_{name}", value))
+    if args.shift_supervision:
+        shift_defaults = {
+            "lambda_shift_ce": 0.5,
+            "lambda_shift_reg": 0.2,
+        }
+        for name, value in shift_defaults.items():
+            loss_kwargs[name] = float(train_cfg.get(f"v421_{name}", value))
+    if args.anti_collapse_objective:
+        anti_defaults = {
+            "lambda_zeroeeg_margin": 0.5,
+            "lambda_residual_variance": 0.3,
+            "lambda_pairwise_decorrelation": 0.1,
+            "lambda_trial_infonce": 1.0,
+        }
+        for name, value in anti_defaults.items():
+            loss_kwargs[name] = float(train_cfg.get(f"v421_{name}", value))
+    if args.temporal_elastic_objective:
+        v5_defaults = {
+            "lambda_recon_cos": 0.2,
+            "lambda_recon_mse": 0.1,
+            "lambda_core_shape_corr": 1.0,
+            "lambda_core_cos": 1.0,
+            "lambda_core_softdtw": 0.8,
+            "lambda_envelope_shape": 0.8,
+            "lambda_duration": 0.6,
+            "lambda_loudness": 0.5,
+            "lambda_trial_infonce": 1.0 if args.trial_contrastive else 0.0,
+            "lambda_zeroeeg_margin": 0.5,
+            "lambda_semantic_token_ce": 0.5 if token_targets is not None else 0.0,
+            "lambda_speech_token_ctc": 0.3 if args.speech_token_ctc and token_targets is not None else 0.0,
+            "lambda_hubert_aux": 0.5,
+            "lambda_hubert_clip": 0.5,
+            "lambda_content_ce": 0.05,
+            "lambda_residual_variance": 0.1 if args.anti_collapse_objective else 0.0,
+            "lambda_pairwise_decorrelation": 0.05 if args.anti_collapse_objective else 0.0,
+            "lambda_shift_ce": 0.2 if args.shift_supervision else 0.0,
+            "lambda_shift_reg": 0.1 if args.shift_supervision else 0.0,
+        }
+        for name, value in v5_defaults.items():
+            loss_kwargs[name] = float(train_cfg.get(f"v5_{name}", value))
+    if args.label_aux_weight is not None:
+        loss_kwargs["lambda_content_ce"] = float(args.label_aux_weight)
+    if args.lambda_label_supcon is not None:
+        loss_kwargs["lambda_supcon"] = float(args.lambda_label_supcon)
+    if args.lambda_prompt_ctc is not None:
+        loss_kwargs["lambda_ctc"] = float(args.lambda_prompt_ctc)
+    if args.speech_token_ctc and token_targets is not None and loss_kwargs.get("lambda_speech_token_ctc", 0.0) <= 0.0:
+        loss_kwargs["lambda_speech_token_ctc"] = 0.5
+    if args.trial_contrastive and loss_kwargs.get("lambda_trial_infonce", 0.0) <= 0.0:
+        loss_kwargs["lambda_trial_infonce"] = 0.5
     # HuBERT-derived losses are only meaningful when the aux cache is present.
     if aux_targets is None:
         loss_kwargs["lambda_hubert_aux"] = 0.0
         loss_kwargs["lambda_hubert_clip"] = 0.0
-    if not semantic_proto_residual:
+    if token_targets is None:
         loss_kwargs["lambda_semantic_token_ce"] = 0.0
+        loss_kwargs["lambda_speech_token_ctc"] = 0.0
     if args.lambda_dtw is not None:
         loss_kwargs["lambda_dtw"] = float(args.lambda_dtw)
 
@@ -489,6 +780,39 @@ def main() -> None:
             "[loss] v4 semantic prototype residual "
             f"token_ce={loss_kwargs['lambda_semantic_token_ce']} "
             f"residual_l1={loss_kwargs['lambda_residual_l1']} residual_mse={loss_kwargs['lambda_residual_mse']}"
+        )
+    if args.eeg_audio_direct:
+        print(
+            "[loss] v4.1 EEG-to-audio direct "
+            f"label_ce={loss_kwargs['lambda_content_ce']} label_supcon={loss_kwargs['lambda_supcon']} "
+            f"prompt_ctc={loss_kwargs['lambda_ctc']} token_ce={loss_kwargs['lambda_semantic_token_ce']} "
+            f"speech_token_ctc={loss_kwargs['lambda_speech_token_ctc']} "
+            f"trial_infonce={loss_kwargs['lambda_trial_infonce']} selection={args.selection}"
+        )
+    if speech_core_objective:
+        print(
+            "[loss] v4.2 speech-core direct "
+            f"soft_shift={loss_kwargs['lambda_soft_shift']} "
+            f"active={loss_kwargs['lambda_active_recon']} energy={loss_kwargs['lambda_raw_energy_corr']} "
+            f"silence={loss_kwargs['lambda_silence_suppression']} pre_noise={loss_kwargs['lambda_pre_noise_suppression']} "
+            f"label_ce={loss_kwargs['lambda_content_ce']} selection={args.selection}"
+        )
+    if args.shift_supervision or args.anti_collapse_objective:
+        print(
+            "[loss] v4.2.1 anti-template "
+            f"shift_ce={loss_kwargs['lambda_shift_ce']} shift_reg={loss_kwargs['lambda_shift_reg']} "
+            f"zero_margin={loss_kwargs['lambda_zeroeeg_margin']} "
+            f"residual_var={loss_kwargs['lambda_residual_variance']} "
+            f"pairwise={loss_kwargs['lambda_pairwise_decorrelation']} "
+            f"trial_infonce={loss_kwargs['lambda_trial_infonce']}"
+        )
+    if args.temporal_elastic_objective:
+        print(
+            "[loss] v5 temporal-elastic active core "
+            f"shape={loss_kwargs['lambda_core_shape_corr']} cos={loss_kwargs['lambda_core_cos']} "
+            f"softdtw={loss_kwargs['lambda_core_softdtw']} envelope={loss_kwargs['lambda_envelope_shape']} "
+            f"duration={loss_kwargs['lambda_duration']} loudness={loss_kwargs['lambda_loudness']} "
+            f"zero_margin={loss_kwargs['lambda_zeroeeg_margin']} selection={args.selection}"
         )
     if args.channel_reliability:
         print("[channel] all 62 channels enabled with lightweight reliability gate")
@@ -546,6 +870,21 @@ def main() -> None:
                 "semantic_prototype_residual": bool(semantic_proto_residual),
                 "semantic_prototype_cache": str(prototype_cache.path) if prototype_cache is not None else None,
                 "semantic_token_cache": str(token_targets.path) if token_targets is not None else None,
+                "eeg_audio_direct": bool(args.eeg_audio_direct),
+                "speech_core_objective": bool(speech_core_objective),
+                "speech_core_cache": str(speech_core_path) if speech_core_path is not None else None,
+                "full_mel_cache": str(full_mel_cache_path),
+                "speech_core_default_insert_frame": int(getattr(targets, "global_core_insert_frame", 0)),
+                "speech_core_full_target_steps": int(getattr(targets, "full_target_steps", targets.T)),
+                "speech_core_silence_floor_raw": getattr(targets, "silence_floor_raw", None),
+                "soft_shift_objective": bool(args.soft_shift_objective),
+                "active_loudness_objective": bool(args.active_loudness_objective),
+                "shift_supervision": bool(args.shift_supervision),
+                "anti_collapse_objective": bool(args.anti_collapse_objective),
+                "local_loudness_synthesis": bool(args.local_loudness_synthesis),
+                "temporal_elastic_objective": bool(args.temporal_elastic_objective),
+                "soft_shift_min_frames": int(soft_shift_min_frames),
+                "soft_shift_max_frames": int(soft_shift_max_frames),
                 "env_objective": bool(args.env_objective),
                 "selection": str(args.selection),
                 "alignment_objective": bool(args.alignment_objective),
@@ -580,6 +919,7 @@ def main() -> None:
             )
             target_seq = batch["target_seq"].to(device)
             residual_target = None
+            zero_pred_seq = None
             if semantic_proto_residual:
                 if prototype_tensors is None:
                     raise RuntimeError("semantic prototype tensors are not initialized")
@@ -592,6 +932,25 @@ def main() -> None:
             elif residual_mean:
                 out = _apply_global_mean_residual(out, global_mean_t)
                 residual_target = target_seq - global_mean_t.unsqueeze(0).expand_as(target_seq)
+            if args.anti_collapse_objective:
+                zero_out = model(
+                    torch.zeros_like(batch["eeg"]).to(device),
+                    subject_idx,
+                    batch["stage_idx"].to(device),
+                    batch["eeg_valid_len"].to(device),
+                    lambda_domain=grl_lambda,
+                )
+                if semantic_proto_residual:
+                    if prototype_tensors is None:
+                        raise RuntimeError("semantic prototype tensors are not initialized")
+                    zero_out = _apply_semantic_prototype_residual(
+                        zero_out,
+                        prototype_tensors,
+                        batch["semantic_token_mask"].to(device) if "semantic_token_mask" in batch else None,
+                    )
+                elif residual_mean:
+                    zero_out = _apply_global_mean_residual(zero_out, global_mean_t)
+                zero_pred_seq = zero_out["pred_latent"]
             losses = compute_losses(
                 out,
                 target_seq,
@@ -609,6 +968,15 @@ def main() -> None:
                 lag_confidence=batch["lag_confidence"].to(device) if "lag_confidence" in batch else None,
                 semantic_token_targets=batch["semantic_token_targets"].to(device) if "semantic_token_targets" in batch else None,
                 semantic_token_mask=batch["semantic_token_mask"].to(device) if "semantic_token_mask" in batch else None,
+                target_active_mask=batch["core_active_mask"].to(device) if "core_active_mask" in batch else None,
+                target_silence_mask=(1.0 - batch["core_mask"]).to(device) if "core_mask" in batch else None,
+                target_pre_noise_mask=batch["core_pre_noise_mask"].to(device) if "core_pre_noise_mask" in batch else None,
+                shift_target_frame=batch["shift_target_frame"].to(device) if "shift_target_frame" in batch else None,
+                active_envelope=batch["active_envelope_norm"].to(device) if "active_envelope_norm" in batch else None,
+                active_duration_frames=batch["active_duration_frames"].to(device) if "active_duration_frames" in batch else None,
+                active_rms=batch["active_rms"].to(device) if "active_rms" in batch else None,
+                active_peak=batch["active_peak"].to(device) if "active_peak" in batch else None,
+                zero_pred_seq=zero_pred_seq,
                 **loss_kwargs,
             )
             total = losses["total"]

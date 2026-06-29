@@ -31,6 +31,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stages", default=None)
     parser.add_argument("--model", choices=["baseline", "moe"], default="baseline")
     parser.add_argument("--token-cache", default="../artifacts/audio_targets/karaone_trial_hubert_tokens_k64.npz")
+    parser.add_argument("--selection", choices=["legacy", "eeg_audio_generation"], default="legacy")
+    parser.add_argument("--speech-token-ctc", action="store_true", help="use CTC over HuBERT semantic-token sequences")
+    parser.add_argument("--trial-contrastive", action="store_true", help="enable trial-level EEG-HuBERT InfoNCE")
+    parser.add_argument("--label-aux-weight", type=float, default=None, help="weak label CE weight")
+    parser.add_argument("--lambda-label-supcon", type=float, default=None, help="override same-label supervised contrastive weight")
+    parser.add_argument("--lambda-prompt-ctc", type=float, default=None, help="override prompt-label CTC weight")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--run-suffix", default=None)
     parser.add_argument("--device", default=None)
@@ -38,7 +44,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _score(metrics: dict) -> float:
+def _score(metrics: dict, selection: str) -> float:
+    if selection == "eeg_audio_generation":
+        trial_gain = metrics.get("pred_within_subject_trial_top1", 0.0) - metrics.get(
+            "mean_within_subject_trial_top1", 0.0
+        )
+        token_gain = max(
+            metrics.get("semantic_token_edit_gain", 0.0),
+            metrics.get("semantic_token_over_zeroeeg_edit_gain", 0.0),
+        )
+        return float(metrics.get("pred_over_mean_cos_gain", 0.0) + 0.8 * trial_gain + 0.5 * token_gain)
     return float(
         metrics.get("pred_over_mean_cos_gain", 0.0)
         + 0.5 * metrics.get("pred_within_subject_label_top1", 0.0)
@@ -125,14 +140,26 @@ def main() -> None:
         "lambda_clip": float(train_cfg.get("lambda_clip", 0.5)),
         "lambda_ctc": float(train_cfg.get("lambda_ctc", 0.2)),
         "lambda_semantic_token_ce": float(train_cfg.get("lambda_semantic_token_ce", 1.0)),
+        "lambda_speech_token_ctc": 0.5 if args.speech_token_ctc else 0.0,
+        "lambda_trial_infonce": 0.5 if args.trial_contrastive else 0.0,
     }
+    if args.selection == "eeg_audio_generation":
+        loss_kwargs["lambda_content_ce"] = 0.05
+        loss_kwargs["lambda_supcon"] = 0.0
+        loss_kwargs["lambda_ctc"] = 0.0
+    if args.label_aux_weight is not None:
+        loss_kwargs["lambda_content_ce"] = float(args.label_aux_weight)
+    if args.lambda_label_supcon is not None:
+        loss_kwargs["lambda_supcon"] = float(args.lambda_label_supcon)
+    if args.lambda_prompt_ctc is not None:
+        loss_kwargs["lambda_ctc"] = float(args.lambda_prompt_ctc)
     run = f"karaone_semantic_tokens_{args.model}_{'_'.join(stages)}_{args.run_suffix or 'v3'}"
     run_dir = resolve_bundle_path(cfg["output"]["root"], BUNDLE_DIR) / run
     ensure_dir(run_dir / "checkpoints")
     ensure_dir(run_dir / "metrics")
     history = run_dir / "metrics" / "history.csv"
     with history.open("w", encoding="utf-8", newline="") as handle:
-        csv.writer(handle).writerow(["epoch", "train_total", "train_token_ce", "val_gain", "val_label_top1", "score"])
+        csv.writer(handle).writerow(["epoch", "train_total", "train_token_ce", "train_token_ctc", "val_gain", "val_trial_top1", "val_label_top1", "val_token_edit_gain", "score"])
 
     def save(path: Path, score: float) -> None:
         torch.save(
@@ -148,6 +175,7 @@ def main() -> None:
                 "target_kind": "hubert_sequence",
                 "model_kind": f"semantic_tokens_{args.model}",
                 "semantic_token_cache": str(resolve_bundle_path(args.token_cache, BUNDLE_DIR)),
+                "selection": str(args.selection),
                 "val_selection_score": float(score),
             },
             path,
@@ -195,12 +223,14 @@ def main() -> None:
         sched.step()
         train_metrics = {name: value / max(seen, 1) for name, value in agg.items()}
         val_metrics = evaluate(model, val_ds, targets, device=device, batch_size=batch_size, target_kind="hubert_sequence")
-        score = _score(val_metrics)
+        score = _score(val_metrics, args.selection)
         print(
             f"epoch {epoch:03d} total={train_metrics['total']:.3f} "
             f"token_ce={train_metrics.get('semantic_token_ce', 0.0):.3f} "
             f"val_gain={val_metrics['pred_over_mean_cos_gain']:+.3f} "
-            f"label_top1={val_metrics.get('pred_within_subject_label_top1', 0.0):.3f} score={score:+.3f}"
+            f"trial_top1={val_metrics.get('pred_within_subject_trial_top1', 0.0):.3f} "
+            f"label_top1={val_metrics.get('pred_within_subject_label_top1', 0.0):.3f} "
+            f"token_edit_gain={val_metrics.get('semantic_token_edit_gain', 0.0):+.3f} score={score:+.3f}"
         )
         with history.open("a", encoding="utf-8", newline="") as handle:
             csv.writer(handle).writerow(
@@ -208,8 +238,11 @@ def main() -> None:
                     epoch,
                     train_metrics["total"],
                     train_metrics.get("semantic_token_ce", 0.0),
+                    train_metrics.get("speech_token_ctc", 0.0),
                     val_metrics["pred_over_mean_cos_gain"],
+                    val_metrics.get("pred_within_subject_trial_top1", 0.0),
                     val_metrics.get("pred_within_subject_label_top1", 0.0),
+                    val_metrics.get("semantic_token_edit_gain", 0.0),
                     score,
                 ]
             )
@@ -225,7 +258,7 @@ def main() -> None:
         model.load_state_dict(ckpt["model_state"], strict=False)
         print(f"[eval] loaded best checkpoint for final metrics: {best_path}")
     final = {
-        "selection": {"criterion": "semantic token retrieval/composite", "best_val_score": best},
+        "selection": {"criterion": str(args.selection), "best_val_score": best},
         "test": evaluate(model, test_ds, targets, device=device, batch_size=batch_size, target_kind="hubert_sequence"),
         "subject_test": evaluate(model, subject_test, targets, device=device, batch_size=batch_size, target_kind="hubert_sequence"),
     }

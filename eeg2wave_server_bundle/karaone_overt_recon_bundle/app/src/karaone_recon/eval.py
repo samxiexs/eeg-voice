@@ -34,6 +34,126 @@ def _sample_pcc(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     )
 
 
+def _resample_1d(values: np.ndarray, n: int) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float64)
+    if values.size == 0:
+        return np.zeros(n, dtype=np.float64)
+    if values.size == n:
+        return values.astype(np.float64)
+    src = np.linspace(0.0, 1.0, values.size)
+    dst = np.linspace(0.0, 1.0, n)
+    return np.interp(dst, src, values)
+
+
+def _dtw_distance_1d(a: np.ndarray, b: np.ndarray) -> float:
+    a = np.asarray(a, dtype=np.float64).reshape(-1)
+    b = np.asarray(b, dtype=np.float64).reshape(-1)
+    if a.size == 0 or b.size == 0:
+        return 0.0
+    n, m = a.size, b.size
+    acc = np.full((n + 1, m + 1), np.inf, dtype=np.float64)
+    acc[0, 0] = 0.0
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            cost = (a[i - 1] - b[j - 1]) ** 2
+            acc[i, j] = cost + min(acc[i - 1, j], acc[i, j - 1], acc[i - 1, j - 1])
+    return float(acc[n, m] / max(n + m, 1))
+
+
+def _best_shift_corr_1d(a: np.ndarray, b: np.ndarray, max_shift: int = 32) -> tuple[float, int]:
+    a = np.asarray(a, dtype=np.float64).reshape(-1)
+    b = np.asarray(b, dtype=np.float64).reshape(-1)
+    if a.size < 2 or b.size < 2:
+        return 0.0, 0
+    best_corr = -1.0
+    best_shift = 0
+    for shift in range(-int(max_shift), int(max_shift) + 1):
+        if shift < 0:
+            aa, bb = a[-shift:], b[: a.size + shift]
+        elif shift > 0:
+            aa, bb = a[: a.size - shift], b[shift:]
+        else:
+            aa, bb = a, b
+        m = min(aa.size, bb.size)
+        if m < 2:
+            continue
+        aa = aa[:m] - aa[:m].mean()
+        bb = bb[:m] - bb[:m].mean()
+        corr = float((aa * bb).sum() / (np.linalg.norm(aa) * np.linalg.norm(bb) + 1e-8))
+        if corr > best_corr:
+            best_corr = corr
+            best_shift = int(shift)
+    return float(best_corr), int(best_shift)
+
+
+def _raw_mel_envelope(seq_norm: np.ndarray, targets: KaraOneTargets) -> np.ndarray:
+    raw = seq_norm * targets.target_std.reshape(1, 1, -1) + targets.target_mean.reshape(1, 1, -1)
+    return np.sqrt(np.exp(np.clip(raw, -12.0, 6.0)).mean(axis=-1).clip(min=1e-12))
+
+
+def _temporal_elastic_metrics(
+    pred_norm: np.ndarray,
+    zero_norm: np.ndarray,
+    mean_norm: np.ndarray,
+    target_norm: np.ndarray,
+    targets: KaraOneTargets,
+    duration_target: np.ndarray | None,
+    duration_pred: np.ndarray | None,
+    active_rms: np.ndarray | None,
+    pred_log_rms: np.ndarray | None,
+    active_peak: np.ndarray | None,
+    pred_log_peak: np.ndarray | None,
+) -> dict[str, float]:
+    pred_flat = pred_norm.reshape(pred_norm.shape[0], -1)
+    zero_flat = zero_norm.reshape(zero_norm.shape[0], -1)
+    mean_flat = mean_norm.reshape(mean_norm.shape[0], -1)
+    tgt_flat = target_norm.reshape(target_norm.shape[0], -1)
+    pred_shape = float(_sample_pcc(pred_flat, tgt_flat).mean())
+    zero_shape = float(_sample_pcc(zero_flat, tgt_flat).mean())
+    mean_shape = float(_sample_pcc(mean_flat, tgt_flat).mean())
+    pred_env = _raw_mel_envelope(pred_norm, targets)
+    zero_env = _raw_mel_envelope(zero_norm, targets)
+    mean_env = _raw_mel_envelope(mean_norm, targets)
+    tgt_env = _raw_mel_envelope(target_norm, targets)
+    pred_dtw = float(np.mean([_dtw_distance_1d(pred_env[i], tgt_env[i]) for i in range(pred_env.shape[0])]))
+    zero_dtw = float(np.mean([_dtw_distance_1d(zero_env[i], tgt_env[i]) for i in range(zero_env.shape[0])]))
+    mean_dtw = float(np.mean([_dtw_distance_1d(mean_env[i], tgt_env[i]) for i in range(mean_env.shape[0])]))
+    best = [_best_shift_corr_1d(pred_env[i], tgt_env[i], max_shift=max(4, pred_env.shape[1] // 2)) for i in range(pred_env.shape[0])]
+    best_corr = float(np.mean([item[0] for item in best])) if best else 0.0
+    best_shift = float(np.mean([item[1] for item in best])) if best else 0.0
+    metrics = {
+        "active_segment_shape_corr": pred_shape,
+        "zeroeeg_active_segment_shape_corr": zero_shape,
+        "mean_active_segment_shape_corr": mean_shape,
+        "pred_over_zero_active_shape_gain": pred_shape - zero_shape,
+        "pred_over_mean_active_shape_gain": pred_shape - mean_shape,
+        "active_core_mel_corr": pred_shape,
+        "active_core_softdtw": pred_dtw,
+        "zeroeeg_active_core_softdtw": zero_dtw,
+        "mean_active_core_softdtw": mean_dtw,
+        "pred_over_zero_softdtw_gain": zero_dtw - pred_dtw,
+        "pred_over_mean_softdtw_gain": mean_dtw - pred_dtw,
+        "best_shift_full_env_corr": best_corr,
+        "best_shift_frames": best_shift,
+    }
+    if duration_target is not None and duration_pred is not None:
+        ratio = duration_pred.astype(np.float64) / np.maximum(duration_target.astype(np.float64), 1.0)
+        metrics["active_duration_ratio"] = float(np.mean(ratio))
+        metrics["duration_score"] = float(np.mean(np.exp(-np.abs(np.log(np.maximum(ratio, 1e-8))))))
+    if active_rms is not None and pred_log_rms is not None:
+        pred_rms = np.exp(pred_log_rms.astype(np.float64))
+        ratio = pred_rms / np.maximum(active_rms.astype(np.float64), 1e-8)
+        metrics["active_rms_ratio"] = float(np.mean(ratio))
+        metrics["loudness_score"] = float(np.mean(np.exp(-np.abs(np.log(np.maximum(ratio, 1e-8))))))
+    if active_peak is not None and pred_log_peak is not None:
+        pred_peak = np.exp(pred_log_peak.astype(np.float64))
+        ratio = pred_peak / np.maximum(active_peak.astype(np.float64), 1e-8)
+        metrics["active_peak_ratio"] = float(np.mean(ratio))
+    return metrics
+
+
 def _weighted_pcc_1d(a: np.ndarray, b: np.ndarray, weight: np.ndarray) -> np.ndarray:
     out = np.zeros(a.shape[0], dtype=np.float32)
     for i in range(a.shape[0]):
@@ -165,6 +285,70 @@ def _retrieval_stats(
     return out
 
 
+def _collapse_tokens(seq: np.ndarray) -> list[int]:
+    out: list[int] = []
+    last: int | None = None
+    for item in seq.astype(np.int64).tolist():
+        value = int(item)
+        if last is None or value != last:
+            out.append(value)
+        last = value
+    return out
+
+
+def _edit_distance(a: list[int], b: list[int]) -> int:
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, av in enumerate(a, start=1):
+        cur = [i] + [0] * len(b)
+        for j, bv in enumerate(b, start=1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + int(av != bv))
+        prev = cur
+    return int(prev[-1])
+
+
+def _semantic_token_metrics(
+    pred_tokens: list[np.ndarray],
+    target_tokens: list[np.ndarray],
+    masks: list[np.ndarray],
+) -> dict[str, float]:
+    if not pred_tokens or not target_tokens:
+        return {}
+    pred = np.concatenate(pred_tokens, axis=0)
+    target = np.concatenate(target_tokens, axis=0)
+    mask = np.concatenate(masks, axis=0).astype(bool)
+    active = int(mask.sum())
+    if active <= 0:
+        return {}
+    correct = (pred == target) & mask
+    active_targets = target[mask].astype(np.int64)
+    counts = np.bincount(active_targets, minlength=max(int(active_targets.max()) + 1, 1))
+    majority = int(counts.argmax())
+    pred_edits: list[float] = []
+    majority_edits: list[float] = []
+    for i in range(pred.shape[0]):
+        m = mask[i]
+        if not bool(m.any()):
+            continue
+        tgt_seq = _collapse_tokens(target[i][m])
+        pred_seq = _collapse_tokens(pred[i][m])
+        majority_seq = [majority]
+        denom = float(max(len(tgt_seq), 1))
+        pred_edits.append(_edit_distance(pred_seq, tgt_seq) / denom)
+        majority_edits.append(_edit_distance(majority_seq, tgt_seq) / denom)
+    pred_edit = float(np.mean(pred_edits)) if pred_edits else 1.0
+    majority_edit = float(np.mean(majority_edits)) if majority_edits else 1.0
+    return {
+        "semantic_token_frame_acc": float(correct.sum() / max(active, 1)),
+        "semantic_token_edit_distance": pred_edit,
+        "semantic_token_majority_edit_distance": majority_edit,
+        "semantic_token_edit_gain": majority_edit - pred_edit,
+    }
+
+
 @torch.no_grad()
 def evaluate(
     model: torch.nn.Module,
@@ -190,9 +374,12 @@ def evaluate(
     pred_flat: list[np.ndarray] = []
     target_flat: list[np.ndarray] = []
     pred_seq: list[np.ndarray] = []
+    zero_seq: list[np.ndarray] = []
     target_seq: list[np.ndarray] = []
     mean_seq: list[np.ndarray] = []
     proto_seq: list[np.ndarray] = []
+    raw_pred_seq: list[np.ndarray] = []
+    raw_zero_seq: list[np.ndarray] = []
     pred_aligned_seq: list[np.ndarray] = []
     oracle_aligned_seq: list[np.ndarray] = []
     pred_lag_values: list[np.ndarray] = []
@@ -208,6 +395,23 @@ def evaluate(
     hubert_pred_summaries: list[np.ndarray] = []
     hubert_cos_sum = 0.0
     hubert_n = 0
+    token_pred_values: list[np.ndarray] = []
+    zero_token_pred_values: list[np.ndarray] = []
+    token_target_values: list[np.ndarray] = []
+    token_mask_values: list[np.ndarray] = []
+    core_active_masks: list[np.ndarray] = []
+    core_silence_masks: list[np.ndarray] = []
+    core_pre_noise_masks: list[np.ndarray] = []
+    shift_pred_frames: list[np.ndarray] = []
+    shift_target_frames: list[np.ndarray] = []
+    shift_top1_hits: list[np.ndarray] = []
+    shift_top3_hits: list[np.ndarray] = []
+    active_duration_targets: list[np.ndarray] = []
+    active_duration_preds: list[np.ndarray] = []
+    active_rms_targets: list[np.ndarray] = []
+    pred_log_rms_values: list[np.ndarray] = []
+    active_peak_targets: list[np.ndarray] = []
+    pred_log_peak_values: list[np.ndarray] = []
 
     global_mean = torch.from_numpy(targets.global_mean_norm).to(device).float()
     for batch in loader:
@@ -220,24 +424,28 @@ def evaluate(
         zero_out = model(torch.zeros_like(eeg), subject_idx, stage_idx, valid_len)
         raw_pred = out["pred_latent"]
         raw_zero_pred = zero_out["pred_latent"]
-        if semantic_prototype_residual and semantic_prototypes is not None and "semantic_token_logits" in out:
+        diagnostic_proto_batch = None
+        diagnostic_zero_proto_batch = None
+        if semantic_prototypes is not None and "semantic_token_logits" in out:
             token_mask = batch.get("semantic_token_mask")
             token_mask_t = token_mask.to(device) if token_mask is not None else None
-            proto_batch = semantic_prototypes.prototype_from_logits(out["semantic_token_logits"], token_mask_t)
-            zero_proto_batch = semantic_prototypes.prototype_from_logits(zero_out["semantic_token_logits"], token_mask_t)
+            diagnostic_proto_batch = semantic_prototypes.prototype_from_logits(out["semantic_token_logits"], token_mask_t)
+            diagnostic_zero_proto_batch = semantic_prototypes.prototype_from_logits(zero_out["semantic_token_logits"], token_mask_t)
+        if semantic_prototype_residual and diagnostic_proto_batch is not None:
             mean_batch = global_mean.unsqueeze(0).expand_as(target)
+            proto_batch = diagnostic_proto_batch
             pred = proto_batch + raw_pred
-            zero_pred = zero_proto_batch + raw_zero_pred
+            zero_pred = diagnostic_zero_proto_batch + raw_zero_pred
         elif residual_mean:
             mean_batch = global_mean.unsqueeze(0).expand_as(target)
             pred = mean_batch + raw_pred
             zero_pred = mean_batch + raw_zero_pred
-            proto_batch = mean_batch
+            proto_batch = diagnostic_proto_batch if diagnostic_proto_batch is not None else mean_batch
         else:
             mean_batch = global_mean.unsqueeze(0).expand_as(target)
             pred = raw_pred
             zero_pred = raw_zero_pred
-            proto_batch = mean_batch
+            proto_batch = diagnostic_proto_batch if diagnostic_proto_batch is not None else mean_batch
         b = int(eeg.shape[0])
 
         pred_cos = F.cosine_similarity(pred, target, dim=-1).mean(dim=1)
@@ -288,6 +496,8 @@ def evaluate(
 
         pred_np = pred.detach().cpu().numpy()
         zero_np = zero_pred.detach().cpu().numpy()
+        raw_pred_np = raw_pred.detach().cpu().numpy()
+        raw_zero_np = raw_zero_pred.detach().cpu().numpy()
         mean_np = global_mean.unsqueeze(0).expand_as(target).detach().cpu().numpy()
         proto_np = proto_batch.detach().cpu().numpy()
         tgt_np = target.detach().cpu().numpy()
@@ -318,9 +528,49 @@ def evaluate(
         pred_flat.append(pred_np.reshape(pred_np.shape[0], -1))
         target_flat.append(tgt_np.reshape(tgt_np.shape[0], -1))
         pred_seq.append(pred_np)
+        zero_seq.append(zero_np)
         target_seq.append(tgt_np)
         mean_seq.append(mean_np)
         proto_seq.append(proto_np)
+        raw_pred_seq.append(raw_pred_np)
+        raw_zero_seq.append(raw_zero_np)
+        if "core_active_mask" in batch:
+            core_active_masks.append(batch["core_active_mask"].detach().cpu().numpy().astype(np.float32))
+        if "core_mask" in batch:
+            core_mask_np = batch["core_mask"].detach().cpu().numpy().astype(np.float32)
+            core_silence_masks.append(1.0 - core_mask_np)
+        if "core_pre_noise_mask" in batch:
+            core_pre_noise_masks.append(batch["core_pre_noise_mask"].detach().cpu().numpy().astype(np.float32))
+        if "pred_shift_logits" in out and "shift_target_frame" in batch:
+            logits = out["pred_shift_logits"].detach().cpu()
+            bsz, bins = int(logits.shape[0]), int(logits.shape[1])
+            lo, hi = -12, 62
+            target_shift = batch["shift_target_frame"].detach().cpu().numpy().astype(np.float32)
+            if bins > 1:
+                grid = np.linspace(float(lo), float(hi), bins, dtype=np.float32)
+                pred_idx = logits.argmax(dim=-1).numpy().astype(np.int64)
+                pred_shift = grid[pred_idx]
+                target_bin = np.rint((target_shift - float(lo)) / max(float(hi - lo), 1.0) * float(bins - 1)).astype(np.int64)
+                target_bin = np.clip(target_bin, 0, bins - 1)
+                top3 = torch.topk(logits, k=min(3, bins), dim=-1).indices.numpy()
+                shift_top1_hits.append((pred_idx == target_bin).astype(np.float32))
+                shift_top3_hits.append(np.asarray([target_bin[i] in set(top3[i].tolist()) for i in range(bsz)], dtype=np.float32))
+            else:
+                pred_shift = np.zeros_like(target_shift)
+                shift_top1_hits.append(np.ones_like(target_shift, dtype=np.float32))
+                shift_top3_hits.append(np.ones_like(target_shift, dtype=np.float32))
+            shift_pred_frames.append(pred_shift.astype(np.float32))
+            shift_target_frames.append(target_shift.astype(np.float32))
+        if "active_duration_frames" in batch:
+            active_duration_targets.append(batch["active_duration_frames"].detach().cpu().numpy().astype(np.float32))
+            if "pred_duration_mu" in out:
+                active_duration_preds.append(out["pred_duration_mu"].detach().cpu().numpy().astype(np.float32))
+        if "active_rms" in batch:
+            active_rms_targets.append(batch["active_rms"].detach().cpu().numpy().astype(np.float32))
+            pred_log_rms_values.append(out["pred_log_rms"].detach().cpu().numpy().astype(np.float32))
+        if "active_peak" in batch and "pred_log_peak" in out:
+            active_peak_targets.append(batch["active_peak"].detach().cpu().numpy().astype(np.float32))
+            pred_log_peak_values.append(out["pred_log_peak"].detach().cpu().numpy().astype(np.float32))
         subjects.extend([str(item) for item in batch["subject"]])
         labels.extend([str(item) for item in batch["label"]])
         trials.extend([int(item) for item in batch["trial_index"]])
@@ -332,6 +582,11 @@ def evaluate(
             hubert_cos_sum += float(hub_cos.sum().detach().cpu())
             hubert_n += int(pred_hub.shape[0])
             hubert_pred_summaries.append(pred_hub.mean(dim=1).detach().cpu().numpy())
+        if "semantic_token_logits" in out and "semantic_token_targets" in batch:
+            token_pred_values.append(out["semantic_token_logits"].argmax(dim=-1).detach().cpu().numpy())
+            zero_token_pred_values.append(zero_out["semantic_token_logits"].argmax(dim=-1).detach().cpu().numpy())
+            token_target_values.append(batch["semantic_token_targets"].detach().cpu().numpy())
+            token_mask_values.append(batch.get("semantic_token_mask", torch.ones_like(batch["semantic_token_targets"]).float()).detach().cpu().numpy())
 
     out_metrics = {name: value / max(count, 1) for name, value in totals.items()}
     pred_summary = np.concatenate(pred_summaries, axis=0)
@@ -359,7 +614,9 @@ def evaluate(
     if residual_mean:
         out_metrics.update(
             {
-                "prediction_mode": "residual_global_mean",
+                "prediction_mode": "speech_core_residual_mean"
+                if bool(getattr(targets, "is_speech_core", False))
+                else "residual_global_mean",
                 "pred_over_mean_mse_gain": out_metrics["mean_recon_mse"] - out_metrics["pred_recon_mse"],
                 "pred_over_semantic_proto_mse_gain": out_metrics["semantic_proto_recon_mse"] - out_metrics["pred_recon_mse"],
                 "pred_residual_cos_gain": out_metrics["pred_residual_cos"] - out_metrics["zeroeeg_residual_cos"],
@@ -380,6 +637,33 @@ def evaluate(
                 mean_seq_np,
                 targets,
             )
+        )
+        zero_seq_np = np.concatenate(zero_seq, axis=0)
+        zero_metrics = _mel_metrics(zero_seq_np, target_seq_np, mean_seq_np, targets)
+        out_metrics.update(
+            {
+                "zeroeeg_mel_corr": zero_metrics["pred_mel_corr"],
+                "zeroeeg_mcd": zero_metrics["pred_mcd"],
+                "zeroeeg_energy_corr": zero_metrics["pred_energy_corr"],
+                "pred_over_zero_mel_corr_gain": out_metrics["pred_mel_corr"] - zero_metrics["pred_mel_corr"],
+                "pred_over_zero_mcd_gain": zero_metrics["pred_mcd"] - out_metrics["pred_mcd"],
+                "pred_over_zero_energy_corr_gain": out_metrics["pred_energy_corr"] - zero_metrics["pred_energy_corr"],
+            }
+        )
+        raw_pred_np = np.concatenate(raw_pred_seq, axis=0)
+        raw_zero_np = np.concatenate(raw_zero_seq, axis=0)
+        residual_base_np = np.concatenate(proto_seq if semantic_prototype_residual else mean_seq, axis=0)
+        residual_target_np = target_seq_np - residual_base_np
+        residual_std = raw_pred_np.reshape(-1, raw_pred_np.shape[-1]).std(axis=0)
+        residual_target_std = residual_target_np.reshape(-1, residual_target_np.shape[-1]).std(axis=0)
+        zero_residual_std = raw_zero_np.reshape(-1, raw_zero_np.shape[-1]).std(axis=0)
+        out_metrics.update(
+            {
+                "residual_std_ratio": float(np.median(residual_std / np.maximum(residual_target_std, 1e-6))),
+                "zeroeeg_residual_std_ratio": float(np.median(zero_residual_std / np.maximum(residual_target_std, 1e-6))),
+                "residual_pairwise_corr": _corr_median(raw_pred_np.reshape(raw_pred_np.shape[0], -1)),
+                "zeroeeg_residual_pairwise_corr": _corr_median(raw_zero_np.reshape(raw_zero_np.shape[0], -1)),
+            }
         )
         if proto_seq:
             proto_metrics = _mel_metrics(np.concatenate(proto_seq, axis=0), target_seq_np, mean_seq_np, targets)
@@ -410,6 +694,70 @@ def evaluate(
                 targets,
             )
             out_metrics.update({f"oracle_aligned_{name}": value for name, value in oracle_aligned_metrics.items()})
+        if bool(getattr(targets, "is_speech_core", False)):
+            for name in (
+                "pred_mel_corr",
+                "mean_mel_corr",
+                "pred_mel_corr_gain",
+                "pred_mcd",
+                "mean_mcd",
+                "pred_mcd_gain",
+                "pred_energy_corr",
+                "mean_energy_corr",
+                "pred_energy_corr_gain",
+                "pred_active_recon_mse",
+                "mean_active_recon_mse",
+                "pred_active_recon_mse_gain",
+            ):
+                if name in out_metrics:
+                    out_metrics[f"core_{name.replace('pred_', '').replace('mean_', 'mean_')}"] = out_metrics[name]
+            out_metrics["core_mel_corr_gain"] = out_metrics.get("pred_mel_corr_gain", 0.0)
+            out_metrics["core_energy_corr_gain"] = out_metrics.get("pred_energy_corr_gain", 0.0)
+            out_metrics["core_mcd_gain"] = out_metrics.get("pred_mcd_gain", 0.0)
+            out_metrics["core_active_recon_mse_gain"] = out_metrics.get("pred_active_recon_mse_gain", 0.0)
+            if core_active_masks:
+                active = np.concatenate(core_active_masks, axis=0).astype(np.float32)
+                pred_raw = pred_seq_np * targets.target_std.reshape(1, 1, -1) + targets.target_mean.reshape(1, 1, -1)
+                tgt_raw = target_seq_np * targets.target_std.reshape(1, 1, -1) + targets.target_mean.reshape(1, 1, -1)
+                pred_energy = np.exp(np.clip(pred_raw, -12.0, 6.0)).mean(axis=-1)
+                tgt_energy = np.exp(np.clip(tgt_raw, -12.0, 6.0)).mean(axis=-1)
+                pred_active = np.sqrt((pred_energy * active).sum(axis=1) / np.maximum(active.sum(axis=1), 1.0))
+                tgt_active = np.sqrt((tgt_energy * active).sum(axis=1) / np.maximum(active.sum(axis=1), 1.0))
+                ratio = pred_active / np.maximum(tgt_active, 1e-8)
+                out_metrics["active_rms_ratio"] = float(np.mean(ratio))
+                out_metrics["active_rms_score"] = float(np.mean(np.exp(-np.abs(np.log(np.maximum(ratio, 1e-8))))))
+            if core_silence_masks:
+                silence = np.concatenate(core_silence_masks, axis=0).astype(np.float32)
+                pred_raw = pred_seq_np * targets.target_std.reshape(1, 1, -1) + targets.target_mean.reshape(1, 1, -1)
+                pred_energy = np.exp(np.clip(pred_raw, -12.0, 6.0)).mean(axis=-1)
+                out_metrics["silence_leakage"] = float((pred_energy * silence).sum() / max(float(silence.sum()), 1.0))
+            if core_pre_noise_masks:
+                pre_noise = np.concatenate(core_pre_noise_masks, axis=0).astype(np.float32)
+                pred_raw = pred_seq_np * targets.target_std.reshape(1, 1, -1) + targets.target_mean.reshape(1, 1, -1)
+                pred_energy = np.exp(np.clip(pred_raw, -12.0, 6.0)).mean(axis=-1)
+                out_metrics["pre_noise_energy"] = float((pred_energy * pre_noise).sum() / max(float(pre_noise.sum()), 1.0))
+            if bool(getattr(targets, "is_temporal_elastic_core", False)):
+                duration_target = np.concatenate(active_duration_targets, axis=0) if active_duration_targets else None
+                duration_pred = np.concatenate(active_duration_preds, axis=0) if active_duration_preds else None
+                active_rms = np.concatenate(active_rms_targets, axis=0) if active_rms_targets else None
+                pred_log_rms = np.concatenate(pred_log_rms_values, axis=0) if pred_log_rms_values else None
+                active_peak = np.concatenate(active_peak_targets, axis=0) if active_peak_targets else None
+                pred_log_peak = np.concatenate(pred_log_peak_values, axis=0) if pred_log_peak_values else None
+                out_metrics.update(
+                    _temporal_elastic_metrics(
+                        pred_seq_np,
+                        zero_seq_np,
+                        mean_seq_np,
+                        target_seq_np,
+                        targets,
+                        duration_target=duration_target,
+                        duration_pred=duration_pred,
+                        active_rms=active_rms,
+                        pred_log_rms=pred_log_rms,
+                        active_peak=active_peak,
+                        pred_log_peak=pred_log_peak,
+                    )
+                )
     if pred_lag_values:
         pred_lag = np.concatenate(pred_lag_values, axis=0)
         target_lag = np.concatenate(target_lag_values, axis=0)
@@ -429,6 +777,26 @@ def evaluate(
             if onset_offset_values:
                 onset_offset = np.concatenate(onset_offset_values, axis=0)
                 out_metrics["active_onset_error"] = float(np.mean(np.abs(pred_lag[active] - onset_offset[active])))
+    if shift_pred_frames:
+        pred_shift = np.concatenate(shift_pred_frames, axis=0)
+        target_shift = np.concatenate(shift_target_frames, axis=0)
+        top1 = np.concatenate(shift_top1_hits, axis=0)
+        top3 = np.concatenate(shift_top3_hits, axis=0)
+        mae_frames = float(np.mean(np.abs(pred_shift - target_shift)))
+        hop_sec = 0.016
+        if hasattr(targets, "has_field") and targets.has_field("mel_hop_sec"):
+            hop_sec = float(targets.field(str(targets.subject_ids[0]), int(targets.trial_indices[0]), "mel_hop_sec"))
+        out_metrics.update(
+            {
+                "shift_acc_top1": float(np.mean(top1)),
+                "shift_acc_top3": float(np.mean(top3)),
+                "shift_mae_frames": mae_frames,
+                "shift_mae_sec": float(mae_frames * hop_sec),
+                "shift_target_median_frame": float(np.median(target_shift)),
+                "shift_pred_median_frame": float(np.median(pred_shift)),
+                "shift_score": float(max(0.0, 1.0 - mae_frames * hop_sec / 0.75)),
+            }
+        )
     out_metrics.update({f"pred_{k}": v for k, v in _retrieval_stats(pred_summary, subjects, labels, trials, targets).items()})
     out_metrics.update({f"zeroeeg_{k}": v for k, v in _retrieval_stats(zero_summary, subjects, labels, trials, targets).items()})
     out_metrics.update({f"mean_{k}": v for k, v in _retrieval_stats(mean_summary, subjects, labels, trials, targets).items()})
@@ -441,6 +809,12 @@ def evaluate(
         out_metrics.update(
             {f"pred_hubert_{k}": v for k, v in _retrieval_stats(hub_summary, subjects, labels, trials, aux_targets).items()}
         )
+    token_metrics = _semantic_token_metrics(token_pred_values, token_target_values, token_mask_values)
+    out_metrics.update(token_metrics)
+    zero_token_metrics = _semantic_token_metrics(zero_token_pred_values, token_target_values, token_mask_values)
+    out_metrics.update({f"zeroeeg_{name}": value for name, value in zero_token_metrics.items()})
+    if token_metrics and zero_token_metrics:
+        out_metrics["semantic_token_over_zeroeeg_edit_gain"] = zero_token_metrics["semantic_token_edit_distance"] - token_metrics["semantic_token_edit_distance"]
 
     stage_payload = {}
     for stage, payload in by_stage.items():

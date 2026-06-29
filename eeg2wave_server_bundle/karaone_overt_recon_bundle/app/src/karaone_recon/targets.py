@@ -69,6 +69,56 @@ class KaraOneTargets:
             key in payload.files
             for key in ("labels", "trial_indices", "audio_paths", "target_rms", "target_log_rms", "decoder_scales")
         )
+        self.is_speech_core = bool("speech_core_kind" in payload.files or "core_mel" in payload.files)
+        self.is_temporal_elastic_core = bool(
+            "temporal_elastic_core_kind" in payload.files
+            or (("speech_core_kind" in payload.files) and str(payload["speech_core_kind"].item()).startswith("temporal_elastic"))
+        )
+        self.source_mel_cache = str(payload["source_mel_cache"].item()) if "source_mel_cache" in payload.files else ""
+        self.core_len_frames = int(payload["core_len_frames"]) if "core_len_frames" in payload.files else int(self.T)
+        self.full_target_steps = int(payload["full_target_steps"]) if "full_target_steps" in payload.files else int(self.T)
+        self.full_target_dim = int(payload["full_target_dim"]) if "full_target_dim" in payload.files else int(self.D)
+        self.global_core_insert_frame = (
+            int(round(float(payload["global_core_insert_frame"]))) if "global_core_insert_frame" in payload.files else 0
+        )
+        self.silence_floor_raw = (
+            payload["silence_floor_raw"].astype(np.float32)
+            if "silence_floor_raw" in payload.files
+            else np.zeros((self.full_target_steps, self.D), dtype=np.float32)
+        )
+        self._extra_fields: dict[str, np.ndarray] = {}
+        for name in (
+            "core_mel",
+            "core_mask",
+            "core_active_mask",
+            "core_pre_noise_mask",
+            "core_start_frame",
+            "core_end_frame",
+            "core_insert_frame",
+            "audio_active_mask",
+            "silence_mask",
+            "pre_noise_mask",
+            "core_log_rms",
+            "core_peak",
+            "core_energy",
+            "audio_onset_frame",
+            "audio_peak_frame",
+            "audio_com_frame",
+            "active_core_mel_norm",
+            "active_core_mel_raw",
+            "active_envelope_norm",
+            "active_envelope_raw",
+            "active_duration_frames",
+            "active_start_frame",
+            "active_end_frame",
+            "active_center_frame",
+            "active_rms",
+            "active_peak",
+            "full_mel_reference",
+            "ignore_initial_noise_mask",
+        ):
+            if name in payload.files:
+                self._extra_fields[name] = payload[name]
 
         self.key_to_idx = {
             self.key(subject, int(trial)): idx
@@ -140,3 +190,11 @@ class KaraOneTargets:
 
     def subject_prototype(self, subject: str) -> np.ndarray:
         return self.subject_proto[self.subject_to_id[subject]]
+
+    def has_field(self, name: str) -> bool:
+        return name in self._extra_fields
+
+    def field(self, subject: str, trial_index: int, name: str):
+        if name not in self._extra_fields:
+            raise KeyError(f"Target cache has no field {name}")
+        return self._extra_fields[name][self.index(subject, trial_index)]

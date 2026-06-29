@@ -165,6 +165,56 @@ def prompt_ctc_loss(ctc_logits: torch.Tensor, label_idx: torch.Tensor) -> torch.
     return F.ctc_loss(log_probs, targets, input_lengths, target_lengths, blank=0, zero_infinity=True)
 
 
+def speech_token_ctc_loss(
+    token_logits: torch.Tensor,
+    token_targets: torch.Tensor,
+    token_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """CTC over waveform-derived HuBERT token sequences, not KaraOne prompt labels.
+
+    The semantic-token head emits K HuBERT k-means token logits. CTC needs an
+    extra blank class, so we append a learned-neutral zero logit column and use
+    blank=K. Targets are the masked HuBERT token sequence with adjacent repeats
+    collapsed, which keeps the target length feasible for CTC.
+    """
+    if token_logits.ndim != 3 or token_logits.shape[0] == 0:
+        return token_logits.new_tensor(0.0)
+    b, t, k = token_logits.shape
+    blank = int(k)
+    blank_logits = token_logits.new_zeros((b, t, 1))
+    logits = torch.cat([token_logits, blank_logits], dim=-1)
+    log_probs = F.log_softmax(logits, dim=-1).transpose(0, 1)
+    input_lengths = torch.full((b,), int(t), device=token_logits.device, dtype=torch.long)
+    pieces: list[torch.Tensor] = []
+    lengths: list[int] = []
+    for i in range(b):
+        row = token_targets[i].long().clamp(min=0, max=max(k - 1, 0))
+        if token_mask is not None:
+            row = row[token_mask[i].to(device=row.device) > 0]
+        if row.numel() > 1:
+            keep = torch.ones_like(row, dtype=torch.bool)
+            keep[1:] = row[1:] != row[:-1]
+            row = row[keep]
+        row = row[:t]
+        if row.numel() == 0:
+            row = torch.full((1,), blank, device=token_logits.device, dtype=torch.long)
+        pieces.append(row)
+        lengths.append(int(row.numel()))
+    targets = torch.cat(pieces, dim=0)
+    target_lengths = torch.tensor(lengths, device=token_logits.device, dtype=torch.long)
+    if token_logits.device.type == "mps":
+        loss = F.ctc_loss(
+            log_probs.cpu(),
+            targets.cpu(),
+            input_lengths.cpu(),
+            target_lengths.cpu(),
+            blank=blank,
+            zero_infinity=True,
+        )
+        return loss.to(token_logits.device)
+    return F.ctc_loss(log_probs, targets, input_lengths, target_lengths, blank=blank, zero_infinity=True)
+
+
 def frame_log_energy_loss(pred_frame_log_energy: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     target_log_energy = torch.log(target.pow(2).mean(dim=-1).clamp_min(1e-8))
     return F.smooth_l1_loss(pred_frame_log_energy, target_log_energy)
@@ -237,6 +287,107 @@ def _corr_loss_1d(pred: torch.Tensor, target: torch.Tensor, weight: torch.Tensor
     return (1.0 - corr).mean()
 
 
+def _corr_loss_flat(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    p = pred.reshape(pred.shape[0], -1)
+    t = target.reshape(target.shape[0], -1)
+    p = p - p.mean(dim=1, keepdim=True)
+    t = t - t.mean(dim=1, keepdim=True)
+    corr = (p * t).sum(dim=1) / (p.norm(dim=1) * t.norm(dim=1) + 1e-8)
+    return (1.0 - corr).mean()
+
+
+def _soft_dtw_1d(pred: torch.Tensor, target: torch.Tensor, gamma: float = 0.08) -> torch.Tensor:
+    """Small differentiable Soft-DTW over active-core envelopes [B,T].
+
+    v5 uses it as a *local speed tolerance* inside the already extracted active
+    speech core. It is intentionally not applied to the original 2s timeline.
+    """
+    if pred.ndim != 2 or target.ndim != 2:
+        return pred.new_tensor(0.0)
+    b, n = pred.shape
+    m = target.shape[1]
+    if n <= 0 or m <= 0:
+        return pred.new_tensor(0.0)
+    gamma = max(float(gamma), 1e-4)
+    cost = (pred.unsqueeze(2) - target.unsqueeze(1)).pow(2)
+    inf = pred.new_tensor(1e8)
+    r = pred.new_full((b, n + 1, m + 1), float("inf"))
+    r[:, 0, 0] = 0.0
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            prev = torch.stack((r[:, i - 1, j], r[:, i, j - 1], r[:, i - 1, j - 1]), dim=-1)
+            softmin = -gamma * torch.logsumexp(-prev / gamma, dim=-1)
+            r[:, i, j] = cost[:, i - 1, j - 1] + softmin
+    out = r[:, n, m]
+    out = torch.where(torch.isfinite(out), out, inf)
+    return (out / float(max(n + m, 1))).mean()
+
+
+def _predicted_mel_envelope(
+    pred: torch.Tensor,
+    target_mean: torch.Tensor | None,
+    target_std: torch.Tensor | None,
+) -> torch.Tensor:
+    payload = raw_mel_energy(pred, target_mean, target_std)
+    if payload is None:
+        return torch.sqrt(pred.pow(2).mean(dim=-1).clamp_min(1e-8))
+    energy, _ = payload
+    return torch.sqrt(energy.clamp_min(1e-8))
+
+
+def temporal_elastic_core_losses(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    out: dict[str, torch.Tensor],
+    target_mean: torch.Tensor | None,
+    target_std: torch.Tensor | None,
+    active_envelope: torch.Tensor | None = None,
+    active_duration_frames: torch.Tensor | None = None,
+    active_rms: torch.Tensor | None = None,
+    active_peak: torch.Tensor | None = None,
+    softdtw_gamma: float = 0.08,
+) -> dict[str, torch.Tensor]:
+    core_shape = _corr_loss_flat(pred, target)
+    core_cos = 1.0 - F.cosine_similarity(pred, target, dim=-1).mean()
+    pred_env = _predicted_mel_envelope(pred, target_mean, target_std)
+    if active_envelope is not None and active_envelope.shape[-1] == pred_env.shape[-1]:
+        target_env = active_envelope.to(device=pred.device, dtype=pred.dtype)
+    else:
+        target_env = _predicted_mel_envelope(target, target_mean, target_std).detach()
+    pred_env_z = (pred_env - pred_env.mean(dim=1, keepdim=True)) / pred_env.std(dim=1, keepdim=True, unbiased=False).clamp_min(1e-6)
+    target_env_z = (target_env - target_env.mean(dim=1, keepdim=True)) / target_env.std(dim=1, keepdim=True, unbiased=False).clamp_min(1e-6)
+    envelope_shape = _corr_loss_1d(pred_env_z, target_env_z)
+    core_softdtw = _soft_dtw_1d(pred_env_z, target_env_z, gamma=softdtw_gamma)
+
+    duration = pred.new_tensor(0.0)
+    if active_duration_frames is not None:
+        tgt_dur = active_duration_frames.to(device=pred.device, dtype=torch.float32).view(pred.shape[0])
+        if "pred_duration_logits" in out:
+            logits = out["pred_duration_logits"]
+            bins = int(logits.shape[-1])
+            tgt_bin = (tgt_dur.round().long() - 1).clamp(0, max(bins - 1, 0))
+            duration = duration + F.cross_entropy(logits, tgt_bin)
+        if "pred_duration_mu" in out:
+            duration = duration + F.smooth_l1_loss(out["pred_duration_mu"].view_as(tgt_dur), tgt_dur)
+
+    loudness = pred.new_tensor(0.0)
+    if active_rms is not None and "pred_log_rms" in out:
+        target_log_rms = torch.log(active_rms.to(device=pred.device, dtype=pred.dtype).view(-1).clamp_min(1e-8))
+        loudness = loudness + F.smooth_l1_loss(out["pred_log_rms"].view_as(target_log_rms), target_log_rms)
+    if active_peak is not None and "pred_log_peak" in out:
+        target_log_peak = torch.log(active_peak.to(device=pred.device, dtype=pred.dtype).view(-1).clamp_min(1e-8))
+        loudness = loudness + F.smooth_l1_loss(out["pred_log_peak"].view_as(target_log_peak), target_log_peak)
+
+    return {
+        "core_shape_corr": core_shape,
+        "core_cos": core_cos,
+        "core_softdtw": core_softdtw,
+        "envelope_shape": envelope_shape,
+        "duration": duration,
+        "loudness": loudness,
+    }
+
+
 def active_bce_loss(pred_active_logits: torch.Tensor, active_mask: torch.Tensor) -> torch.Tensor:
     pos_rate = active_mask.mean().clamp(min=1e-4, max=1.0 - 1e-4)
     pos_weight = ((1.0 - pos_rate) / pos_rate).clamp(min=1.0, max=10.0)
@@ -248,6 +399,130 @@ def active_recon_loss(pred: torch.Tensor, target: torch.Tensor, active_mask: tor
     per_dim = F.smooth_l1_loss(pred, target, reduction="none")
     denom = (weight.sum() * pred.shape[-1]).clamp_min(1.0)
     return (per_dim * weight).sum() / denom
+
+
+def masked_recon_loss(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+    per_dim = F.smooth_l1_loss(pred, target, reduction="none")
+    if mask is None:
+        return per_dim.mean()
+    weight = mask.to(device=pred.device, dtype=pred.dtype).unsqueeze(-1)
+    denom = (weight.sum() * pred.shape[-1]).clamp_min(1.0)
+    return (per_dim * weight).sum() / denom
+
+
+def soft_shift_recon_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    min_frames: int = -12,
+    max_frames: int = 62,
+    step_frames: int = 1,
+    temperature: float = 0.08,
+    mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Shift-tolerant core reconstruction loss using zero-padded candidate shifts.
+
+    `shift_sequence_torch` is deliberately non-circular: content shifted outside the
+    speech-core window is dropped, so the loss does not reward wrapping speech from
+    the end back to the beginning.
+    """
+    t = int(pred.shape[1])
+    step = max(1, int(step_frames))
+    lo = max(int(min_frames), -t + 1)
+    hi = min(int(max_frames), t - 1)
+    if lo > hi:
+        lo, hi = 0, 0
+    losses = []
+    for shift in range(lo, hi + 1, step):
+        shifted = shift_sequence_torch(pred, int(shift))
+        l1 = masked_recon_loss(shifted, target, mask)
+        cos = 1.0 - F.cosine_similarity(shifted, target, dim=-1)
+        if mask is not None:
+            w = mask.to(device=pred.device, dtype=pred.dtype)
+            cos_loss = (cos * w).sum() / w.sum().clamp_min(1.0)
+        else:
+            cos_loss = cos.mean()
+        losses.append(l1 + 0.2 * cos_loss)
+    stacked = torch.stack(losses)
+    tau = max(float(temperature), 1e-4)
+    return -tau * torch.logsumexp(-stacked / tau, dim=0)
+
+
+def silence_energy_loss(
+    pred: torch.Tensor,
+    mask: torch.Tensor | None,
+    target_mean: torch.Tensor | None,
+    target_std: torch.Tensor | None,
+) -> torch.Tensor:
+    if mask is None:
+        return pred.new_tensor(0.0)
+    payload = raw_mel_energy(pred, target_mean, target_std)
+    if payload is None:
+        energy = pred.pow(2).mean(dim=-1)
+        log_energy = torch.log(energy.clamp_min(1e-8))
+    else:
+        _, log_energy = payload
+    w = mask.to(device=pred.device, dtype=pred.dtype)
+    if w.ndim != 2 or w.shape[1] != pred.shape[1]:
+        return pred.new_tensor(0.0)
+    return (log_energy.exp() * w).sum() / w.sum().clamp_min(1.0)
+
+
+def shift_supervision_losses(
+    pred_shift_logits: torch.Tensor | None,
+    target_shift_frame: torch.Tensor | None,
+    min_frames: int,
+    max_frames: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if pred_shift_logits is None or target_shift_frame is None:
+        zero = pred_shift_logits.new_tensor(0.0) if pred_shift_logits is not None else torch.tensor(0.0)
+        return zero, zero
+    logits = pred_shift_logits
+    b, bins = int(logits.shape[0]), int(logits.shape[-1])
+    if bins <= 0:
+        zero = logits.new_tensor(0.0)
+        return zero, zero
+    lo, hi = int(min_frames), int(max_frames)
+    target = target_shift_frame.to(device=logits.device, dtype=torch.float32).view(b).clamp(float(lo), float(hi))
+    if bins == 1 or hi <= lo:
+        ce = logits.new_tensor(0.0)
+        pred_frame = logits.new_zeros(b) + float(lo)
+    else:
+        target_bin = torch.round((target - float(lo)) / float(hi - lo) * float(bins - 1)).long().clamp(0, bins - 1)
+        ce = F.cross_entropy(logits, target_bin)
+        grid = torch.linspace(float(lo), float(hi), steps=bins, device=logits.device, dtype=logits.dtype)
+        pred_frame = (torch.softmax(logits, dim=-1) * grid.unsqueeze(0)).sum(dim=-1)
+    reg = F.smooth_l1_loss(pred_frame, target.to(dtype=logits.dtype))
+    return ce, reg
+
+
+def zeroeeg_margin_loss(pred: torch.Tensor, target: torch.Tensor, zero_pred: torch.Tensor | None, margin: float = 0.02) -> torch.Tensor:
+    if zero_pred is None:
+        return pred.new_tensor(0.0)
+    pred_cos = F.cosine_similarity(pred, target, dim=-1).mean(dim=1)
+    zero_cos = F.cosine_similarity(zero_pred.detach(), target, dim=-1).mean(dim=1)
+    return F.relu(float(margin) - (pred_cos - zero_cos)).mean()
+
+
+def residual_variance_loss(pred_residual: torch.Tensor | None, residual_target: torch.Tensor | None) -> torch.Tensor:
+    if pred_residual is None or residual_target is None:
+        ref = pred_residual if pred_residual is not None else residual_target
+        return ref.new_tensor(0.0) if ref is not None else torch.tensor(0.0)
+    pred_std = pred_residual.reshape(-1, pred_residual.shape[-1]).std(dim=0)
+    target_std = residual_target.reshape(-1, residual_target.shape[-1]).std(dim=0).detach()
+    floor = 0.25 * target_std
+    return F.relu(floor - pred_std).mean()
+
+
+def pairwise_decorrelation_loss(pred: torch.Tensor, threshold: float = 0.85) -> torch.Tensor:
+    flat = pred.reshape(pred.shape[0], -1)
+    if flat.shape[0] < 2:
+        return pred.new_tensor(0.0)
+    flat = flat - flat.mean(dim=1, keepdim=True)
+    flat = F.normalize(flat, dim=1)
+    corr = flat @ flat.t()
+    mask = ~torch.eye(corr.shape[0], device=pred.device, dtype=torch.bool)
+    vals = corr[mask]
+    return F.relu(vals.abs() - float(threshold)).pow(2).mean()
 
 
 def peak_energy_loss(
@@ -397,9 +672,26 @@ def compute_losses(
     lambda_aligned_peak_energy: float = 0.0,
     lambda_lag: float = 0.0,
     lambda_semantic_token_ce: float = 0.0,
+    lambda_speech_token_ctc: float = 0.0,
+    lambda_trial_infonce: float = 0.0,
+    lambda_soft_shift: float = 0.0,
+    lambda_silence_suppression: float = 0.0,
+    lambda_pre_noise_suppression: float = 0.0,
+    lambda_shift_ce: float = 0.0,
+    lambda_shift_reg: float = 0.0,
+    lambda_zeroeeg_margin: float = 0.0,
+    lambda_residual_variance: float = 0.0,
+    lambda_pairwise_decorrelation: float = 0.0,
+    lambda_core_shape_corr: float = 0.0,
+    lambda_core_cos: float = 0.0,
+    lambda_core_softdtw: float = 0.0,
+    lambda_envelope_shape: float = 0.0,
+    lambda_duration: float = 0.0,
+    lambda_loudness: float = 0.0,
     hubert_seq: torch.Tensor | None = None,
     hubert_summary: torch.Tensor | None = None,
     residual_target: torch.Tensor | None = None,
+    zero_pred_seq: torch.Tensor | None = None,
     target_mean: torch.Tensor | None = None,
     target_std: torch.Tensor | None = None,
     target_decoder_scale: torch.Tensor | None = None,
@@ -408,9 +700,22 @@ def compute_losses(
     lag_confidence: torch.Tensor | None = None,
     semantic_token_targets: torch.Tensor | None = None,
     semantic_token_mask: torch.Tensor | None = None,
+    target_active_mask: torch.Tensor | None = None,
+    target_silence_mask: torch.Tensor | None = None,
+    target_pre_noise_mask: torch.Tensor | None = None,
+    shift_target_frame: torch.Tensor | None = None,
+    active_envelope: torch.Tensor | None = None,
+    active_duration_frames: torch.Tensor | None = None,
+    active_rms: torch.Tensor | None = None,
+    active_peak: torch.Tensor | None = None,
     supcon_temperature: float = 0.1,
     clip_temperature: float = 0.07,
     dtw_band: float = 0.2,
+    soft_shift_min_frames: int = -12,
+    soft_shift_max_frames: int = 62,
+    soft_shift_step_frames: int = 1,
+    soft_shift_temperature: float = 0.08,
+    temporal_elastic_softdtw_gamma: float = 0.08,
 ) -> dict[str, torch.Tensor]:
     # All supervision here is EEG-derived or keyed by the spoken phoneme `label`
     # (the content we want to decode). No subject-ID supervision exists.
@@ -430,6 +735,11 @@ def compute_losses(
     # Cross-modal alignment: EEG utterance embedding vs the audio-latent summary
     # (mean over time of the normalized EnCodec target). Audio side is frozen.
     clip_loss = clip_alignment(out["clip_embed"], target_seq.mean(dim=1), temperature=clip_temperature)
+    trial_infonce = (
+        clip_alignment(out["clip_embed"], target_seq.mean(dim=1), temperature=clip_temperature)
+        if lambda_trial_infonce > 0.0
+        else pred.new_tensor(0.0)
+    )
 
     # DTW-aligned reconstruction: invariant to cross-trial onset/rate jitter.
     dtw_loss = dtw_recon_loss(pred, target_seq, band=dtw_band) if lambda_dtw > 0.0 else pred.new_tensor(0.0)
@@ -497,7 +807,11 @@ def compute_losses(
         or lambda_aligned_raw_energy_corr > 0.0 or lambda_aligned_active_recon > 0.0 or lambda_aligned_peak_energy > 0.0
     ):
         target_energy, _ = target_energy_payload
-        active_mask = active_mask_from_energy(target_energy)
+        active_mask = (
+            target_active_mask.to(device=pred.device, dtype=pred.dtype)
+            if target_active_mask is not None and target_active_mask.shape[-1] == pred.shape[1]
+            else active_mask_from_energy(target_energy)
+        )
         if lambda_active_bce > 0.0 and "pred_active_logits" in out:
             active_bce = active_bce_loss(out["pred_active_logits"], active_mask)
         if lambda_raw_energy_corr > 0.0:
@@ -544,9 +858,92 @@ def compute_losses(
             lag_confidence,
         )
 
+    soft_shift = pred.new_tensor(0.0)
+    if lambda_soft_shift > 0.0:
+        shift_mask = (
+            target_active_mask.to(device=pred.device, dtype=pred.dtype)
+            if target_active_mask is not None and target_active_mask.shape[-1] == pred.shape[1]
+            else None
+        )
+        soft_shift = soft_shift_recon_loss(
+            pred,
+            target_seq,
+            min_frames=int(soft_shift_min_frames),
+            max_frames=int(soft_shift_max_frames),
+            step_frames=int(soft_shift_step_frames),
+            temperature=float(soft_shift_temperature),
+            mask=shift_mask,
+        )
+
+    silence_suppression = (
+        silence_energy_loss(pred, target_silence_mask, target_mean, target_std)
+        if lambda_silence_suppression > 0.0
+        else pred.new_tensor(0.0)
+    )
+    pre_noise_suppression = (
+        silence_energy_loss(pred, target_pre_noise_mask, target_mean, target_std)
+        if lambda_pre_noise_suppression > 0.0
+        else pred.new_tensor(0.0)
+    )
+
     semantic_token_ce = pred.new_tensor(0.0)
     if lambda_semantic_token_ce > 0.0 and semantic_token_targets is not None and "semantic_token_logits" in out:
         semantic_token_ce = semantic_token_ce_loss(out["semantic_token_logits"], semantic_token_targets, semantic_token_mask)
+    speech_token_ctc = pred.new_tensor(0.0)
+    if lambda_speech_token_ctc > 0.0 and semantic_token_targets is not None and "semantic_token_logits" in out:
+        speech_token_ctc = speech_token_ctc_loss(out["semantic_token_logits"], semantic_token_targets, semantic_token_mask)
+
+    shift_ce, shift_reg = shift_supervision_losses(
+        out.get("pred_shift_logits"),
+        shift_target_frame,
+        int(soft_shift_min_frames),
+        int(soft_shift_max_frames),
+    )
+    if lambda_shift_ce <= 0.0:
+        shift_ce = pred.new_tensor(0.0)
+    if lambda_shift_reg <= 0.0:
+        shift_reg = pred.new_tensor(0.0)
+    zero_margin = (
+        zeroeeg_margin_loss(pred, target_seq, zero_pred_seq)
+        if lambda_zeroeeg_margin > 0.0
+        else pred.new_tensor(0.0)
+    )
+    residual_variance = (
+        residual_variance_loss(pred_residual, residual_target)
+        if lambda_residual_variance > 0.0
+        else pred.new_tensor(0.0)
+    )
+    pairwise_decorrelation = (
+        pairwise_decorrelation_loss(pred)
+        if lambda_pairwise_decorrelation > 0.0
+        else pred.new_tensor(0.0)
+    )
+    temporal_losses = temporal_elastic_core_losses(
+        pred,
+        target_seq,
+        out,
+        target_mean,
+        target_std,
+        active_envelope=active_envelope,
+        active_duration_frames=active_duration_frames,
+        active_rms=active_rms,
+        active_peak=active_peak,
+        softdtw_gamma=temporal_elastic_softdtw_gamma,
+    ) if (
+        lambda_core_shape_corr > 0.0
+        or lambda_core_cos > 0.0
+        or lambda_core_softdtw > 0.0
+        or lambda_envelope_shape > 0.0
+        or lambda_duration > 0.0
+        or lambda_loudness > 0.0
+    ) else {
+        "core_shape_corr": pred.new_tensor(0.0),
+        "core_cos": pred.new_tensor(0.0),
+        "core_softdtw": pred.new_tensor(0.0),
+        "envelope_shape": pred.new_tensor(0.0),
+        "duration": pred.new_tensor(0.0),
+        "loudness": pred.new_tensor(0.0),
+    }
 
     total = (
         lambda_recon_cos * recon_cos
@@ -559,6 +956,7 @@ def compute_losses(
         + lambda_router_balance * router_balance
         + lambda_channel_balance * channel_balance
         + lambda_clip * clip_loss
+        + lambda_trial_infonce * trial_infonce
         + lambda_dtw * dtw_loss
         + lambda_energy_env * energy_env
         + lambda_multiscale_mel * multiscale_mel
@@ -582,6 +980,21 @@ def compute_losses(
         + lambda_aligned_peak_energy * aligned_peak_energy
         + lambda_lag * lag_loss
         + lambda_semantic_token_ce * semantic_token_ce
+        + lambda_speech_token_ctc * speech_token_ctc
+        + lambda_soft_shift * soft_shift
+        + lambda_silence_suppression * silence_suppression
+        + lambda_pre_noise_suppression * pre_noise_suppression
+        + lambda_shift_ce * shift_ce
+        + lambda_shift_reg * shift_reg
+        + lambda_zeroeeg_margin * zero_margin
+        + lambda_residual_variance * residual_variance
+        + lambda_pairwise_decorrelation * pairwise_decorrelation
+        + lambda_core_shape_corr * temporal_losses["core_shape_corr"]
+        + lambda_core_cos * temporal_losses["core_cos"]
+        + lambda_core_softdtw * temporal_losses["core_softdtw"]
+        + lambda_envelope_shape * temporal_losses["envelope_shape"]
+        + lambda_duration * temporal_losses["duration"]
+        + lambda_loudness * temporal_losses["loudness"]
     )
     return {
         "total": total,
@@ -592,6 +1005,7 @@ def compute_losses(
         "supcon": supcon.detach(),
         "proto_cos": proto_cos.detach(),
         "clip_loss": clip_loss.detach(),
+        "trial_infonce": trial_infonce.detach(),
         "dtw_loss": dtw_loss.detach(),
         "log_rms_loss": log_rms_loss.detach(),
         "std_match": std_match.detach(),
@@ -620,4 +1034,19 @@ def compute_losses(
         "aligned_peak_energy": aligned_peak_energy.detach(),
         "lag_loss": lag_loss.detach(),
         "semantic_token_ce": semantic_token_ce.detach(),
+        "speech_token_ctc": speech_token_ctc.detach(),
+        "soft_shift": soft_shift.detach(),
+        "silence_suppression": silence_suppression.detach(),
+        "pre_noise_suppression": pre_noise_suppression.detach(),
+        "shift_ce": shift_ce.detach(),
+        "shift_reg": shift_reg.detach(),
+        "zeroeeg_margin": zero_margin.detach(),
+        "residual_variance": residual_variance.detach(),
+        "pairwise_decorrelation": pairwise_decorrelation.detach(),
+        "core_shape_corr": temporal_losses["core_shape_corr"].detach(),
+        "core_cos": temporal_losses["core_cos"].detach(),
+        "core_softdtw": temporal_losses["core_softdtw"].detach(),
+        "envelope_shape": temporal_losses["envelope_shape"].detach(),
+        "duration_loss": temporal_losses["duration"].detach(),
+        "loudness_loss": temporal_losses["loudness"].detach(),
     }

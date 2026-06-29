@@ -63,6 +63,10 @@ class KaraOneConfig:
     # v3 alignment-aware semantic-token heads (0/absent => disabled).
     semantic_token_vocab: int = 0
     semantic_token_steps: int = 50
+    # v4.2 optional speech-core shift diagnostic head.
+    shift_bins: int = 0
+    # v5 active speech-core duration head (0/absent => disabled).
+    duration_bins: int = 0
 
 
 class KaraOneEEG2Codec(nn.Module):
@@ -169,6 +173,12 @@ class KaraOneEEG2Codec(nn.Module):
             nn.GELU(),
             nn.Linear(d, 1),
         )
+        self.log_peak_head = nn.Sequential(
+            nn.LayerNorm(cfg.content_dim + cfg.speaker_dim),
+            nn.Linear(cfg.content_dim + cfg.speaker_dim, d),
+            nn.GELU(),
+            nn.Linear(d, 1),
+        )
         self.frame_energy_head = nn.Sequential(
             nn.LayerNorm(cfg.content_dim + cfg.speaker_dim),
             nn.Linear(cfg.content_dim + cfg.speaker_dim, d),
@@ -233,6 +243,24 @@ class KaraOneEEG2Codec(nn.Module):
                 nn.Dropout(cfg.dropout),
                 nn.Linear(d, self.semantic_token_vocab),
             )
+        self.shift_bins = int(cfg.shift_bins)
+        if self.shift_bins > 0:
+            self.shift_head = nn.Sequential(
+                nn.LayerNorm(d + cfg.speaker_dim),
+                nn.Linear(d + cfg.speaker_dim, d),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(d, self.shift_bins),
+            )
+        self.duration_bins = int(cfg.duration_bins)
+        if self.duration_bins > 0:
+            self.duration_head = nn.Sequential(
+                nn.LayerNorm(d + cfg.speaker_dim),
+                nn.Linear(d + cfg.speaker_dim, d),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(d, self.duration_bins),
+            )
 
     def forward(
         self,
@@ -265,6 +293,7 @@ class KaraOneEEG2Codec(nn.Module):
         pred_latent = (expert_outputs * router_probs[:, None, :, None]).sum(dim=2)
 
         pred_log_rms = self.log_rms_head(torch.cat([content_seq.mean(dim=1), global_embed], dim=-1)).squeeze(-1)
+        pred_log_peak = self.log_peak_head(torch.cat([content_seq.mean(dim=1), global_embed], dim=-1)).squeeze(-1)
         pred_frame_log_energy = self.frame_energy_head(expert_input).squeeze(-1)
         pred_active_logits = self.active_head(expert_input).squeeze(-1)
         lag_params = self.lag_head(torch.cat([pooled, global_embed], dim=-1))
@@ -272,6 +301,7 @@ class KaraOneEEG2Codec(nn.Module):
         out = {
             "pred_latent": pred_latent,
             "pred_log_rms": pred_log_rms,
+            "pred_log_peak": pred_log_peak,
             "pred_frame_log_energy": pred_frame_log_energy,
             "pred_active_logits": pred_active_logits,
             "pred_lag_mu": lag_params[:, 0],
@@ -299,6 +329,18 @@ class KaraOneEEG2Codec(nn.Module):
                 content_seq.transpose(1, 2), size=self.semantic_token_steps, mode="linear", align_corners=False
             ).transpose(1, 2)
             out["semantic_token_logits"] = self.semantic_token_head(token_t)
+        if self.shift_bins > 0:
+            shift_logits = self.shift_head(torch.cat([pooled, global_embed], dim=-1))
+            shift_probs = torch.softmax(shift_logits, dim=-1)
+            grid = torch.linspace(-1.0, 1.0, steps=self.shift_bins, device=shift_logits.device, dtype=shift_logits.dtype)
+            out["pred_shift_logits"] = shift_logits
+            out["pred_shift_mu"] = (shift_probs * grid.unsqueeze(0)).sum(dim=-1)
+        if self.duration_bins > 0:
+            duration_logits = self.duration_head(torch.cat([pooled, global_embed], dim=-1))
+            duration_probs = torch.softmax(duration_logits, dim=-1)
+            grid = torch.arange(1, self.duration_bins + 1, device=duration_logits.device, dtype=duration_logits.dtype)
+            out["pred_duration_logits"] = duration_logits
+            out["pred_duration_mu"] = (duration_probs * grid.unsqueeze(0)).sum(dim=-1)
         out.update(channel_aux)  # channel_gate, channel_assign, channel_balance (if encoder MoE on)
         return out
 

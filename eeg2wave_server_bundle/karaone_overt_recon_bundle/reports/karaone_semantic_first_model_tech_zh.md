@@ -1,610 +1,609 @@
-# KaraOne 语义优先 EEG-to-Speech 当前模型技术说明
+# KaraOne 语义辅助 EEG-to-Speech 当前模型技术说明
 
-> 版本：2026-06-28j  
-> 范围：`karaone_overt_recon_bundle` 当前 v3 实现、50 epoch overt_like 最新运行结果、合成与 waveform 绘图结果。  
-> 当前主目标：EEG -> Speech Generation。所有语义 token、Mel、lag、active envelope 设计都应服务于最终重建语音，而不是 EEG 分类或单纯检索。
+> 版本：2026-06-29  
+> 范围：`karaone_overt_recon_bundle` 当前 v5 实现。  
+> 当前主目标：未知 EEG -> 对应语音生成。推理时默认只输入 EEG，不使用真实 prompt label、真实 onset、真实 insert frame。  
+> 当前主线：Temporal-Elastic Active Speech-Core EEG-to-Speech。
 
 ---
 
 ## 1. 当前结论
 
-当前代码已经从早期的 `EEG -> EnCodec/Flow direct latent`，推进到更合理的 v3 路线：
+当前系统已经从早期路线：
 
 ```text
-EEG
-  -> alignment-aware EEG representation
-  -> semantic token / HuBERT auxiliary supervision
-  -> lag-aware Mel residual reconstruction
-  -> envelope calibration
-  -> Griffin-Lim wav rendering
+EEG -> EnCodec latent / acoustic flow -> waveform
 ```
 
-但是，**最新 v3 结果仍然不能算好**。它比 v2 更可诊断，也显示出少量有效信号，但在最重要的 `subject_test` 跨被试重建上仍明显输给 `mean_target`：
+逐步修正到当前 v5 路线：
 
-- `subject_test pred_over_mean_cos_gain = -0.0336`
-- `subject_test pred_mel_corr_gain = -0.1136`
-- `subject_test pred_mcd_gain = -8.3200`
-- `subject_test pred_energy_corr_gain = -0.2737`
-- `subject_test pred_pairwise_corr_median = 0.9095`
-- `waveform pearson mean ≈ 0.0005`
+```text
+EEG full window
+  -> EEG temporal encoder
+  -> active speech-core Mel residual
+  -> active duration / loudness / center prediction
+  -> temporal-elastic active-core rendering
+  -> Griffin-Lim wav
+```
 
-这说明当前模型还没有稳定从 EEG 中恢复 trial-specific speech acoustic structure。它仍然偏向生成跨 trial 相似的模板化 Mel/wav，尤其是在 subject_test 上。
+最重要的变化是：**不再把完整 2 秒 Mel 逐帧硬回归作为主目标**。KaraOne 的音频大部分是静音或非核心发声区域，且 EEG 相对声音存在生理滞后，因此严格原始时间轴对齐会误伤模型。v5 主要判断：
+
+```text
+有声片段整体形状是否像
+active duration 是否合理
+active loudness / peak 是否合理
+best-shift envelope 是否接近
+trial retrieval 是否超过 mean / zeroeeg
+```
+
+而不是只看：
+
+```text
+原始 2 秒时间轴逐帧 Mel-Corr / MCD / active_env_corr
+```
+
+当前 implementation 状态：
+
+- v5 cache、训练、合成、shift-invariant evaluation、绘图脚本已接入。
+- v5 runner 已修复 `ALIGN_ARGS[@]: unbound variable` 问题。
+- v5 默认 **不启用 strict alignment objective**；如需 lag 诊断，可手动设置 `USE_ALIGNMENT=1`。
+- speaking/overt_like 与 thinking 已有独立一键脚本。
+- 旧 semantic-first、mel residual、env residual、v4.2.1 sh 入口已删除；根目录当前只保留 v5 runner。
 
 ---
 
-## 2. 最新运行记录
+## 2. 当前可运行入口
 
-最新完整运行：
-
-```text
-RUN_TAG=v3_overt_50ep_20260628_192421
-STAGES=overt_like
-DEVICE=mps
-SPLIT=subject_test
-LIMIT=-1
-```
-
-主目录：
+根目录当前保留的 shell 入口：
 
 ```text
-artifacts/outputs_karaone/karaone_baseline_overt_like_v3_overt_50ep_20260628_192421_melalign
+run_karaone_v5_full_50.sh
+run_karaone_v5_temporal_elastic.sh
+run_karaone_v5_speaking_full_50.sh
+run_karaone_v5_thinking_full_50.sh
 ```
 
-主要输出：
-
-```text
-checkpoints/best.pt
-metrics/history.csv
-metrics/test_metrics.json
-wav_subject_test_20260628_193653/synth_metrics.json
-wav_subject_test_20260628_193653/waveform_compare/
-v3_full_run_summary.txt
-```
-
-semantic-token 诊断模型：
-
-```text
-artifacts/outputs_karaone/karaone_semantic_tokens_baseline_overt_like_v3_overt_50ep_20260628_192421_semtok
-```
-
-注意：脚本设置为 `EPOCHS=50`，但 Mel 主模型触发 early stopping：
-
-```text
-[early-stop] no val selection improvement for 15 epochs (best=-0.0469); stopping at epoch 35
-```
-
-因此 acoustic Mel aligned 主模型实际跑到 epoch 35；semantic-token 诊断模型完整写出 50 个 epoch。
-
----
-
-## 3. 当前数据与 Cache
-
-### 3.1 原始训练样本
-
-`KaraOneTrialDataset` 仍以 `segments.csv` 和 subject NPZ 为 canonical source。
-
-当前 `overt_like` 分割：
-
-```text
-train=1352
-val=132
-test=132
-subject_test=297
-subjects=14
-labels=11
-```
-
-输入 EEG：
-
-```text
-eeg: [B, 62, 1280]
-eeg_valid_len: [B]
-stage_idx: [B]
-subject_idx: [B]
-label_idx: [B]
-```
-
-`eeg_valid_len` 当前用于：
-
-- EEG instance normalization 的有效区间统计；
-- Transformer/Conformer key padding mask；
-- utterance pooling mask；
-- diffusion/flow 或 regression encoder path；
-- stage-aware / alignment-aware 训练中的样本有效长度记录。
-
-### 3.2 Target Cache
-
-当前 v3 依赖以下 cache：
-
-```text
-artifacts/audio_targets/karaone_trial_hubert.npz
-artifacts/audio_targets/karaone_trial_mel.npz
-artifacts/audio_targets/karaone_trial_hubert_tokens_k64.npz
-artifacts/alignment/karaone_overt_like_alignment.npz
-```
-
-含义：
-
-- `karaone_trial_hubert.npz`: HuBERT continuous sequence，用于 semantic auxiliary 和 semantic-token k-means source。
-- `karaone_trial_hubert_tokens_k64.npz`: HuBERT sequence 的 K=64 k-means discrete semantic tokens。
-- `karaone_trial_mel.npz`: 当前 acoustic reconstruction 主 target。
-- `karaone_overt_like_alignment.npz`: 每个 overt trial 的 EEG-audio energy alignment diagnostic 和 lag target。
-
-alignment cache 中默认 lag 定义：
-
-```text
-lag_sec = eeg_energy_com_t - audio_energy_com_t
-positive lag = EEG response later than audio
-```
-
-训练不会移动 wav 或改写 target cache，只在 loss/eval/synthesis 中使用 lag。
-
----
-
-## 4. 当前 v3 模型结构
-
-### 4.1 总体结构
-
-```mermaid
-flowchart TD
-  A["KaraOne EEG NPZ<br/>stage=overt_like<br/>eeg_valid_len"] --> B["KaraOneTrialDataset"]
-  B --> C["EEG Encoder<br/>Conv spatial mixer + stage FiLM<br/>patch conv + Conformer"]
-  C --> D["Encoded EEG memory"]
-  D --> E["Mel residual head<br/>predict delta over global mean Mel"]
-  D --> F["Lag head<br/>pred_lag_mu / pred_lag_log_sigma"]
-  D --> G["Envelope heads<br/>frame_log_energy / active_logits / utterance RMS"]
-  D --> H["Semantic auxiliary<br/>HuBERT head / CTC / content CE"]
-  E --> I["mean Mel + residual delta"]
-  F --> J["lag correction"]
-  G --> K["envelope calibration"]
-  I --> J --> K --> L["Griffin-Lim renderer"]
-  L --> M["reconstructed wav<br/>pred / pred_scaled / pred_env_scaled"]
-```
-
-### 4.2 EEG Encoder
-
-默认 `baseline` 使用 `KaraOneEEG2Codec` + Conformer EEG encoder：
-
-```text
-EEG [B, 62, 1280]
-  -> optional instance norm over eeg_valid_len
-  -> channel dropout
-  -> Conv1d(62 -> d_model)
-  -> stage FiLM conditioning
-  -> temporal patch conv
-  -> fixed target_steps pooling
-  -> positional embedding
-  -> Conformer blocks
-  -> valid_len key padding mask
-  -> encoded memory [B, d_model, T]
-```
-
-当前 MPS 修复：
-
-- `encoder.py` 新增 MPS-safe `_temporal_pool_1d`。
-- 当 `adaptive_avg_pool1d` 在 MPS 上遇到 input length 不能整除 target length 时，自动改用 linear interpolation。
-- CPU/CUDA 路径仍保持原始 adaptive average pooling。
-
-### 4.3 Semantic Token 诊断模型
-
-训练入口：
-
-```text
-app/scripts/train_karaone_semantic_tokens.py
-```
-
-目标：
-
-```text
-EEG -> semantic_token_logits [B, T_sem, K=64]
-```
-
-loss 主要包含：
-
-```text
-semantic token CE
-HuBERT continuous regression / cosine
-prompt-token CTC
-content label CE
-EEG-HuBERT contrastive / retrieval objective
-```
-
-当前这个 semantic-token 模型只是诊断 EEG 是否含有语义信息，**尚未被接入 Mel decoder 作为条件输入**。这是当前 v3 的一个重要限制。
-
-### 4.4 Mel Aligned 主模型
-
-训练入口：
-
-```text
-app/scripts/train_karaone_recon.py
-```
-
-关键参数：
-
-```text
---target mel
---residual-mean
---alignment-objective
---alignment-cache artifacts/alignment/karaone_overt_like_alignment.npz
---selection alignment_composite
-```
-
-主预测形式：
-
-```text
-prediction = global_mean_mel + predicted_residual_delta
-```
-
-alignment-aware loss 中会使用 predicted/oracle lag 做 shift-tolerant 比较：
-
-```text
-pred_audio_aligned = shift(pred_mel, -lag_frames)
-loss(pred_audio_aligned, target_mel)
-```
-
-当前额外输出：
-
-```text
-pred_lag_mu
-pred_lag_log_sigma
-pred_frame_log_energy
-pred_active_logits
-pred_log_rms
-pred_hubert
-ctc_logits
-content_logits
-```
-
-### 4.5 Synthesis
-
-合成入口：
-
-```text
-app/scripts/synthesize_karaone.py
-```
-
-对 residual checkpoint 会自动识别：
-
-```text
-mode=residual_global_mean
-```
-
-v3 synthesis 默认做：
-
-```text
-raw_pred_mel
-  -> add global mean if residual checkpoint
-  -> inverse-lag correction using pred_lag_mu
-  -> optional envelope calibration
-  -> Griffin-Lim
-```
-
-当前输出 wav type：
-
-```text
-original
-oracle_griffinlim
-mean_latent
-zeroeeg
-zeroeeg_scaled
-pred_unaligned
-pred
-pred_scaled
-pred_env_scaled
-```
-
-默认推荐试听与画图版本：
-
-```text
-pred_env_scaled
-```
-
-但最新结果显示，`pred_env_scaled` 只是略改善 active voiced RMS/peak，仍没有解决 active envelope 对齐问题。
-
----
-
-## 5. 最新结果评估
-
-### 5.1 Semantic Token 诊断结果
-
-`subject_test`：
-
-```text
-pred_recon_cos              = 0.3758
-zeroeeg_recon_cos           = 0.3140
-mean_recon_cos              = 0.5348
-pred_over_zero_cos_gain     = +0.0619
-pred_over_mean_cos_gain     = -0.1590
-pred_pairwise_corr_median   = 0.7196
-
-pred label top1             = 0.1380
-zeroeeg label top1          = 0.0943
-mean label top1             = 0.0909
-pred label top5             = 0.3636
-zeroeeg label top5          = 0.3569
-mean label top5             = 0.3232
-```
-
-解读：
-
-- EEG semantic token 模型确实比 zeroeeg/mean 多学到一点 label-level 语义信号。
-- 但 trial retrieval 非常弱，且 HuBERT/token cosine 仍输给 mean target。
-- 这说明 EEG 中有弱内容信号，但还不足以稳定恢复 trial-specific semantic sequence。
-
-### 5.2 Mel Aligned 主模型结果
-
-`subject_test` 核心指标：
-
-```text
-pred_recon_cos              = 0.5946
-mean_recon_cos              = 0.6282
-pred_over_mean_cos_gain     = -0.0336
-
-pred_mel_corr               = 0.7067
-mean_mel_corr               = 0.8203
-pred_mel_corr_gain          = -0.1136
-
-pred_mcd                    = 32.4804
-mean_mcd                    = 24.1604
-pred_mcd_gain               = -8.3200
-
-pred_energy_corr            = 0.5665
-mean_energy_corr            = 0.8403
-pred_energy_corr_gain       = -0.2737
-
-pred_active_recon_mse       = 2.7045
-mean_active_recon_mse       = 3.1004
-pred_active_recon_mse_gain  = +0.3959
-
-pred_pairwise_corr_median   = 0.9095
-lag_mae_sec                 = 0.2077
-peak_error                  = 0.4041
-active_onset_error          = 0.3767
-```
-
-aligned 指标：
-
-```text
-aligned_pred_mel_corr_gain       = -0.1237
-aligned_pred_energy_corr_gain    = -0.1377
-aligned_active_recon_mse_gain    = +0.4615
-
-oracle_aligned_pred_active_energy_corr = 0.2836
-oracle_aligned_mean_active_energy_corr = 0.0744
-```
-
-解读：
-
-- lag-aware training 有一点作用：aligned energy corr 比 unaligned 高一些，active-frame MSE 也比 mean 好。
-- 但这远远不够。Mel corr、MCD、energy corr 这些主指标仍明显输给 mean。
-- `pairwise_corr_median=0.9095` 很高，说明不同 trial 的输出仍然过于相似，模板化问题没有解决。
-- oracle alignment 下 active energy corr 能超过 mean，说明“时序对齐确实是问题”，但当前 predicted lag/decoder 还不能把这个潜力稳定转化为重建质量。
-
-### 5.3 Rendered Wav 结果
-
-`subject_test` synthesis：
-
-```text
-lag_corrected = True
-
-pred_env_corr_mean                 = 0.1083
-pred_env_scaled_env_corr_mean      = 0.0817
-oracle_env_corr_mean               = 0.0952
-
-pred_active_env_corr_mean          = -0.0788
-pred_env_scaled_active_env_corr    = -0.0332
-oracle_active_env_corr_mean        = 0.9384
-
-pred_voiced_rms_over_orig_mean     = 0.3059
-pred_env_scaled_voiced_rms_mean    = 0.3706
-oracle_voiced_rms_over_orig_mean   = 0.9440
-
-pred_peak_over_orig_mean           = 0.2169
-pred_env_scaled_peak_over_orig     = 0.2356
-oracle_peak_over_orig_mean         = 0.9203
-```
-
-Waveform comparison manifest：
-
-```text
-n = 297
-pearson mean   ≈ 0.00055
-pearson median ≈ 0.00015
-rms_ratio mean ≈ 0.995
-rms_ratio median ≈ 0.831
-```
-
-解读：
-
-- waveform Pearson 接近 0 不意外，因为 Griffin-Lim 相位不可靠，不能单独作为主指标。
-- 但 active envelope 指标为负，说明生成 wav 在真正发声区域仍没有跟原始语音对上。
-- `pred_env_scaled` 把 voiced RMS 从 0.306 提到 0.371，把 peak ratio 从 0.217 提到 0.236，但仍离 oracle 的 0.94/0.92 很远。
-- 当前 wav 可以作为 debugging artifact，不应被认为已经有可接受的语音重建质量。
-
----
-
-## 6. 为什么当前结果不好
-
-### 6.1 Mean baseline 非常强
-
-KaraOne 是 prompted phoneme/word 小数据集，语音结构高度模板化。全局 mean Mel/semantic target 本身已经和 target 有很高相似度。模型如果不能恢复 trial-specific timing、energy 和 content，几乎必然输给 mean。
-
-### 6.2 当前 semantic token 没有真正进入 acoustic renderer
-
-v3 已经训练了 semantic-token diagnostic model，但 Mel aligned 主模型没有把 predicted semantic tokens 作为条件输入。结果是：
-
-```text
-semantic signal 被评估了，但没有显式控制 wav rendering。
-```
-
-这和老师最初说的“EEG token 与 waveform/speech token 对齐后生成 waveform”还有距离。当前更像两条并行诊断线，不是完整 token-conditioned generation pipeline。
-
-### 6.3 Lag head 有用但不够准
-
-`subject_test lag_mae_sec=0.2077`。对 KaraOne 的短 phoneme/word 语音来说，200 ms 误差已经很大。active onset error 和 peak error 也仍在 0.38-0.40 s 量级。
-
-这会直接导致：
-
-```text
-Mel frame 看起来有能量，但 active/voiced 区域错位；
-wav 里有声音，但不是在原始语音真正发声的位置。
-```
-
-### 6.4 模型仍然模板化
-
-`subject_test pred_pairwise_corr_median=0.9095` 太高。即使 RMS 变正常，输出也很可能只是“带一点变化的平均模板”，不是 trial-specific reconstruction。
-
-### 6.5 Cross-subject generalization 是主要失败点
-
-val/test 上有一些正 gain，但 subject_test 上主指标变负。这说明当前模型可能学到了一些 within-subject 或 dataset-level regularity，但没有学到足够稳健的跨被试 EEG-to-speech 映射。
-
----
-
-## 7. 当前代码入口
-
-完整 v3 一键运行：
+### 2.1 Speaking / overt_like
 
 ```bash
 cd /Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/karaone_overt_recon_bundle
 
 DEVICE=mps \
 EPOCHS=50 \
+SPLIT=subject_test \
+LIMIT=-1 \
+bash run_karaone_v5_speaking_full_50.sh
+```
+
+等价完整形式：
+
+```bash
+DEVICE=mps \
+EPOCHS=50 \
 STAGES=overt_like \
 SPLIT=subject_test \
 LIMIT=-1 \
-RUN_TAG=v3_overt_50ep_$(date +%Y%m%d_%H%M%S) \
-bash run_karaone_v3_full_50.sh
+RUN_TAG=v5_speaking_50ep_$(date +%Y%m%d_%H%M%S) \
+bash run_karaone_v5_full_50.sh
 ```
 
-只跑 Mel aligned 主线、跳过 semantic-token 诊断：
+### 2.2 Thinking
 
 ```bash
-RUN_SEMANTIC=0 DEVICE=mps EPOCHS=50 STAGES=overt_like SPLIT=subject_test LIMIT=-1 \
-bash run_karaone_v3_full_50.sh
+cd /Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/karaone_overt_recon_bundle
+
+DEVICE=mps \
+EPOCHS=50 \
+SPLIT=subject_test \
+LIMIT=-1 \
+bash run_karaone_v5_thinking_full_50.sh
 ```
 
-单独 phase：
+等价完整形式：
 
 ```bash
-bash run_karaone_v3_alignment.sh cache
-bash run_karaone_v3_alignment.sh semantic_tokens 50 baseline semtok_overt_v3
-bash run_karaone_v3_alignment.sh mel_aligned 50 baseline melalign_overt_v3
-CKPT=artifacts/outputs_karaone/<run>/checkpoints/best.pt bash run_karaone_v3_alignment.sh synth subject_test -1
+DEVICE=mps \
+EPOCHS=50 \
+STAGES=thinking \
+SPLIT=subject_test \
+LIMIT=-1 \
+RUN_TAG=v5_thinking_50ep_$(date +%Y%m%d_%H%M%S) \
+bash run_karaone_v5_full_50.sh
 ```
 
-重新画 waveform 对比：
+每次完整运行会执行：
 
-```bash
-/opt/anaconda3/bin/python app/scripts/plot_karaone_waveform_compare.py \
-  --wav-dir artifacts/outputs_karaone/<run>/wav_subject_test_<timestamp> \
-  --original-type original \
-  --reconstruction-type pred_env_scaled
+```text
+1. 构建/复用 HuBERT、Mel、alignment、semantic token、v5 active-core cache
+2. 训练 v5 temporal-elastic active-core model
+3. 加载 best.pt 合成 wav
+4. 生成 shift-invariant active-segment metrics
+5. 绘制 original vs pred_active_local_scaled waveform 图
 ```
 
 ---
 
-## 8. 下一步建议
+## 3. 数据与输入
 
-当前不建议继续优先加 MoE、Mamba、Flow 或更大 encoder。更应该先解决目标和条件链路：
+`KaraOneTrialDataset` 仍以 `segments.csv` 和 subject NPZ 为 canonical source。
 
-### 8.1 从 global mean residual 改成 label-conditioned prototype residual
-
-当前 mean baseline 太强，但 global mean 不区分 prompt label。下一步应加入：
+模型输入：
 
 ```text
-label_mean_mel[label] 或 semantic_cluster_mean_mel[token]
-prediction = label/semantic prototype + EEG residual
+eeg:           [B, 62, T_eeg]
+eeg_valid_len: [B]
+stage_idx:     [B]
+subject_idx:   [B]  # API 兼容；生成路径不使用 subject identity
+label_idx:     [B]  # 训练弱辅助/评估分组；final inference 不使用真实 label
 ```
 
-训练时可做两套：
-
-1. oracle label prototype：验证上限；
-2. predicted semantic/label prototype：模拟真实 EEG-only 推理。
-
-如果 oracle label prototype 都显著提升，说明当前主要瓶颈是 content conditioning 没接入 acoustic renderer。
-
-### 8.2 把 semantic-token model 接入 Mel decoder
-
-不要只训练 semantic-token diagnostic。应实现：
+当前 KaraOne NPZ 实际使用 **62 个 EEG 通道**。baseline encoder 的第一层会接收全部通道：
 
 ```text
-EEG encoder
-  -> semantic token logits
-  -> semantic token embedding / soft token embedding
-  -> Mel residual decoder cross-attention
+Conv1d(62 -> d_model)
 ```
 
-训练阶段：
-
-- teacher-forced GT semantic token embedding；
-- predicted soft token embedding；
-- scheduled sampling；
-- 对比两者差距。
-
-推理阶段：
+训练时：
 
 ```text
-EEG -> predicted semantic tokens -> semantic-conditioned Mel residual -> wav
+channel_dropout=0.15
+channel_reliability soft gate enabled in v5 runner
 ```
 
-### 8.3 Lag 不要完全从零学，先用 subject/label/stage prior
+含义：
 
-当前 lag MAE 约 0.21 s。下一步应评估：
-
-```text
-lag = global median
-lag = subject median
-lag = label median
-lag = model residual over median prior
-```
-
-模型预测 residual lag，而不是直接预测绝对 lag。对 subject_test 可用 train-subject/global prior，不能用 held-out subject label leakage。
-
-### 8.4 Selection score 要更严格惩罚模板化
-
-当前 best val score 仍为负，但 checkpoint 仍会被保存。下一轮 selection 建议更重视：
-
-```text
-subject_test-like validation split
-pairwise_corr penalty
-semantic retrieval gain
-active_env_corr gain
-Mel corr / MCD 同时超过 mean
-```
-
-如果 `pred_pairwise_corr_median > 0.85`，即使 val cosine gain 为正，也不应视为成功。
-
-### 8.5 先不要把 Flow 重新放回主线
-
-Flow/refiner 只有在 deterministic Mel 已经超过 mean baseline 后才值得做。当前 deterministic Mel 在 subject_test 上还没过 mean，因此 Flow 很可能只会生成更自然但不正确的声音。
+- 训练中会随机屏蔽部分通道作为正则。
+- 推理时 62 个通道都会进入模型。
+- channel reliability 是 soft weighting 和诊断，不是手工通道筛选。
+- 当前不应把“通道选择 benchmark”当主目标；核心目标仍是 EEG -> Speech Generation。
 
 ---
 
-## 9. 当前验收状态
+## 4. Cache 体系
 
-| 项目 | 状态 | 说明 |
-|---|---:|---|
-| v3 cache | 通过 | HuBERT、Mel、semantic token、alignment cache 已可自动生成 |
-| v3 training runner | 通过 | `run_karaone_v3_full_50.sh` 可完整串联 cache/train/synth/plot |
-| MPS training | 通过 | 修复 adaptive pooling 与 CTC loss MPS 限制 |
-| semantic token 诊断 | 部分通过 | 比 zeroeeg 有弱 label/retrieval 信号，但输给 mean |
-| Mel aligned reconstruction | 未通过 | subject_test Mel corr/MCD/energy 仍输给 mean |
-| rendered wav | 未通过 | active envelope 仍差，waveform pearson 约 0 |
-| 是否可作为当前最佳主线 | 只能作为诊断主线 | 不应宣称已经实现可用 EEG-to-speech reconstruction |
+### 4.1 原始音频/EEG 派生 cache
+
+```text
+artifacts/audio_targets/karaone_trial_hubert.npz
+artifacts/audio_targets/karaone_trial_mel.npz
+artifacts/alignment/karaone_overt_like_alignment.npz
+```
+
+用途：
+
+- `karaone_trial_hubert.npz`：HuBERT continuous semantic auxiliary target。
+- `karaone_trial_mel.npz`：full 2s Mel reference 与 Griffin-Lim oracle。
+- `karaone_overt_like_alignment.npz`：lag/onset/peak/com 诊断；v5 默认不把它作为主训练对齐约束。
+
+### 4.2 Train-only HuBERT semantic token cache
+
+```text
+artifacts/audio_targets/karaone_trial_hubert_tokens_k64_trainonly.npz
+```
+
+当前 metadata：
+
+```text
+codebook_split=train
+codebook_train_template_ids_shape=(1352,)
+K=64
+```
+
+用途：
+
+- semantic token CE / CTC 辅助监督。
+- semantic token edit distance 诊断。
+- 不作为 final generation bottleneck。
+- 不使用真实 label 生成语音。
+
+### 4.3 v5 Temporal-Elastic Active-Core Cache
+
+```text
+artifacts/audio_targets/karaone_temporal_elastic_core_v5.npz
+```
+
+构建脚本：
+
+```text
+app/scripts/build_karaone_temporal_elastic_core_cache.py
+```
+
+构建逻辑：
+
+```text
+ignore_initial_sec = 0.10
+smooth energy with 5 frames
+active threshold = max(median + 2*MAD, 0.20*peak)
+取 largest contiguous active component
+pre_margin_sec = 0.06
+post_margin_sec = 0.08
+active segment resample 到 K=64 帧
+真实 active_duration_frames 单独保存
+active_rms / active_peak 单独保存
+active_center_frame 单独保存
+```
+
+当前 cache 诊断：
+
+```text
+trials = 1913
+core_shape = [64, 80]
+full_target_steps = 122
+audio_active_frame_rate_mean ≈ 0.158
+duration_frames_median = 18
+duration_sec_median ≈ 0.288s
+active_center_median = 44 frames ≈ 0.704s
+```
+
+含义：KaraOne 真正有声核心区域很短，平均只有约 16% 的帧是 active。v5 因此不再让模型学习完整 2 秒静音画布，而是先学习 active speech-core。
 
 ---
 
-## 10. 简短判断
+## 5. 当前 v5 模型结构
 
-你的判断是对的：**当前结果确实不好**。  
+```mermaid
+flowchart LR
+  A["EEG full window<br/>62 channels"] --> B["EEG temporal encoder<br/>CNN/Transformer/Conformer backend"]
+  B --> C["Frame memory"]
+  B --> D["Pooled EEG embedding"]
 
-但 v3 的价值在于它把失败原因暴露得更清楚了：问题不再是“波形音量太低”或“Flow 没调好”，而是：
+  C --> E["Mel residual head<br/>pred_core_mel_delta"]
+  D --> F["Duration head<br/>pred_duration_logits / mu"]
+  D --> G["Loudness heads<br/>pred_log_rms / pred_log_peak"]
+  D --> H["Shift/center head<br/>pred_shift_logits"]
 
-```text
-跨被试 EEG semantic signal 弱
-+ speech/Mel timing lag 不稳定
-+ semantic token 没真正控制 acoustic rendering
-+ 输出仍然过度接近模板/mean
+  C --> I["Aux HuBERT head"]
+  C --> J["Aux semantic token head"]
+  D --> K["Weak label auxiliary head"]
+
+  E --> L["global active-core mean + residual"]
+  L --> M["Resample to predicted duration"]
+  F --> M
+  G --> N["Local loudness scaling"]
+  M --> N
+  H --> O["Insert into 2s silence canvas<br/>predicted center/shift"]
+  N --> O
+  O --> P["Griffin-Lim renderer"]
+  P --> Q["Reconstructed wav"]
 ```
 
-下一轮应从 `semantic-conditioned prototype/residual Mel` 入手，而不是继续加复杂生成器。
+### 5.1 主生成路径
+
+v5 主路径是：
+
+```text
+EEG -> active-core Mel residual -> duration/loudness/center -> waveform
+```
+
+其中：
+
+```text
+pred_core_mel = global_active_core_mean + eeg_delta_mel
+```
+
+`global_active_core_mean` 只是稳定训练的无 label baseline，不包含真实 prompt label 信息。最终是否成功必须看 EEG prediction 是否超过：
+
+```text
+zeroeeg
+mean active-core
+```
+
+### 5.2 辅助分支
+
+v5 仍保留：
+
+```text
+HuBERT continuous regression
+HuBERT semantic token CE / CTC
+trial-level EEG-audio InfoNCE
+weak label CE
+channel reliability diagnostics
+```
+
+但它们都是辅助和诊断，不是生成主路径。
+
+默认 label 权重：
+
+```text
+lambda_content_ce = 0.05
+lambda_prompt_ctc = 0.0
+lambda_label_supcon = 0.0
+```
+
+这避免模型退化成“先猜 KaraOne 11 类 label，再套模板”。
+
+---
+
+## 6. 当前训练目标
+
+v5 主训练参数由 runner 自动打开：
+
+```text
+--speech-core-objective
+--temporal-elastic-objective
+--active-loudness-objective
+--shift-supervision
+--anti-collapse-objective
+--local-loudness-synthesis
+--speech-token-ctc
+--trial-contrastive
+--selection temporal_elastic_generation_v5
+--channel-reliability
+```
+
+核心 loss：
+
+```text
+lambda_core_shape_corr = 1.0
+lambda_core_cos = 1.0
+lambda_core_softdtw = 0.8
+lambda_envelope_shape = 0.8
+lambda_duration = 0.6
+lambda_loudness = 0.5
+lambda_trial_infonce = 1.0
+lambda_zeroeeg_margin = 0.5
+lambda_semantic_token_ce = 0.5
+lambda_speech_token_ctc = 0.3
+lambda_hubert_aux = 0.5
+lambda_hubert_clip = 0.5
+lambda_content_ce = 0.05
+```
+
+解释：
+
+- `core_shape_corr`：比较 resampled active-core Mel 的整体形状。
+- `core_softdtw`：允许 active-core 内部局部速度差，不要求严格逐帧同步。
+- `envelope_shape`：比较有声片段能量包络形状。
+- `duration`：预测真实 active duration，避免生成段过长。
+- `loudness`：预测 active RMS 和 peak，避免只生成很小声或过响模板。
+- `trial_infonce`：EEG_i 应接近同 trial audio_i，远离 batch 内其他 trial。
+- `zeroeeg_margin`：要求真实 EEG 输出优于 zero EEG 输出。
+
+---
+
+## 7. Alignment 当前策略
+
+v5 重新定义时间问题：
+
+```text
+neural delay:
+  EEG 反应相对声音滞后，只做诊断/插入估计，不作为主质量惩罚。
+
+speech duration:
+  有声段多长，单独预测。
+
+active-core shape:
+  有声段内部形状是否像，允许整体平移和局部速度差。
+```
+
+因此 v5 runner 当前默认：
+
+```text
+USE_ALIGNMENT=0
+```
+
+也就是说，训练默认不启用旧式：
+
+```text
+--alignment-objective
+```
+
+如需额外 lag 诊断或 ablation，可手动运行：
+
+```bash
+USE_ALIGNMENT=1 bash run_karaone_v5_full_50.sh
+```
+
+但正式主结果建议仍以 `USE_ALIGNMENT=0` 为准，尤其是 thinking，因为 thinking 的 EEG 与 overt waveform 不应被逐帧同步约束。
+
+---
+
+## 8. Synthesis 输出
+
+v5 synthesis 默认输出：
+
+```text
+pred
+pred_scaled
+pred_env_scaled
+pred_env_local_scaled
+pred_active_local_scaled        # v5 推荐试听
+pred_active_local_unshifted
+zeroeeg
+zeroeeg_scaled
+zeroeeg_active_local_scaled
+mean_latent
+mean_active_core_scaled
+oracle_griffinlim
+oracle_shift_pred               # oracle diagnostic，不是 final result
+```
+
+推荐试听：
+
+```text
+pred_active_local_scaled
+```
+
+生成流程：
+
+```text
+pred_core_mel_norm
+ -> denormalize
+ -> resample to predicted active_duration_frames
+ -> local loudness scaling using pred_log_rms / pred_log_peak
+ -> insert into 2s silence canvas using predicted center/shift
+ -> Griffin-Lim
+```
+
+注意：
+
+- `oracle_shift_pred` 只用于诊断“如果插入位置正确，上限如何”。
+- final result 只能看 EEG-only predicted shift/duration/loudness 的输出。
+- 不使用真实 label 或真实 onset 参与最终生成。
+
+---
+
+## 9. Evaluation 与主指标
+
+v5 每次合成会写：
+
+```text
+synth_metrics.json
+shift_invariant_summary.json
+waveform_compare/
+```
+
+主看指标：
+
+```text
+active_segment_shape_corr_mean
+best_shift_full_env_corr_mean
+pred_active_local_scaled_active_duration_ratio_mean
+pred_active_local_scaled_voiced_rms_over_orig_mean
+pred_active_local_scaled_peak_over_orig_mean
+silence_leakage_wav_mean
+```
+
+训练 selection：
+
+```text
+temporal_elastic_generation_v5 =
+  active shape gain over zeroeeg / mean
+  softdtw gain over zeroeeg / mean
+  trial retrieval gain
+  semantic token edit gain
+  duration score
+  loudness score
+  - pairwise collapse penalty
+  - duration overstretch penalty
+  - silence leakage penalty
+```
+
+不应作为主判断的指标：
+
+```text
+raw 2s timeline Mel-Corr
+strict raw active_env_corr
+raw lag MAE
+label_top1 / label_top5
+oracle_label_proto metrics
+```
+
+原因：EEG 相对声音有滞后，且 thinking 与 overt waveform 更不应被严格 frame-level 对齐。
+
+---
+
+## 10. 当前验证状态
+
+已通过：
+
+```text
+python -m py_compile:
+  data.py
+  model.py
+  losses.py
+  eval.py
+  train_karaone_recon.py
+  synthesize_karaone.py
+  build_karaone_temporal_elastic_core_cache.py
+  eval_karaone_shift_invariant_wavs.py
+
+bash -n:
+  run_karaone_v5_temporal_elastic.sh
+  run_karaone_v5_full_50.sh
+  run_karaone_v5_speaking_full_50.sh
+  run_karaone_v5_thinking_full_50.sh
+```
+
+Smoke 测试已通过：
+
+```text
+v5 cache build
+1 epoch CPU train
+LIMIT=2 subject_test synthesis
+shift-invariant summary
+waveform compare plot
+```
+
+Smoke 只说明代码路径可运行，不代表模型性能。
+
+---
+
+## 11. 当前风险与下一步判断
+
+### 11.1 主要风险
+
+1. **Thinking EEG 与 overt waveform 并非同步生成过程**
+   - thinking 阶段应优先看 active-shape、retrieval、semantic token，而不是严格位置。
+
+2. **KaraOne 样本量小**
+   - 14 subjects、约 1913 trials。
+   - 不能指望大型 codec/flow decoder 从小数据中直接学完整 waveform generation。
+
+3. **Griffin-Lim renderer 上限有限**
+   - Mel 好不等于 waveform 听感好。
+   - 但 Griffin-Lim 离线、可控、可诊断，适合作为当前默认 renderer。
+
+4. **Active-core mean baseline 很强**
+   - 成功必须证明 EEG-specific prediction 超过 mean/zeroeeg。
+   - 只输出漂亮模板不是成功。
+
+5. **label 捷径风险**
+   - label 只能作为弱辅助和诊断。
+   - 如果 label_top1 高但 waveform 差，说明模型仍没有学到真正 EEG-to-audio generation。
+
+### 11.2 下一步分析顺序
+
+每次 50 epoch 训练后优先看：
+
+```text
+1. test_metrics.json / subject_test:
+   pred_over_zero_active_shape_gain
+   pred_over_mean_active_shape_gain
+   pred_over_zero_softdtw_gain
+   pred_over_mean_softdtw_gain
+   pred_pairwise_corr_median
+   pred_std_ratio_median
+   trial retrieval top-k
+
+2. synth_metrics.json:
+   active_segment_shape_corr_mean
+   best_shift_full_env_corr_mean
+   active_duration_ratio
+   voiced_rms_over_orig
+   peak_over_orig
+   silence_leakage
+
+3. waveform_compare:
+   只比较有声核心区域整体是否像
+   不按原始 2s 起点逐帧否定模型
+```
+
+如果 speaking 好于 thinking，这是合理现象；thinking 应被视为更难的 semantic/audio generation 条件。
+
+---
+
+## 12. 当前项目定位
+
+当前系统不是：
+
+```text
+EEG classification
+label decoding
+channel selection benchmark
+speech recognition
+```
+
+当前系统是：
+
+```text
+EEG -> waveform-derived representation -> reconstructed speech
+```
+
+v5 的设计重点是把 EEG-to-speech 的时间问题拆开处理：
+
+```text
+内容 / 有声核心形状 / 时长 / 响度 / 插入位置
+```
+
+而不是强迫 EEG 和 audio 在原始 2 秒时间轴上逐帧同步。
