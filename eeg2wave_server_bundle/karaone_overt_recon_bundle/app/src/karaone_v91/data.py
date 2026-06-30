@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import math
 from pathlib import Path
 from typing import Iterator
@@ -159,35 +158,44 @@ class KaraOneV91ClusterBalancedBatchSampler(Sampler[list[int]]):
     def __iter__(self) -> Iterator[list[int]]:
         rng = np.random.default_rng(self.seed)
         pools = {key: rng.permutation(values).tolist() for key, values in self.buckets.items()}
-        cycle = self.bucket_keys[:]
-        rng.shuffle(cycle)
-        produced = 0
-        total = len(self.dataset)
-        while produced < total:
+        remaining = sum(len(values) for values in pools.values())
+        while remaining > 0:
             batch: list[int] = []
             used_subjects: set[str] = set()
             used_clusters: set[tuple[int, int]] = set()
-            for key in itertools.cycle(cycle):
-                subject, eeg_cluster, speech_cluster = key
-                if not pools[key]:
-                    continue
+            keys = self.bucket_keys[:]
+            rng.shuffle(keys)
+
+            # First pass keeps batches diverse.  It must be finite; otherwise
+            # the final sparse buckets can deadlock when every remaining bucket
+            # violates the diversity preference.
+            for key in keys:
                 if len(batch) >= self.batch_size:
                     break
+                if not pools[key]:
+                    continue
+                subject, eeg_cluster, speech_cluster = key
                 cluster_pair = (int(eeg_cluster), int(speech_cluster))
                 if subject in used_subjects and cluster_pair in used_clusters and len(batch) < max(2, self.batch_size // 2):
                     continue
                 batch.append(int(pools[key].pop()))
+                remaining -= 1
                 used_subjects.add(subject)
                 used_clusters.add(cluster_pair)
-                if len(batch) >= self.batch_size:
+
+            # Relax the diversity constraint to drain the tail of the epoch.
+            while len(batch) < self.batch_size and remaining > 0:
+                nonempty = [key for key in self.bucket_keys if pools[key]]
+                if not nonempty:
                     break
-                if all(not values for values in pools.values()):
-                    break
+                key = nonempty[int(rng.integers(0, len(nonempty)))]
+                while pools[key] and len(batch) < self.batch_size:
+                    batch.append(int(pools[key].pop()))
+                    remaining -= 1
             if not batch:
                 break
             if self.drop_last and len(batch) < self.batch_size:
                 break
-            produced += len(batch)
             rng.shuffle(batch)
             yield batch
 

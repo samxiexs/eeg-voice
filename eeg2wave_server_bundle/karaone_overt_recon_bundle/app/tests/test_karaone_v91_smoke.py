@@ -14,7 +14,7 @@ if str(BUNDLE_DIR) not in sys.path:
     sys.path.insert(0, str(BUNDLE_DIR))
 
 from src.karaone_v91.data import KaraOneV91ClusterBalancedBatchSampler
-from src.karaone_v91.eval import write_channel_reports
+from src.karaone_v91.eval import compute_v91_metrics, write_channel_reports
 from src.karaone_v91.losses import compute_v91_alignment_losses, compute_v91_pretrain_losses, compute_v91_transport_losses
 from src.karaone_v91.model import KaraOneV91ClusteredChannelMoEFlow, KaraOneV91Config
 
@@ -154,9 +154,31 @@ def test_v91_cluster_sampler_and_channel_reports():
             assert Path(path).exists()
 
 
+def test_v91_metrics_numpy_scalar_compatibility():
+    rng = np.random.default_rng(11)
+    outputs = {
+        "pred": rng.normal(size=(5, 8)).astype(np.float32),
+        "zero": np.zeros((5, 8), dtype=np.float32),
+        "target": rng.normal(size=(5, 8)).astype(np.float32),
+        "prompt_logits": rng.normal(size=(5, 3)).astype(np.float32),
+        "subject_logits": rng.normal(size=(5, 4)).astype(np.float32),
+        "label_idx": np.asarray([0, 1, 2, 0, 1], dtype=np.int64),
+        "subject_idx": np.asarray([0, 1, 2, 3, 0], dtype=np.int64),
+        "labels": ["a", "b", "c", "a", "b"],
+        "subjects": ["s1", "s2", "s3", "s4", "s1"],
+        "eeg_cluster_id": np.asarray([0, 1, 0, 1, 2], dtype=np.int64),
+        "speech_cluster_id": np.asarray([0, 1, 2, 0, 1], dtype=np.int64),
+        "channel_gate": rng.random(size=(5, 62)).astype(np.float32),
+    }
+    metrics = compute_v91_metrics(outputs, train_bank={"target": outputs["target"], "labels": outputs["labels"], "subjects": outputs["subjects"], "speech_cluster_id": outputs["speech_cluster_id"]})
+    assert isinstance(metrics["same_label_cross_subject_gain"], float)
+    assert "v91_research_gate_pass" in metrics
+
+
 if __name__ == "__main__":
     test_v91_forward_alignment_backward()
     test_v91_pretrain_and_transport_backward()
     test_v91_forward_has_no_subject_input()
     test_v91_cluster_sampler_and_channel_reports()
+    test_v91_metrics_numpy_scalar_compatibility()
     print("KaraOne v9.1 smoke passed")

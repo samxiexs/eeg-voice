@@ -153,8 +153,8 @@ def same_label_cross_subject_gain(
             continue
         target_proto = bank_n[mask].mean(axis=0, keepdims=True)
         target_proto = normalize_rows(target_proto)
-        pred_score = float(pred_n[i : i + 1] @ target_proto.T)
-        mean_score = float(mean_n[i : i + 1] @ target_proto.T)
+        pred_score = float((pred_n[i : i + 1] @ target_proto.T).reshape(-1)[0])
+        mean_score = float((mean_n[i : i + 1] @ target_proto.T).reshape(-1)[0])
         gains.append(pred_score - mean_score)
     return float(np.mean(gains)) if gains else 0.0
 

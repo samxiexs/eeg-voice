@@ -12,6 +12,7 @@ if str(BUNDLE_DIR) not in sys.path:
 
 from src.karaone_v9.losses import compute_v9_alignment_losses, compute_v9_pretrain_losses, compute_v9_transport_losses
 from src.karaone_v9.model import KaraOneV9Config, KaraOneV9NeuralSemanticTransport
+from src.karaone_v9.eval import same_label_cross_subject_gain
 
 
 def _batch(batch_size: int = 4) -> dict[str, torch.Tensor]:
@@ -97,8 +98,21 @@ def test_v9_forward_has_no_subject_input():
     assert "speaker_id" not in params
 
 
+def test_v9_same_label_cross_subject_gain_returns_scalar():
+    pred = torch.randn(3, 5).numpy()
+    mean = torch.zeros(3, 5).numpy()
+    bank = torch.randn(4, 5).numpy()
+    labels = torch.tensor([0, 1, 0]).numpy().astype(str)
+    label_bank = torch.tensor([0, 0, 1, 1]).numpy().astype(str)
+    subjects = torch.tensor([0, 1, 2]).numpy().astype(str)
+    subject_bank = torch.tensor([3, 4, 3, 4]).numpy().astype(str)
+    value = same_label_cross_subject_gain(pred, mean, bank, labels, label_bank, subjects, subject_bank)
+    assert isinstance(value, float)
+
+
 if __name__ == "__main__":
     test_v9_forward_alignment_backward()
     test_v9_pretrain_and_transport_backward()
     test_v9_forward_has_no_subject_input()
+    test_v9_same_label_cross_subject_gain_returns_scalar()
     print("KaraOne v9 smoke passed")

@@ -81,7 +81,7 @@ def main() -> None:
     cluster_path = args.cluster_bank or cache_cfg.get("cluster_bank", "")
     cluster_bank = KaraOneV91ClusterBank(resolve_bundle_path(cluster_path, BUNDLE_DIR) if cluster_path else None)
     if not cluster_bank.available:
-        print("[v9.1] warning: cluster bank missing; cluster ids default to 0. Run scripts/build_karaone_v91_clusters.py first.")
+        print("[v9.1] warning: cluster bank missing; cluster ids default to 0. Run scripts/build_karaone_v91_clusters.py first.", flush=True)
     train_split = str(cfg["data"].get("train_split", "subject_train"))
     phase = "transport" if args.phase == "flow" else args.phase
     require_codec = phase == "transport"
@@ -103,7 +103,7 @@ def main() -> None:
         load_checkpoint(model, resolve_bundle_path(args.checkpoint, BUNDLE_DIR))
     if phase == "transport" and args.freeze_encoder:
         if not args.checkpoint:
-            print("[v9.1] warning: --freeze-encoder without --checkpoint is only meaningful for smoke tests.")
+            print("[v9.1] warning: --freeze-encoder without --checkpoint is only meaningful for smoke tests.", flush=True)
         freeze_except_transport(model)
 
     epochs = int(args.epochs or (transport_cfg.get("epochs", 10) if phase == "transport" else train_cfg.get("epochs", 20)))
@@ -259,13 +259,13 @@ def main() -> None:
             write_channel_reports(out_dir / "channel_reports" / "best_subject_val", val_outputs, channel_names)
             write_channel_reports(out_dir / "channel_reports" / "best_subject_test", test_outputs, channel_names)
         save_checkpoint(model, out_dir / "checkpoints" / "last.pt", cfg=cfg, epoch=epoch, metrics=row)
-        print(json.dumps(row, ensure_ascii=False, indent=2))
+        print(json.dumps(row, ensure_ascii=False, indent=2), flush=True)
         print_epoch_gate_summary(row)
         if patience > 0 and best_epoch > 0 and epoch - best_epoch >= patience:
             break
 
     write_json(out_dir / "metrics" / "history.json", {"history": history, "best_epoch": best_epoch, "best_score": best_score})
-    print(json.dumps({"out_dir": str(out_dir), "best_epoch": best_epoch, "best_score": best_score}, ensure_ascii=False, indent=2))
+    print(json.dumps({"out_dir": str(out_dir), "best_epoch": best_epoch, "best_score": best_score}, ensure_ascii=False, indent=2), flush=True)
 
 
 def make_model_config(cfg: dict, targets: KaraOneV9TargetBank, train_ds: KaraOneV91ClusteredDataset, *, eeg_len: int) -> KaraOneV91Config:
@@ -354,7 +354,7 @@ def print_run_header(
         payload["train_cluster_counts"] = dataset_cluster_counts(train_ds)
         payload["val_cluster_counts"] = dataset_cluster_counts(val_ds)
         payload["test_cluster_counts"] = dataset_cluster_counts(test_ds)
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
 
 
 def print_step_log(
@@ -401,7 +401,7 @@ def print_step_log(
             "valid_len_min": int(batch["eeg_valid_len"].min().detach().cpu()) if "eeg_valid_len" in batch else None,
             "valid_len_max": int(batch["eeg_valid_len"].max().detach().cpu()) if "eeg_valid_len" in batch else None,
         }
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
 
 
 def print_epoch_gate_summary(row: dict[str, Any]) -> None:
@@ -417,7 +417,7 @@ def print_epoch_gate_summary(row: dict[str, Any]) -> None:
         "subject_val_v91_research_gate_pass",
         "selection_score",
     ]
-    print(json.dumps({"event": "v91_epoch_gate_summary", **{key: row.get(key) for key in keys}}, ensure_ascii=False, indent=2))
+    print(json.dumps({"event": "v91_epoch_gate_summary", **{key: row.get(key) for key in keys}}, ensure_ascii=False, indent=2), flush=True)
 
 
 def dataset_cluster_counts(dataset: KaraOneV91ClusteredDataset) -> dict[str, dict[str, int]]:
@@ -494,7 +494,7 @@ def load_checkpoint(model: torch.nn.Module, path: Path) -> None:
     state = payload["model"] if isinstance(payload, dict) and "model" in payload else payload
     missing, unexpected = model.load_state_dict(state, strict=False)
     if missing or unexpected:
-        print(json.dumps({"checkpoint": str(path), "missing": missing, "unexpected": unexpected}, ensure_ascii=False, indent=2))
+        print(json.dumps({"checkpoint": str(path), "missing": missing, "unexpected": unexpected}, ensure_ascii=False, indent=2), flush=True)
 
 
 def freeze_except_transport(model: KaraOneV91ClusteredChannelMoEFlow) -> None:
