@@ -10,26 +10,28 @@ from typing import Any
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Write KaraOne v10 final run summary report.")
     parser.add_argument("--run-dir", required=True, type=Path)
+    parser.add_argument("--wav-dir", default=None, type=Path)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    out = write_summary(args.run_dir)
+    out = write_summary(args.run_dir, wav_dir=args.wav_dir)
     print(json.dumps({"report": str(out)}, ensure_ascii=False, indent=2))
 
 
-def write_summary(run_dir: str | Path) -> Path:
+def write_summary(run_dir: str | Path, *, wav_dir: str | Path | None = None) -> Path:
     run_dir = Path(run_dir).expanduser().resolve()
+    wav_dir = Path(wav_dir).expanduser().resolve() if wav_dir is not None else run_dir / "wavs"
     reports = run_dir / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     history_payload = read_json(run_dir / "metrics" / "history.json", default={})
     latest = read_json(run_dir / "metrics" / "latest_metrics.json", default={})
-    synth = read_json(run_dir / "wavs" / "v10_synthesis_summary.json", default={})
+    synth = read_json(wav_dir / "v10_synthesis_summary.json", default={})
     best_epoch = history_payload.get("best_epoch", "")
     best_score = history_payload.get("best_score", "")
     wav_pairs = int(synth.get("n_pairs", 0) or 0)
-    compare_manifest = run_dir / "wavs" / "waveform_compare" / "waveform_compare_manifest.csv"
+    compare_manifest = wav_dir / "waveform_compare" / "waveform_compare_manifest.csv"
     compare_count = count_csv_rows(compare_manifest)
     val_gate = bool(latest.get("subject_val_v10_research_gate_pass", False))
     test_gate = bool(latest.get("subject_test_v10_research_gate_pass", False))
@@ -68,6 +70,7 @@ def write_summary(run_dir: str | Path) -> Path:
             "",
             "## Artifacts",
             "",
+            f"- wav_dir: `{wav_dir}`",
             "- `figures/training_curves.png`",
             "- `figures/gate_metrics.png`",
             "- `figures/collapse_metrics.png`",
@@ -109,4 +112,3 @@ def fmt(value: Any) -> str:
 
 if __name__ == "__main__":
     main()
-
