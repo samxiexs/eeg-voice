@@ -354,7 +354,7 @@ VERBOSE=1 \
 LOG_INTERVAL=10 \
 DEVICE=mps \
 LOG_FILE=artifacts/outputs_karaone/logs/${RUN_TAG}.log \
-./run_karaone_v10.sh full thinking 50 ${RUN_TAG} \
+./shell_scripts/run_karaone_v10.sh full thinking 50 ${RUN_TAG} \
 > artifacts/outputs_karaone/logs/${RUN_TAG}.nohup.log 2>&1 &
 ```
 
@@ -373,7 +373,7 @@ VERBOSE=1 \
 LOG_INTERVAL=10 \
 DEVICE=cuda \
 LOG_FILE=artifacts/outputs_karaone/logs/${RUN_TAG}.log \
-./run_karaone_v10.sh full thinking 50 ${RUN_TAG} \
+./shell_scripts/run_karaone_v10.sh full thinking 50 ${RUN_TAG} \
 > artifacts/outputs_karaone/logs/${RUN_TAG}.nohup.log 2>&1 &
 ```
 
@@ -388,7 +388,7 @@ VERBOSE=1 \
 LOG_INTERVAL=10 \
 DEVICE=cuda \
 LOG_FILE=artifacts/outputs_karaone/logs/${RUN_TAG}.log \
-./run_karaone_v10.sh full stimulate 50 ${RUN_TAG} \
+./shell_scripts/run_karaone_v10.sh full stimulate 50 ${RUN_TAG} \
 > artifacts/outputs_karaone/logs/${RUN_TAG}.nohup.log 2>&1 &
 ```
 
@@ -448,4 +448,3 @@ v10 50 epoch thinking / stimulate 后：
 ```
 
 如果这些不成立，wav 仍只能是 diagnostic；如果成立，下一步才是训练/验证 codec-space flow 与真正 waveform decoder。
-

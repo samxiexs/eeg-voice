@@ -16,6 +16,7 @@ if str(BUNDLE_DIR) not in sys.path:
     sys.path.insert(0, str(BUNDLE_DIR))
 
 from scripts.train_karaone_v10 import make_model_config
+from scripts.organize_karaone_wavs import organize_wavs
 from src.audio_features import AudioFeatureConfig, load_codec_backend
 from src.karaone_v9.data import KaraOneV9TargetBank
 from src.karaone_v10.data import KaraOneV10ClusterBank, KaraOneV10ClusteredDataset
@@ -199,7 +200,9 @@ def synthesize(args: argparse.Namespace) -> dict[str, Any]:
     if not manifest_rows:
         raise RuntimeError("v10 synthesis wrote no wavs; check audio paths and split/stage selection")
 
-    write_manifest(out_dir / "listening_manifest.csv", manifest_rows)
+    manifest_path = out_dir / "listening_manifest.csv"
+    write_manifest(manifest_path, manifest_rows)
+    grouped_summary = organize_wavs(wav_dir=out_dir, manifest=manifest_path, mode="symlink")
     metrics = checkpoint.get("metrics", {}) if isinstance(checkpoint, dict) else {}
     gate_pass = bool(metrics.get("subject_val_v10_research_gate_pass", False)) and bool(metrics.get("subject_test_v10_research_gate_pass", False))
     if args.include_generated_codec and args.include_retrieval:
@@ -224,6 +227,7 @@ def synthesize(args: argparse.Namespace) -> dict[str, Any]:
         "claim": "retrieval wavs are diagnostic; generated_codec wavs are codec-flow attempts and are not evidence of EEG-to-waveform success unless transport is trained and semantic/prosody gates pass",
         "checkpoint_missing_keys": missing,
         "checkpoint_unexpected_keys": unexpected,
+        "grouped_wavs": grouped_summary,
         "rows": rows,
     }
     write_json(out_dir / "v10_synthesis_summary.json", summary)
@@ -402,4 +406,3 @@ def default_device() -> str:
 
 if __name__ == "__main__":
     main()
-

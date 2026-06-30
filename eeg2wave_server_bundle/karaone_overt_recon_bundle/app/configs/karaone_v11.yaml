@@ -1,0 +1,105 @@
+# KaraOne v11 tokenized neural speech generation pipeline.
+
+data:
+  root: ../data/karaone
+  stages: overt_like
+  subject_val: P02
+  subject_test: MM21
+  eeg_len: 1280
+  eeg_sample_rate: 256
+  train_split: subject_train
+
+cache:
+  semantic: ../artifacts/audio_targets/karaone_trial_hubert.npz
+  semantic_tokens: ../artifacts/audio_targets/karaone_trial_hubert_tokens_k64_trainonly.npz
+  codec: ../artifacts/audio_targets/karaone_trial_encodec_latents.npz
+  prosody: ../artifacts/audio_targets/karaone_temporal_elastic_core_v5.npz
+  cluster_bank: ../artifacts/audio_targets/karaone_v11_clusters_overt_like.npz
+  cluster_audit: ../artifacts/audio_targets/karaone_v11_cluster_audit_overt_like.json
+  v11_token_bank: ../artifacts/audio_targets/karaone_v11_tokens_overt_like.npz
+  v11_token_audit: ../artifacts/audio_targets/karaone_v11_token_audit_overt_like.json
+
+tokens:
+  eeg_tokenizer: hybrid
+  audio_tokenizer: hybrid
+  codec_token_vocab: 64
+  channel_clusters: 8
+  max_codec_fit_frames: 12000
+  kmeans_iters: 12
+
+clusters:
+  n_eeg_clusters: 12
+  n_speech_clusters: 12
+  n_cross_clusters: 16
+  cluster_balanced_sampler: true
+
+model:
+  n_channels_eeg: 62
+  patch_size: 32
+  patch_stride: 16
+  d_model: 128
+  num_layers: 4
+  num_heads: 4
+  dropout: 0.15
+  channel_dropout: 0.12
+  cond_dim: 32
+  channel_experts: 6
+  channel_top_k: 16
+  channel_desc_dim: 32
+  channel_embedding_dim: 16
+  channel_cluster_embedding_dim: 8
+  moe_temperature: 0.7
+  shared_dim: 128
+  domain_dim: 64
+  perceiver_queries: 50
+  aligner: hybrid
+
+train:
+  batch_size: 32
+  lr: 0.0003
+  weight_decay: 0.001
+  epochs: 50
+  seed: 11
+  grad_clip: 1.0
+  mask_ratio: 0.25
+  aligner: hybrid
+  lambda_token_ce: 0.7
+  lambda_token_ctc: 0.35
+  lambda_clip: 0.5
+  lambda_soft_ot: 0.5
+  lambda_perceiver: 0.25
+  lambda_prompt: 0.2
+  lambda_prompt_balanced: 0.2
+  lambda_prosody: 0.4
+  lambda_cross_subject: 0.35
+  lambda_same_label_pull: 0.10
+  lambda_zero_margin: 0.25
+  lambda_mean_margin: 0.20
+  lambda_pairwise_decorrelation: 0.05
+  lambda_subject_adv: 0.10
+  lambda_channel_balance: 0.05
+  lambda_gate_sparsity: 0.02
+  lambda_gate_entropy: 0.02
+  lambda_gate_consistency: 0.05
+  semantic_margin: 0.04
+  temperature: 0.07
+  early_stop_patience: 0
+
+codec:
+  epochs: 10
+  lr: 0.0002
+  weight_decay: 0.0005
+  lambda_codec_token_ce: 1.0
+  lambda_codec_latent: 0.5
+  lambda_semantic_guard: 0.2
+  lambda_boundary_continuity: 0.05
+
+synthesis:
+  sample_rate: 16000
+  duration_sec: 2.0
+  limit: 12
+  generated_steps: 0
+
+output:
+  root: ../artifacts/outputs_karaone
+  prefix: karaone_v11_tokenized_generation
