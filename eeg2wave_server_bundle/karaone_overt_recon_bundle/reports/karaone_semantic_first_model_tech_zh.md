@@ -17,6 +17,21 @@
 
 但 v9 不再把当前主线定义h v8 的：
 
+RUN_TAG=v9_thinking_full_$(date +%Y%m%d_%H%M%S)
+
+STAGES=thinking DEVICE=mps 
+bash run_karaone_v9_rebuild.sh audit 1 "$RUN_TAG"
+
+STAGES=thinking DEVICE=mps 
+bash run_karaone_v9_rebuild.sh pretrain 20 "$RUN_TAG"
+
+STAGES=thinking DEVICE=mps 
+bash run_karaone_v9_rebuild.sh align 50 "$RUN_TAG"
+
+CKPT="artifacts/outputs_karaone/karaone_v9_neural_semantic_transport_align_thinking_${RUN_TAG}/checkpoints/best.pt" 
+STAGES=thinking DEVICE=mps 
+bash run_karaone_v9_rebuild.sh transport 20 "$RUN_TAG"
+
 ```text
 EEG embedding -> train-bank retrieval -> active-core Mel prior -> Griffin-Lim wav
 ```
