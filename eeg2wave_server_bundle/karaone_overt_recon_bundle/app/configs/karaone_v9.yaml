@@ -1,0 +1,69 @@
+# KaraOne v9 canonical neural semantic transport pipeline.
+# The training path is EEG -> neural tokens -> speech semantic/prosody latent
+# -> conditional flow in codec latent space.  Old retrieval/Griffin-Lim paths are
+# diagnostics only.
+
+data:
+  root: ../data/karaone
+  stages: overt_like
+  subject_val: P02
+  subject_test: MM21
+  eeg_len: 1280
+  train_split: subject_train
+
+cache:
+  semantic: ../artifacts/audio_targets/karaone_trial_hubert.npz
+  semantic_tokens: ../artifacts/audio_targets/karaone_trial_hubert_tokens_k64_trainonly.npz
+  codec: ../artifacts/audio_targets/karaone_trial_encodec_latents.npz
+  prosody: ../artifacts/audio_targets/karaone_temporal_elastic_core_v5.npz
+  alignment: ../artifacts/alignment/karaone_overt_like_alignment.npz
+  canonical_manifest: ../artifacts/audio_targets/karaone_v9_canonical_manifest_overt_like.json
+
+model:
+  n_channels_eeg: 62
+  patch_size: 32
+  patch_stride: 16
+  d_model: 128
+  num_layers: 4
+  num_heads: 4
+  dropout: 0.15
+  channel_dropout: 0.10
+  cond_dim: 32
+  transport_layers: 2
+  transport_heads: 4
+
+train:
+  batch_size: 32
+  lr: 0.0003
+  weight_decay: 0.001
+  epochs: 20
+  seed: 7
+  grad_clip: 1.0
+  mask_ratio: 0.25
+  lambda_seq_ot: 1.0
+  lambda_seq_cos: 0.5
+  lambda_global_nce: 0.5
+  lambda_soft_nce: 0.5
+  lambda_semantic_token: 0.3
+  lambda_ctc: 0.2
+  lambda_prompt: 0.1
+  lambda_prosody: 0.5
+  lambda_subject_adv: 0.10
+  lambda_coral: 0.05
+  lambda_group_dro: 0.20
+  lambda_variance: 0.10
+  nce_temperature: 0.07
+  soft_target_temperature: 0.08
+  early_stop_patience: 8
+
+transport:
+  epochs: 10
+  lr: 0.0002
+  weight_decay: 0.0005
+  lambda_flow: 1.0
+  lambda_condition_semantic: 0.2
+  sample_steps: 16
+
+output:
+  root: ../artifacts/outputs_karaone
+  prefix: karaone_v9_neural_semantic_transport
