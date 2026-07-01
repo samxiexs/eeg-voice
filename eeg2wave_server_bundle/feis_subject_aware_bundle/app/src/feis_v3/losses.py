@@ -43,6 +43,18 @@ def _ctc_loss(ctc_logits: torch.Tensor, target: torch.Tensor, mask: torch.Tensor
     input_lengths = torch.full((ctc_logits.shape[0],), ctc_logits.shape[1], dtype=torch.long, device=ctc_logits.device)
     shifted_targets = target + 1
     flat = torch.cat([shifted_targets[i, : int(lengths[i].item())] for i in range(target.shape[0])], dim=0)
+    if ctc_logits.device.type == "mps":
+        # PyTorch does not currently implement aten::_ctc_loss on MPS.
+        # Keep the rest of the model on MPS, but compute this alignment term
+        # on CPU and move the scalar back so training can continue on Mac.
+        return F.ctc_loss(
+            log_probs.cpu(),
+            flat.cpu(),
+            input_lengths.cpu(),
+            lengths.cpu(),
+            blank=0,
+            zero_infinity=True,
+        ).to(ctc_logits.device)
     return F.ctc_loss(log_probs, flat, input_lengths, lengths, blank=0, zero_infinity=True)
 
 
@@ -92,6 +104,7 @@ def compute_feis_v3_losses(
     out: dict[str, torch.Tensor],
     batch: dict[str, Any],
     aligner: str = "hybrid",
+    train_phase: str = "joint",
     lambda_semantic_ce: float = 1.0,
     lambda_prompt_ce: float = 0.5,
     lambda_clip: float = 0.25,
@@ -109,6 +122,9 @@ def compute_feis_v3_losses(
     contrast_temperature: float = 0.07,
 ) -> dict[str, torch.Tensor]:
     aligner = str(aligner).lower()
+    train_phase = str(train_phase).lower()
+    if train_phase not in {"alignment", "codec", "joint"}:
+        raise ValueError(f"Unsupported FEIS v3 train_phase={train_phase!r}")
     semantic_target = batch["semantic_token_ids"].to(out["semantic_logits"].device)
     semantic_mask = batch["semantic_token_mask"].to(out["semantic_logits"].device).float()
     codec_target = batch["codec_token_ids"].to(out["codec_logits"].device)
@@ -149,27 +165,38 @@ def compute_feis_v3_losses(
         "repeat": aligner == "hybrid",
         "cross": aligner == "hybrid",
     }
-    total = codec_ce * lambda_codec_ce + prosody * lambda_prosody + variant_ce * lambda_variant
+    alignment_total = semantic_ce.new_tensor(0.0)
     if enabled["semantic_ce"]:
-        total = total + semantic_ce * lambda_semantic_ce
+        alignment_total = alignment_total + semantic_ce * lambda_semantic_ce
     if enabled["prompt_ce"]:
-        total = total + prompt_ce * lambda_prompt_ce
+        alignment_total = alignment_total + prompt_ce * lambda_prompt_ce
     if enabled["clip"]:
-        total = total + clip_loss * lambda_clip
+        alignment_total = alignment_total + clip_loss * lambda_clip
     if enabled["ctc"]:
-        total = total + ctc * lambda_ctc
+        alignment_total = alignment_total + ctc * lambda_ctc
     if enabled["ot"]:
-        total = total + ot * lambda_ot
+        alignment_total = alignment_total + ot * lambda_ot
     if enabled["perceiver"]:
-        total = total + perceiver * lambda_perceiver
+        alignment_total = alignment_total + perceiver * lambda_perceiver
     if enabled["repeat"]:
-        total = total + repeat * lambda_repeat
+        alignment_total = alignment_total + repeat * lambda_repeat
     if enabled["cross"]:
-        total = total + content_pull * lambda_cross_subject + voice_push * lambda_voice_push
-    total = total + subject_confusion * lambda_subject_confusion + moe * lambda_moe
+        alignment_total = alignment_total + content_pull * lambda_cross_subject + voice_push * lambda_voice_push
+
+    codec_generation_total = codec_ce * lambda_codec_ce + prosody * lambda_prosody + variant_ce * lambda_variant
+    regularizer_total = subject_confusion * lambda_subject_confusion + moe * lambda_moe
+    if train_phase == "alignment":
+        total = alignment_total + regularizer_total
+    elif train_phase == "codec":
+        total = codec_generation_total + regularizer_total
+    else:
+        total = alignment_total + codec_generation_total + regularizer_total
 
     return {
         "total": total,
+        "alignment_total": alignment_total.detach(),
+        "codec_generation_total": codec_generation_total.detach(),
+        "regularizer_total": regularizer_total.detach(),
         "semantic_token_ce": semantic_ce.detach(),
         "semantic_token_ctc": ctc.detach(),
         "prompt_ce": prompt_ce.detach(),

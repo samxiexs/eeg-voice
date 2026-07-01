@@ -67,6 +67,39 @@ def test_feis_v3_forward_backward_all_aligners():
         losses["total"].backward()
 
 
+def test_feis_v3_explicit_train_phases():
+    cfg = FEISV3ModelConfig(
+        d_model=32,
+        num_heads=4,
+        num_layers=1,
+        semantic_vocab=11,
+        codec_vocab=13,
+        semantic_steps=8,
+        codec_steps=8,
+        num_labels=4,
+        channel_clusters=2,
+        audio_variant_clusters=5,
+        channel_experts=2,
+        channel_top_k=4,
+        num_subjects_for_adversary=3,
+    )
+    for phase in ["alignment", "codec", "joint"]:
+        model = FEISV3TokenGenerator(cfg)
+        batch = _batch()
+        out = model(
+            batch["eeg"],
+            stage_idx=batch["stage_idx"],
+            eeg_valid_len=batch["eeg_valid_len"],
+            channel_cluster_id=batch["channel_cluster_id"],
+        )
+        losses = compute_feis_v3_losses(out, batch, aligner="hybrid", train_phase=phase)
+        assert torch.isfinite(losses["total"])
+        assert "alignment_total" in losses
+        assert "codec_generation_total" in losses
+        losses["total"].backward()
+
+
 if __name__ == "__main__":
     test_feis_v3_forward_backward_all_aligners()
+    test_feis_v3_explicit_train_phases()
     print("FEIS v3 smoke passed")

@@ -39,6 +39,7 @@ def main() -> None:
         f"- run_dir: `{run_dir}`",
         f"- stage: `{latest.get('stage')}`",
         f"- aligner: `{latest.get('aligner')}`",
+        f"- train phase: `{latest.get('train_phase', 'joint')}`",
         f"- generated artifact: `{latest.get('generated_artifact', 'generated_codec')}`",
         f"- retrieval output name: `{latest.get('retrieval_name', 'retrieval_diagnostic')}`",
         f"- retrieval diagnostic only: `{latest.get('retrieval_is_diagnostic_only')}`",

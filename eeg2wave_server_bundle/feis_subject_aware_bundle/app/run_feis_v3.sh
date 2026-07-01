@@ -12,6 +12,7 @@ TAG="${4:-$(date +%Y%m%d_%H%M%S)}"
 PYTHON="${PYTHON:-python3}"
 CONFIG="${CONFIG:-configs/feis_v3_tokenized_generation.yaml}"
 ALIGNER="${ALIGNER:-hybrid}"
+TRAIN_PHASE="${TRAIN_PHASE:-joint}"
 DEVICE="${DEVICE:-cpu}"
 SYNTH_SPLIT="${SYNTH_SPLIT:-subject_test}"
 SYNTH_LIMIT="${SYNTH_LIMIT:-3}"
@@ -31,9 +32,12 @@ RUN_DIR="$BUNDLE_DIR/../artifacts/outputs_feis/feis_v3_tokenized_generation_${ST
 
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$BUNDLE_DIR/../artifacts/matplotlib_cache}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/feis-cache}"
+if [ "$DEVICE" = "mps" ] || [ "$DEVICE" = "auto" ]; then
+  export PYTORCH_ENABLE_MPS_FALLBACK="${PYTORCH_ENABLE_MPS_FALLBACK:-1}"
+fi
 mkdir -p "$MPLCONFIGDIR" "$BUNDLE_DIR/../artifacts/outputs_feis/logs"
 
-echo "[config] mode=$MODE stage=$STAGE aligner=$ALIGNER epochs=$EPOCHS tag=$TAG device=$DEVICE"
+echo "[config] mode=$MODE stage=$STAGE aligner=$ALIGNER train_phase=$TRAIN_PHASE epochs=$EPOCHS tag=$TAG device=$DEVICE"
 echo "[run_dir] $RUN_DIR"
 
 echo "+ $PYTHON scripts/build_feis_v3_tokens.py --config $CONFIG --stage $STAGE"
@@ -53,6 +57,7 @@ TRAIN_CMD=(
   --epochs "$EPOCHS"
   --run-suffix "$TAG"
   --aligner "$ALIGNER"
+  --phase "$TRAIN_PHASE"
   --device "$DEVICE"
 )
 if [ -n "$MAX_STEPS" ]; then

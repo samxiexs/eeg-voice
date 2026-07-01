@@ -44,6 +44,7 @@ def parse_args():
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--run-suffix", default="v3")
     p.add_argument("--aligner", default=None, choices=["mlp", "clip", "ctc", "ot", "perceiver", "hybrid"])
+    p.add_argument("--phase", default="joint", choices=["alignment", "codec", "joint"])
     p.add_argument("--device", default=None)
     p.add_argument("--max-steps", type=int, default=None)
     p.add_argument("--batch-size", type=int, default=None)
@@ -155,12 +156,31 @@ def _selection_score(metrics: dict[str, Any]) -> float:
     )
 
 
+def _phase_selection_score(metrics: dict[str, Any], phase: str) -> float:
+    phase = str(phase).lower()
+    if phase == "alignment":
+        return (
+            4.0 * float(metrics.get("prompt_acc", 0.0) - metrics.get("prompt_chance", 0.0))
+            + 2.0 * float(metrics.get("semantic_token_top3_gain_over_prior", 0.0))
+            + float(metrics.get("token_retrieval_cross_subject_gain", 0.0))
+            - 0.1 * float(metrics.get("pred_pairwise_corr_median", 0.0))
+        )
+    if phase == "codec":
+        return (
+            4.0 * float(metrics.get("codec_token_top1", 0.0) - metrics.get("codec_token_chance", 0.0))
+            + 2.0 * float(metrics.get("codec_token_top3", 0.0))
+            + float(metrics.get("prompt_acc", 0.0) - metrics.get("prompt_chance", 0.0))
+        )
+    return _selection_score(metrics)
+
+
 def main() -> None:
     args = parse_args()
     cfg = load_simple_yaml(args.config)
     set_seed(int(cfg.get("train", {}).get("seed", 7)))
     stage = args.stage or str(cfg.get("data", {}).get("stage", "stimuli"))
     aligner = args.aligner or os.environ.get("ALIGNER") or str(cfg.get("train", {}).get("aligner", "hybrid"))
+    train_phase = str(args.phase).lower()
     device = args.device or os.environ.get("DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
     token_cfg = cfg.get("tokens", {})
     data_cfg = cfg.get("data", {})
@@ -242,7 +262,13 @@ def main() -> None:
     max_steps = args.max_steps if args.max_steps is not None else None
     channel_gate_snapshot: np.ndarray | None = None
     print(f"[data] stage={stage} train={len(train_ds)} repeat={len(repeat_ds)} subject_val={len(subject_val_ds)} subject_test={len(subject_test_ds)} resting={len(resting_ds)}")
-    print(f"[model] aligner={aligner} inputs=['eeg','stage_idx','eeg_valid_len','channel_cluster_id'] subject_id_forward=False")
+    phase_label = {
+        "alignment": "ALIGNMENT FIT",
+        "codec": "CODEC GENERATION FIT",
+        "joint": "JOINT ALIGNMENT+CODEC FIT",
+    }[train_phase]
+    print(f"[phase] {phase_label}")
+    print(f"[model] aligner={aligner} train_phase={train_phase} inputs=['eeg','stage_idx','eeg_valid_len','channel_cluster_id'] subject_id_forward=False")
     for epoch in range(epochs):
         model.train()
         agg: dict[str, float] = {}
@@ -258,7 +284,7 @@ def main() -> None:
             )
             if "channel_gate" in out and channel_gate_snapshot is None:
                 channel_gate_snapshot = out["channel_gate"].detach().cpu().numpy().mean(axis=0)
-            losses = compute_feis_v3_losses(out, batch, aligner=aligner, **loss_kwargs)
+            losses = compute_feis_v3_losses(out, batch, aligner=aligner, train_phase=train_phase, **loss_kwargs)
             opt.zero_grad(set_to_none=True)
             losses["total"].backward()
             clip_grad_norm_(model.parameters(), float(train_cfg.get("grad_clip", 1.0)))
@@ -282,12 +308,13 @@ def main() -> None:
             compute_controls=False,
             max_samples=args.eval_limit,
         )
-        score = _selection_score(subject_val_metrics)
+        score = _phase_selection_score(subject_val_metrics, train_phase)
         row = {"epoch": epoch, "train": train_metrics, "subject_val": subject_val_metrics, "selection_score": score}
         history.append(row)
         write_json(run_dir / "metrics" / "history.json", {"history": history})
         print(
             f"epoch {epoch:03d} total={train_metrics.get('total', 0.0):.3f} "
+            f"align={train_metrics.get('alignment_total', 0.0):.3f} codec_loss={train_metrics.get('codec_generation_total', 0.0):.3f} "
             f"prompt={train_metrics.get('prompt_acc', 0.0):.3f} sem3={train_metrics.get('semantic_top3', 0.0):.3f} "
             f"codec={train_metrics.get('codec_top1', 0.0):.3f} | val_prompt={subject_val_metrics['prompt_acc']:.3f} "
             f"val_codec={subject_val_metrics['codec_token_top1']:.3f} score={score:+.3f}"
@@ -297,6 +324,8 @@ def main() -> None:
             "model_config": vars(model_cfg),
             "stage": stage,
             "aligner": aligner,
+            "train_phase": train_phase,
+            "phase_label": phase_label,
             "token_cache": str(token_path),
             "cluster_cache": str(cluster_path),
             "run_dir": str(run_dir),
@@ -357,6 +386,8 @@ def main() -> None:
         "run_dir": str(run_dir),
         "stage": stage,
         "aligner": aligner,
+        "train_phase": train_phase,
+        "phase_label": phase_label,
         "best_checkpoint": str(best_path),
         "generated_artifact": "generated_codec",
         "retrieval_name": "retrieval_diagnostic",
