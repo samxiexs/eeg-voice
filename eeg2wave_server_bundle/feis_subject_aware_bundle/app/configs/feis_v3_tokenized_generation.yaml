@@ -1,0 +1,90 @@
+# FEIS v3 Tokenized Neural Speech Generation.
+# Subject metadata is allowed for dataset sampling/losses/audits, but never as a
+# model forward input.
+data:
+  root: ../data/feis
+  stage: stimuli
+  stages: [stimuli, thinking, speaking]
+  negative_stage: resting
+  include_anomalous: false
+  subject_val: "20"
+  subject_test: "21"
+  eeg_len: 1280
+  eeg_sample_rate: 256
+
+audio:
+  sample_rate: 16000
+  duration_sec: 1.0
+  normalize: rms
+  target_rms: 0.08
+  max_gain: 12.0
+
+tokens:
+  eeg_tokenizer: hybrid
+  audio_tokenizer: local_spectral_kmeans
+  codec_tokenizer: local_chunk_kmeans
+  cache: ../artifacts/audio_targets/feis_v3_tokens_{stage}.npz
+  audit: ../artifacts/audio_targets/feis_v3_token_audit_{stage}.json
+  cluster_cache: ../artifacts/audio_targets/feis_v3_clusters_{stage}.npz
+  cluster_audit: ../artifacts/audio_targets/feis_v3_cluster_audit_{stage}.json
+  semantic_vocab: 64
+  codec_vocab: 128
+  semantic_steps: 64
+  codec_steps: 64
+  semantic_dim: 32
+  channel_clusters: 4
+  audio_variant_clusters: 32
+  kmeans_iters: 8
+  max_fit_frames: 20000
+  max_fit_chunks: 20000
+  max_fit_eeg_rows: 4000
+
+model:
+  n_channels_eeg: 14
+  d_model: 160
+  num_heads: 4
+  num_layers: 2
+  ff_mult: 4
+  dropout: 0.15
+  channel_moe: true
+  channel_top_k: 6
+  channel_experts: 4
+  use_stage_token: true
+  use_subject_id_in_forward: false
+
+train:
+  aligner: hybrid
+  epochs: 50
+  batch_size: 64
+  lr: 0.0003
+  weight_decay: 0.001
+  grad_clip: 1.0
+  num_workers: 0
+  seed: 7
+
+loss:
+  lambda_semantic_ce: 1.0
+  lambda_prompt_ce: 0.5
+  lambda_clip: 0.25
+  lambda_ctc: 0.2
+  lambda_ot: 0.1
+  lambda_perceiver: 0.2
+  lambda_repeat: 0.1
+  lambda_cross_subject: 0.05
+  lambda_voice_push: 0.05
+  lambda_codec_ce: 1.0
+  lambda_prosody: 0.2
+  lambda_variant: 0.2
+  lambda_subject_confusion: 0.02
+  lambda_moe: 0.02
+  contrast_temperature: 0.07
+
+generation:
+  mode: codec_token
+  retrieval_is_diagnostic_only: true
+  generated_artifact: generated_codec
+  synth_split: subject_test
+  synth_limit: 3
+
+output:
+  root: ../artifacts/outputs_feis
