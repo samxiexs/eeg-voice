@@ -40,8 +40,15 @@ rest / clearing
 
 每条路线各有 1913 个 trial-level 样本，采用固定 subject-holdout：
 
+数据集还是不够，数据集合并，都行不通，用Text做引导，只用EEG调整语音语调
+
+EEG增强
+
+语音增强
+
 | split         |                                                                subject | 样本数 | 用途                            |
 | ------------- | ---------------------------------------------------------------------: | -----: | ------------------------------- |
+|               |                                                                        |        |                                 |
 | subject_train | MM05, MM08, MM09, MM10, MM11, MM12, MM14, MM15, MM16, MM18, MM19, MM20 |   1616 | 训练模型、拟合 train-only cache |
 | subject_val   |                                                                    P02 |    165 | 模型选择与 gate 评估            |
 | subject_test  |                                                                   MM21 |    132 | heldout 泛化评估                |
@@ -61,6 +68,7 @@ current clearing/resting
 ```
 
 为了避免图过于复杂，只展示四个代表通道 `FZ, C3, CZ, PZ`。这个图想表达的不是模型结果，而是原始数据事实：同一个 label 下，不同 trial 和不同 subject 的 EEG 形态本来就有明显差异。
+
 
 ![Same-label complete EEG trial comparison](/Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/karaone_overt_recon_bundle/reports/figures/karaone_current_examples/same_label_tiy_complete_trial_eeg_subject_comparison.png)
 
@@ -93,6 +101,30 @@ flowchart LR
     I --> E
     I --> F
 ```
+
+先做对比学习
+
+HuBERT 针对本数据集改进，简化
+
+EEG Channel：随机选几个来做，数据增强
+
+最后都不行再考虑Text
+
+时序问题：建立Window：SwinTF，Jepa
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 其中 Channel-MoE 的作用是让模型在 62 个 EEG 通道中学习 trial-level 的软通道选择，而不是假设所有通道都同等可靠。semantic alignment 负责判断 EEG 是否进入正确语音内容邻域(这一块我做的还不是很好)；time anchor 负责估计语音主体段的位置；codec-token generation 负责把表示转成可解码的声学 token。图我是直接用Codex画的，不符合流程图标准且有点乱，每一点总结起来说是：
 
@@ -159,58 +191,52 @@ flowchart LR
 
 ## 6. 结果：还在测试，目前跑出来最好的一组还是失败的
 
-本轮正式实验包含 `overt_like` 与 `thinking` 两条路线。subject_val 为 P02，subject_test 为 MM21。
+本轮正式实验包含 `overt_like` 与 `thinking` 两条路线。subject_val 为 P02，subject_test 为 MM21。这里把 Hybrid、Linear 和 MLP 三组实验合并展示。Hybrid 是目前主结果；Linear 是 `LayerNorm -> Linear` 的 direct CE baseline；MLP 是多层 projector baseline。
 
-| 路线       | split | semantic token top3 gain | token retrieval cross-subject gain | same-label cross-subject gain | prompt acc | active IoU | codec token acc | codec top3 acc |
-| ---------- | ----- | -----------------------: | ---------------------------------: | ----------------------------: | ---------: | ---------: | --------------: | -------------: |
-| overt-like | P02   |                   0.1977 |                            -0.1401 |                       -0.0378 |     0.1394 |     0.3755 |          0.2109 |         0.2745 |
-| overt-like | MM21  |                   0.1106 |                            -0.1358 |                       -0.0251 |     0.0682 |     0.2703 |          0.2917 |         0.3759 |
-| thinking   | P02   |                   0.2610 |                            -0.0532 |                       -0.0415 |     0.1091 |     0.3429 |          0.2284 |         0.2843 |
-| thinking   | MM21  |                   0.2405 |                            -0.0541 |                       -0.0386 |     0.0682 |     0.2386 |          0.2976 |         0.3831 |
+三者的区别主要在 EEG token 到 speech token/codec token 的 projector 复杂度和归纳偏置上。Hybrid 使用当前完整混合式 head，把 semantic alignment、time-anchor condition 和 codec generation 中的多种约束结合起来，目标是尽量保留 token-level、summary-level、timing-level 和 codec-level 信号，因此是当前主模型。Linear 则把关键 projector 简化为 `LayerNorm -> Linear`，基本不加入额外非线性表达能力，用来检验 EEG representation 本身是否已经足够支持直接 CE/token prediction；如果 Linear 也有信号，说明结果不完全依赖复杂 head。MLP 介于二者之间，使用多层非线性 projector，比 Linear 有更强表达能力，但没有 Hybrid 那么多结构化归纳偏置；它主要检验增加 projector capacity 是否能改善 semantic retrieval 或 codec token prediction。
 
-结果可以这样解读：
+| 实验   | 路线       | split | semantic token top3 gain | token retrieval cross-subject gain | same-label cross-subject gain | prompt acc | active IoU | codec token acc | codec top3 acc |
+| ------ | ---------- | ----- | -----------------------: | ---------------------------------: | ----------------------------: | ---------: | ---------: | --------------: | -------------: |
+| Hybrid | overt-like | P02   |                   0.1977 |                            -0.1401 |                       -0.0378 |     0.1394 |     0.3755 |          0.2109 |         0.2745 |
+| Hybrid | overt-like | MM21  |                   0.1106 |                            -0.1358 |                       -0.0251 |     0.0682 |     0.2703 |          0.2917 |         0.3759 |
+| Hybrid | thinking   | P02   |                   0.2610 |                            -0.0532 |                       -0.0415 |     0.1091 |     0.3429 |          0.2284 |         0.2843 |
+| Hybrid | thinking   | MM21  |                   0.2405 |                            -0.0541 |                       -0.0386 |     0.0682 |     0.2386 |          0.2976 |         0.3831 |
+| Linear | overt-like | P02   |                   0.2258 |                            -0.1461 |                       -0.0466 |     0.1030 |     0.3633 |          0.2046 |         0.2462 |
+| Linear | overt-like | MM21  |                   0.1253 |                            -0.1504 |                       -0.0215 |     0.1061 |     0.2571 |          0.2714 |         0.3337 |
+| Linear | thinking   | P02   |                   0.3080 |                            -0.0749 |                       -0.0389 |     0.0909 |     0.3346 |          0.2075 |         0.2529 |
+| Linear | thinking   | MM21  |                   0.2567 |                            -0.0697 |                       -0.0379 |     0.0909 |     0.2376 |          0.2745 |         0.3377 |
+| MLP    | overt-like | P02   |                   0.1126 |                             0.0120 |                       -0.0352 |     0.1091 |     0.3774 |          0.2075 |         0.2531 |
+| MLP    | overt-like | MM21  |                   0.0774 |                             0.0215 |                       -0.0359 |     0.0833 |     0.2606 |          0.2745 |         0.3343 |
+| MLP    | thinking   | P02   |                   0.3007 |                            -0.0531 |                       -0.0353 |     0.0848 |     0.3103 |          0.2075 |         0.2520 |
+| MLP    | thinking   | MM21  |                   0.2662 |                            -0.0495 |                       -0.0335 |     0.1061 |     0.2387 |          0.2745 |         0.3393 |
 
-semantic token top3 gain 在两条路线、两个 heldout split 上都是正的，说明局部 token 统计不是完全随机。codec token accuracy 在 subject_test 上约为 0.29 到 0.30，top3 accuracy 约为 0.38，说明 codec generation 链路能学到一些可解码结构。time-anchor 的 active IoU 也不是零，说明模型对 active speech timing 有一定信号。
+结果分析（以Hybrid为例）：
 
-* `semantic token top3 gain`
-  EEG 预测出的 HuBERT/k-means semantic token 是否比 prior 更接近真实语音 token。`top3` 表示真实 token 只要落在模型预测概率最高的前三个 token 里，就算局部预测有一定命中。现在四个结果都是正的：`overt_like` 在 P02/MM21 上是 `0.1977/0.1106`，`thinking` 是 `0.2610/0.2405`。这说明模型在局部 semantic token 统计上确实学到了一些信号。但只说明局部 token 分布有信息，无法证明完整语音内容已经跨被试解码成功。
-* `token retrieval cross-subject gain`
-  EEG 预测出的 token 分布能不能在训练音频库中找到同 label、不同 subject 的语音邻域。它比较的是“EEG 预测 token 表示”相对于“train speech mean prior”有没有增益。现在四个结果都是负的：`overt_like` 是 `-0.1401/-0.1358`，`thinking` 是 `-0.0532/-0.0541`。这说明虽然局部 token top3 有信号，但整体 token 分布还没有稳定地指向正确的跨被试 speech-token neighborhood，甚至不如平均 speech prior 好。
-* `same-label cross-subject gain`
-  EEG 预测出的 semantic summary 是否比 train speech mean prior 更接近“同 label、不同 subject”的真实语音 prototype。它是 summary-level 的跨被试语义对齐指标。现在四个结果也都是负的：`overt_like` 是 `-0.0378/-0.0251`，`thinking` 是 `-0.0415/-0.0386`。这说明 EEG-predicted semantic representation 还没有稳定超过平均语音先验，模型还没有证明它能从 heldout subject EEG 中解码出跨被试共享的 speech content。
-* `prompt acc`
-  这个指标是 11 类 prompt/label 分类准确率。KaraOne 有 11 个 prompt，所以随机水平大约是 `1/11 = 0.0909`。`overt_like` 在 P02 上是 `0.1394`，高于随机；但 MM21 上是 `0.0682`，低于随机。`thinking` 在 P02 上是 `0.1091`，略高于随机；MM21 上也是 `0.0682`，低于随机。这说明 prompt-level 信号在验证集 P02 上有一点，但在 subject_test MM21 上没有稳定泛化。简单来说就是分类都很难做好，就更不用说生成了。
-* `active IoU`
-  这个指标属于 time-anchor 层，衡量模型预测的 active speech window 和 reference audio 中提取出的真实 active speech window 有多少重叠。`overt_like` 是 `0.3755/0.2703`，`thinking` 是 `0.3429/0.2386`。这些值不算高，说明模型对语音主体段的位置和持续范围学到了一些信号。这支持 time-anchor 设计是有必要的，毕竟thinking 阶段，imagined EEG 和 overt/reference audio 本来就不严格同步。
-* `codec token acc`
-  这个指标看模型预测的 neural codec token id 和真实 audio codec token id 有多少位置完全一致。reference audio 会先通过 neural codec encoder 或 codec-token extraction 流程转换成 codec tokens，模型再根据 EEG-derived semantic representation 和 time-anchor representation 去预测这些 token。现在 `overt_like` 是 `0.2109/0.2917`，`thinking` 是 `0.2284/0.2976`。这说明 codec generation 链路能学到一些可解码的声学 token 结构，但它不能单独证明 EEG 语义内容被正确解码，因为 codec head 可能学到 speech prior。
-* `codec top3 acc`
-  这是 codec token acc 的宽松版本。只要真实 codec token 落在模型预测概率最高的前三个候选里，就算命中。`overt_like` 是 `0.2745/0.3759`，`thinking` 是 `0.2843/0.3831`。它高于 top1 codec token acc，说明模型预测的 codec token 分布有一定方向性，真实 token 经常落在候选前几位。但和 codec token acc 一样，它主要说明生成链路可训练，不能单独作为 EEG-to-Speech 成功证据。
+semantic token top3 gain 在大多数设置上都是正的，说明局部 token 统计不是完全随机；thinking 路线尤其稳定。Hybrid 的 codec top3 acc 仍然最高，subject_test 上约为 0.38；Linear/MLP 的 subject_test codec top3 acc 约为 0.33 到 0.34。time-anchor 的 active IoU 也不是零，说明模型对 active speech timing 有一定信号。
+
+* `semantic token top3 gain`计算 EEG 预测的 semantic token top3 命中率，再减去 prior 的 top3 命中率。看 EEG 是否提供了比 prior 更好的局部语音 token 信息。
+  top3_acc(EEG_pred, true_audio_tokens) - top3_acc(prior, true_audio_tokens)
+  EEG 预测出的 HuBERT/k-means semantic token 是否比 prior 更接近真实语音 token。`top3` 表示真实 token 只要落在模型预测概率最高的前三个 token 里，就算局部预测有一定命中。Hybrid、Linear 和 MLP 大多数 split 都是正的，尤其 thinking 路线的 top3 gain 比较稳定。这说明模型在局部 semantic token 统计上确实学到了一些信号。但只说明局部 token 分布有信息，无法证明完整语音内容已经跨被试解码成功。
+* `token retrieval cross-subject gain`用 EEG 预测的 token 表示去训练音频库里检索跨被试语音邻域，再减去 mean prior 的检索分数。看 EEG token 表示是否比平均先验更能找到正确跨被试语音。
+  retrieval_score(EEG_pred_tokens) - retrieval_score(mean_prior_tokens)
+  EEG 预测出的 token 分布能不能在训练音频库中找到同 label、不同 subject 的语音邻域。它比较的是“EEG 预测 token 表示”相对于“train speech mean prior”有没有增益。Hybrid 和 Linear 仍然全为负；MLP overt-like 在 P02/MM21 上小幅转正到 `0.0120/0.0215`，但幅度很小，而且没有带来 same-label gain 转正。因此这只能说 MLP 对 retrieval neighborhood 有一点改善迹象，不能解释为跨被试语义成功。
+* `same-label cross-subject gain`计算 EEG 预测的 semantic summary 与同 label 跨被试 speech prototype 的相似度，再减去 mean prior 的相似度。看 EEG 表示是否超过平均语音先验。
+  cos(EEG_pred_summary, same_label_proto) - cos(mean_prior, same_label_proto)
+  EEG 预测出的 semantic summary 是否比 train speech mean prior 更接近“同 label、不同 subject”的真实语音 prototype。它是 summary-level 的跨被试语义对齐指标。三组实验、两条路线、两个 heldout split 仍然全部为负。这说明 EEG-predicted semantic representation 还没有稳定超过平均语音先验，模型还没有证明它能从 heldout subject EEG 中解码出跨被试共享的 speech content。
+* `prompt acc`11 类 prompt 分类准确率，随机水平约 1/11 = 0.0909。
+  correct_prompt_predictions / total_samples
+  这个指标是 11 类 prompt/label 分类准确率。KaraOne 有 11 个 prompt，所以随机水平大约是 `1/11 = 0.0909`。三组实验基本都在随机水平附近波动，Hybrid overt-like P02 最高为 `0.1394`，但 Hybrid 在 MM21 上只有 `0.0682`。这说明 prompt-level 信号没有稳定跨被试泛化。简单来说就是分类都很难做好，就更不用说生成了。
+* `active IoU`预测 active speech mask 和真实 active speech mask 的交并比，看模型是否预测对语音主体段位置。
+  intersection(pred_mask, true_mask) / union(pred_mask, true_mask)
+  这个指标属于 time-anchor 层，衡量模型预测的 active speech window 和 reference audio 中提取出的真实 active speech window 有多少重叠。三组实验的 P02 大约在 `0.31-0.38`，MM21 大约在 `0.24-0.27`。这些值不算高，但不是零，说明模型对语音主体段的位置和持续范围学到了一些信号。这支持 time-anchor 设计是有必要的，毕竟 thinking 阶段，imagined EEG 和 overt/reference audio 本来就不严格同步。
+* `codec token acc`预测 codec token 的 top1 准确率，看生成的 codec token 是否和真实音频 token 一致。
+  argmax(pred_codec_logits) == true_codec_token
+  这个指标看模型预测的 neural codec token id 和真实 audio codec token id 有多少位置完全一致。reference audio 会先通过 neural codec encoder 或 codec-token extraction 流程转换成 codec tokens，模型再根据 EEG-derived semantic representation 和 time-anchor representation 去预测这些 token。Hybrid 在 MM21 上约 `0.29-0.30`，Linear/MLP 在 MM21 上约 `0.27`。这说明 codec generation 链路能学到一些可解码的声学 token 结构，但它不能单独证明 EEG 语义内容被正确解码，因为 codec head 可能学到 speech prior。
+* `codec top3 acc`真实 codec token 是否落在预测概率最高前三个 token 里，看 codec 生成候选是否接近真实语音。
+  true_codec_token in top3(pred_codec_logits)
+  这是 codec token acc 的宽松版本。只要真实 codec token 落在模型预测概率最高的前三个候选里，就算命中。Hybrid 在 MM21 上约 `0.38`，Linear/MLP 在 MM21 上约 `0.33-0.34`。它高于 top1 codec token acc，说明模型预测的 codec token 分布有一定方向性，真实 token 经常落在候选前几位。但和 codec token acc 一样，它主要说明生成链路可训练，不能单独作为 EEG-to-Speech 成功证据。
 * 综合来看
-  当前比较积极的结果是：`semantic token top3 gain` 全部为正，说明局部语义 token 有弱信号；`active IoU` 大于零，说明模型对 speech timing 有一定捕捉；`codec token acc/top3 acc` 也不低，说明 codec generation 链路可以生成一些可解码结构。但是最关键的两个跨被试语义指标仍然为负：`same-label cross-subject gain < 0`，`token retrieval cross-subject gain < 0`。这说明 EEG-predicted semantic representation 还没有稳定超过 train speech mean prior，也不能在无真实 label 约束下稳定检索到正确的跨被试语音邻域。
-
-指标构建：结合阅读的相关文献构建的
-
-1 semantic token top3 gain：计算 EEG 预测的 semantic token top3 命中率，再减去 prior 的 top3 命中率。看 EEG 是否提供了比 prior 更好的局部语音 token 信息。
-top3_acc(EEG_pred, true_audio_tokens) - top3_acc(prior, true_audio_tokens)
-
-2 token retrieval cross-subject gain：用 EEG 预测的 token 表示去训练音频库里检索跨被试语音邻域，再减去 mean prior 的检索分数。看 EEG token 表示是否比平均先验更能找到正确跨被试语音。
-retrieval_score(EEG_pred_tokens) - retrieval_score(mean_prior_tokens)
-
-3 same-label cross-subject gain：计算 EEG 预测的 semantic summary 与同 label 跨被试 speech prototype 的相似度，再减去 mean prior 的相似度。看 EEG 表示是否超过平均语音先验。
-cos(EEG_pred_summary, same_label_proto) - cos(mean_prior, same_label_proto)
-
-4 prompt acc：11 类 prompt 分类准确率，随机水平约 1/11 = 0.0909。
-correct_prompt_predictions / total_samples
-
-5 active IoU：预测 active speech mask 和真实 active speech mask 的交并比，看模型是否预测对语音主体段位置。
-intersection(pred_mask, true_mask) / union(pred_mask, true_mask)
-
-6 codec token acc：预测 codec token 的 top1 准确率，看生成的 codec token 是否和真实音频 token 一致。
-argmax(pred_codec_logits) == true_codec_token
-
-7 codec top3 acc：真实 codec token 是否落在预测概率最高前三个 token 里，看 codec 生成候选是否接近真实语音。
-true_codec_token in top3(pred_codec_logits)
+  当前比较积极的结果是：三组实验都能看到 `semantic token top3 gain`、`active IoU`、`codec token acc/top3 acc` 这些弱信号；Hybrid 的 codec 指标最好，Linear 的 thinking semantic top3 gain 较强，MLP overt-like 的 token retrieval cross-subject gain 小幅转正。但是最关键的 `same-label cross-subject gain` 仍然全部为负，说明 EEG-predicted semantic representation 还没有稳定超过 train speech mean prior，也不能在无真实 label 约束下稳定检索到正确的跨被试语音邻域。
 
 ---
 
