@@ -89,7 +89,10 @@ def main() -> None:
     train_ds = KaraOneV12Dataset(root, targets, str(cfg["data"].get("train_split", "subject_train")), cluster_bank=cluster_bank, token_bank=token_bank, time_anchor_bank=time_bank, stages=stages, subject_val=subject_val, subject_test=subject_test, eeg_len=eeg_len, require_codec=args.phase == "codec")
     val_ds = KaraOneV12Dataset(root, targets, "subject_val", cluster_bank=cluster_bank, token_bank=token_bank, time_anchor_bank=time_bank, stages=stages, subject_val=subject_val, subject_test=subject_test, eeg_len=eeg_len)
     test_ds = KaraOneV12Dataset(root, targets, "subject_test", cluster_bank=cluster_bank, token_bank=token_bank, time_anchor_bank=time_bank, stages=stages, subject_val=subject_val, subject_test=subject_test, eeg_len=eeg_len)
-    model = KaraOneV12TokenGenerator(make_model_config(cfg, targets, train_ds, token_bank, time_bank, eeg_len=eeg_len, stages=stages), codec_codebook=torch.from_numpy(token_bank.codec_codebook)).to(device)
+    aligner = str(args.aligner or os.environ.get("ALIGNER") or train_cfg.get("aligner", cfg.get("model", {}).get("aligner", "hybrid"))).lower()
+    model_cfg = make_model_config(cfg, targets, train_ds, token_bank, time_bank, eeg_len=eeg_len, stages=stages)
+    model_cfg.aligner = aligner
+    model = KaraOneV12TokenGenerator(model_cfg, codec_codebook=torch.from_numpy(token_bank.codec_codebook)).to(device)
     if args.checkpoint:
         load_checkpoint(model, resolve_bundle_path(args.checkpoint, BUNDLE_DIR))
     if args.phase == "codec" and args.freeze_encoder:
@@ -105,7 +108,6 @@ def main() -> None:
     loader = make_loader(train_ds, batch_size=batch_size, cfg=cfg)
     lr, weight_decay = resolve_optim(args.phase, train_cfg, time_cfg, codec_cfg)
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
-    aligner = str(args.aligner or os.environ.get("ALIGNER") or train_cfg.get("aligner", cfg.get("model", {}).get("aligner", "hybrid"))).lower()
 
     suffix = args.run_suffix or f"v12_{args.phase}_{aligner}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     stage_tag = "_".join(stages)
@@ -310,12 +312,13 @@ def save_checkpoint(model: torch.nn.Module, path: Path, *, cfg: dict, epoch: int
     torch.save({"model": model.state_dict(), "config": cfg, "epoch": epoch, "metrics": metrics, "aligner": aligner, "model_kind": "karaone_v12_time_aware_tokenized_generation"}, path)
 
 
-def load_checkpoint(model: torch.nn.Module, path: Path) -> None:
+def load_checkpoint(model: torch.nn.Module, path: Path) -> Any:
     payload = torch.load(path, map_location="cpu", weights_only=False)
     state = payload["model"] if isinstance(payload, dict) and "model" in payload else payload
     missing, unexpected = model.load_state_dict(state, strict=False)
     if missing or unexpected:
         print(json.dumps({"checkpoint": str(path), "missing": missing, "unexpected": unexpected}, ensure_ascii=False, indent=2), flush=True)
+    return payload
 
 
 def freeze_except_time(model: KaraOneV12TokenGenerator) -> None:

@@ -71,7 +71,8 @@ def test_v12_forward_backward() -> None:
     pretrain = compute_v12_pretrain_losses(out, batch)
     assert torch.isfinite(pretrain["total"])
     pretrain["total"].backward(retain_graph=True)
-    for aligner in ["mlp", "clip", "ctc", "ot", "perceiver", "hybrid"]:
+    for aligner in ["linear", "mlp", "clip", "ctc", "ot", "perceiver", "hybrid"]:
+        model.cfg.aligner = aligner
         model.zero_grad(set_to_none=True)
         out = model(batch["eeg"], batch["stage_idx"], batch["eeg_valid_len"], channel_cluster_id=batch["channel_cluster_id"])
         losses = compute_v12_alignment_losses(out, batch, aligner=aligner)

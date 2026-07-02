@@ -245,7 +245,7 @@ def _collapse_repeats(row: torch.Tensor) -> torch.Tensor:
 
 
 def _aligner_weights(aligner: str) -> dict[str, float]:
-    if aligner == "mlp":
+    if aligner in {"linear", "mlp"}:
         return {"token_ce": 1.0, "token_ctc": 0.0, "clip": 0.0, "ot": 0.0, "perceiver": 0.0}
     if aligner == "clip":
         return {"token_ce": 0.3, "token_ctc": 0.0, "clip": 1.0, "ot": 0.0, "perceiver": 0.0}

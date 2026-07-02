@@ -193,6 +193,9 @@ class KaraOneV11TokenGenerator(nn.Module):
         self.semantic_token_head = nn.Sequential(nn.LayerNorm(cfg.d_model), nn.Linear(cfg.d_model, cfg.semantic_token_vocab))
         self.semantic_embed_head = nn.Sequential(nn.LayerNorm(cfg.d_model), nn.Linear(cfg.d_model, cfg.semantic_dim))
         self.semantic_summary_head = nn.Sequential(nn.LayerNorm(cfg.d_model), nn.Linear(cfg.d_model, cfg.semantic_dim))
+        self.mlp_semantic_token_head = self._mlp_head(cfg.d_model, cfg.semantic_token_vocab)
+        self.mlp_semantic_embed_head = self._mlp_head(cfg.d_model, cfg.semantic_dim)
+        self.mlp_semantic_summary_head = self._mlp_head(cfg.d_model, cfg.semantic_dim)
         self.codec_token_head = nn.Sequential(nn.LayerNorm(cfg.d_model), nn.Linear(cfg.d_model, cfg.codec_token_vocab))
         self.prompt_ctc_head = nn.Sequential(nn.LayerNorm(cfg.d_model), nn.Linear(cfg.d_model, cfg.num_labels + 1))
         self.prompt_classifier = nn.Sequential(nn.LayerNorm(cfg.d_model), nn.Linear(cfg.d_model, cfg.num_labels))
@@ -256,10 +259,19 @@ class KaraOneV11TokenGenerator(nn.Module):
         semantic_tokens_for_head = resize_sequence(content, self.cfg.semantic_token_steps)
         codec_tokens_for_head = resize_sequence(perceiver_tokens, self.cfg.codec_token_steps)
         semantic_token_logits = self.semantic_token_head(semantic_tokens_for_head)
+        semantic_token_logits_mlp = self.mlp_semantic_token_head(semantic_tokens_for_head)
+        pred_semantic_seq_linear = self.semantic_embed_head(resize_sequence(content, self.cfg.semantic_token_steps))
+        pred_semantic_seq_mlp = self.mlp_semantic_embed_head(resize_sequence(content, self.cfg.semantic_token_steps))
+        pred_semantic_summary_linear = self.semantic_summary_head(pooled)
+        pred_semantic_summary_mlp = self.mlp_semantic_summary_head(pooled)
         perceiver_semantic_logits = self.semantic_token_head(perceiver_tokens)
         codec_logits = self.codec_token_head(codec_tokens_for_head)
         codec_probs = torch.softmax(codec_logits, dim=-1)
         pred_codec_seq = torch.einsum("btk,kd->btd", codec_probs, self.codec_codebook.to(codec_probs.dtype))
+        use_mlp_primary = str(getattr(self.cfg, "aligner", "hybrid")).lower() == "mlp"
+        primary_semantic_logits = semantic_token_logits_mlp if use_mlp_primary else semantic_token_logits
+        primary_semantic_seq = pred_semantic_seq_mlp if use_mlp_primary else pred_semantic_seq_linear
+        primary_semantic_summary = pred_semantic_summary_mlp if use_mlp_primary else pred_semantic_summary_linear
         out = {
             "eeg_tokens": encoded,
             "content_tokens": content,
@@ -270,9 +282,15 @@ class KaraOneV11TokenGenerator(nn.Module):
             "patch_tokens_target": ssl_target,
             "patch_recon": self.pretrain_recon(encoded),
             "patch_mask": ssl_mask,
-            "pred_semantic_seq": self.semantic_embed_head(resize_sequence(content, self.cfg.semantic_token_steps)),
-            "pred_semantic_summary": self.semantic_summary_head(pooled),
-            "semantic_token_logits": semantic_token_logits,
+            "pred_semantic_seq": primary_semantic_seq,
+            "pred_semantic_summary": primary_semantic_summary,
+            "semantic_token_logits": primary_semantic_logits,
+            "pred_semantic_seq_linear": pred_semantic_seq_linear,
+            "pred_semantic_summary_linear": pred_semantic_summary_linear,
+            "semantic_token_logits_linear": semantic_token_logits,
+            "pred_semantic_seq_mlp": pred_semantic_seq_mlp,
+            "pred_semantic_summary_mlp": pred_semantic_summary_mlp,
+            "semantic_token_logits_mlp": semantic_token_logits_mlp,
             "semantic_token_logits_perceiver": perceiver_semantic_logits,
             "codec_token_logits": codec_logits,
             "pred_codec_seq": pred_codec_seq,
@@ -291,6 +309,19 @@ class KaraOneV11TokenGenerator(nn.Module):
         out.update(moe_aux)
         out["content_domain_dot"] = (F.normalize(pooled, dim=-1) * F.normalize(self._domain_to_content(domain_pooled), dim=-1)).sum(dim=-1)
         return out
+
+    def _mlp_head(self, in_dim: int, out_dim: int) -> nn.Sequential:
+        hidden = max(int(in_dim) * 2, int(in_dim))
+        return nn.Sequential(
+            nn.LayerNorm(in_dim),
+            nn.Linear(in_dim, hidden),
+            nn.GELU(),
+            nn.Dropout(float(self.cfg.dropout)),
+            nn.Linear(hidden, hidden),
+            nn.GELU(),
+            nn.Dropout(float(self.cfg.dropout)),
+            nn.Linear(hidden, out_dim),
+        )
 
     @torch.no_grad()
     def generate_codec_tokens(

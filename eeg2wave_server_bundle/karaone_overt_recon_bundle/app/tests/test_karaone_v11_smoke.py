@@ -43,7 +43,8 @@ def main() -> None:
     out = model(batch["eeg"], batch["stage_idx"], batch["eeg_valid_len"], channel_cluster_id=batch["channel_cluster_id"], mask_ratio=0.2)
     pretrain = compute_v11_pretrain_losses(out, batch)
     pretrain["total"].backward(retain_graph=True)
-    for aligner in ["mlp", "clip", "ctc", "ot", "perceiver", "hybrid"]:
+    for aligner in ["linear", "mlp", "clip", "ctc", "ot", "perceiver", "hybrid"]:
+        model.cfg.aligner = aligner
         model.zero_grad(set_to_none=True)
         out = model(batch["eeg"], batch["stage_idx"], batch["eeg_valid_len"], channel_cluster_id=batch["channel_cluster_id"])
         losses = compute_v11_alignment_losses(out, batch, aligner=aligner)

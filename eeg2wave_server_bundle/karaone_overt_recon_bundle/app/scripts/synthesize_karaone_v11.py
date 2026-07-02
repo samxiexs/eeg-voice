@@ -78,6 +78,8 @@ def synthesize(args: argparse.Namespace) -> dict[str, Any]:
     checkpoint = torch.load(resolve_bundle_path(args.checkpoint, BUNDLE_DIR), map_location="cpu", weights_only=False)
     state = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
     missing, unexpected = model.load_state_dict(state, strict=False)
+    if isinstance(checkpoint, dict) and checkpoint.get("aligner"):
+        model.cfg.aligner = str(checkpoint["aligner"]).lower()
     model.eval()
     train_bank = build_train_audio_bank(root, targets, train_ds)
     codec_backend = build_codec_decoder(args, cfg) if args.include_generated_codec else None

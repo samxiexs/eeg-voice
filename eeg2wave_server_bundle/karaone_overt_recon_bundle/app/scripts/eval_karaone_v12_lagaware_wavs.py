@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -49,8 +51,12 @@ def evaluate_lagaware(wav_dir: str | Path, *, original_type: str, reconstruction
     trace = load_trace(wav_dir / "generation_trace.csv")
     out_dir = wav_dir / "waveform_compare_lagaware"
     out_dir.mkdir(parents=True, exist_ok=True)
+    log_interval = int(os.environ.get("LOG_INTERVAL", "0") or 0)
+    progress_enabled = log_interval > 0 or os.environ.get("VERBOSE", "0") == "1"
+    started = time.time()
     rows = []
-    for pair in pairs:
+    total = len(pairs)
+    for idx, pair in enumerate(pairs, start=1):
         sr_o, original = read_wav_mono(pair["original_wav"])
         sr_r, recon = read_wav_mono(pair["reconstruction_wav"])
         if sr_r != sr_o:
@@ -59,11 +65,21 @@ def evaluate_lagaware(wav_dir: str | Path, *, original_type: str, reconstruction
         original = original[:n]
         recon = recon[:n]
         key = str(pair["key"])
-        pred_lag = float(trace.get((key, reconstruction_type), trace.get((key, "generated_codec"), {})).get("pred_lag_sec", 0.0) or 0.0)
+        trace_row = trace.get((key, reconstruction_type), trace.get((key, "generated_codec"), {}))
+        pred_lag = float(trace_row.get("pred_lag_sec", 0.0) or 0.0)
+        if "pred_wav_shift_sec" in trace_row:
+            pred_wav_shift = float(trace_row.get("pred_wav_shift_sec", 0.0) or 0.0)
+        elif reconstruction_type.endswith("pred_lag"):
+            pred_wav_shift = 0.0
+        else:
+            # Backward compatibility for older v12 traces. New traces should
+            # write pred_wav_shift_sec explicitly because pred_lag_sec can be an
+            # EEG/audio neural lag rather than a waveform-placement shift.
+            pred_wav_shift = pred_lag
         zero_wave = pearson_corr(original, recon)
         stride = max(1, int(round(sr_o * 0.001)))
         best_wave, best_lag, best_n = best_lag_corr(original, recon, sample_rate=sr_o, max_lag_sec=max_lag_sec, min_overlap_sec=0.5, stride=stride)
-        pred_recon = recon if reconstruction_type.endswith("pred_lag") else shift_audio(recon, pred_lag, sample_rate=sr_o)
+        pred_recon = shift_audio(recon, pred_wav_shift, sample_rate=sr_o) if abs(pred_wav_shift) > 1e-6 else recon
         pred_wave = pearson_corr(original, pred_recon)
         env_o = rms_envelope(original, sample_rate=sr_o)
         env_r = rms_envelope(recon, sample_rate=sr_o)
@@ -91,6 +107,7 @@ def evaluate_lagaware(wav_dir: str | Path, *, original_type: str, reconstruction
             "best_lag_waveform_sec": best_lag,
             "pred_lag_waveform_corr": pred_wave,
             "pred_lag_sec": pred_lag,
+            "pred_wav_shift_sec": pred_wav_shift,
             "zero_lag_envelope_corr": zero_env,
             "best_lag_envelope_corr": best_env,
             "best_lag_envelope_sec": best_env_lag,
@@ -103,6 +120,17 @@ def evaluate_lagaware(wav_dir: str | Path, *, original_type: str, reconstruction
             "n_best_lag_overlap": best_n,
         }
         rows.append(row)
+        if progress_enabled and (idx == total or log_interval <= 0 or idx % log_interval == 0):
+            elapsed = max(1e-6, time.time() - started)
+            rate = idx / elapsed
+            remaining = max(0, total - idx)
+            eta = remaining / rate if rate > 0 else float("nan")
+            pct = 100.0 * idx / total if total else 0.0
+            print(
+                f"[lagaware progress] {reconstruction_type} {idx}/{total} ({pct:.1f}%) "
+                f"sample={pair['key']} rate={rate:.2f}/s eta={eta/60:.1f}m",
+                flush=True,
+            )
     manifest = out_dir / f"lagaware_manifest_{reconstruction_type}.csv"
     write_csv(manifest, rows)
     run_metrics_dir = wav_dir.parent / "metrics"
@@ -167,7 +195,7 @@ def summarize(rows: list[dict[str, Any]], *, reconstruction_type: str, max_lag_s
         "best_lag_envelope_sec_median": float(np.median(lags)) if lags.size else 0.0,
         "best_lag_envelope_sec_q25": float(np.percentile(lags, 25)) if lags.size else 0.0,
         "best_lag_envelope_sec_q75": float(np.percentile(lags, 75)) if lags.size else 0.0,
-        "diagnostic_rule": "best_lag metrics use reference audio and are diagnostic only; predicted_lag metrics use model-predicted lag when available",
+        "diagnostic_rule": "best_lag metrics use reference audio and are diagnostic only; predicted_lag metrics use explicit model-predicted waveform placement/shift when available",
         **metrics,
     }
 

@@ -133,8 +133,10 @@ MoE 做两件事：
 v11 支持多种 aligner：
 
 ```text
-ALIGNER=mlp|clip|ctc|ot|perceiver|hybrid
+ALIGNER=linear|mlp|clip|ctc|ot|perceiver|hybrid
 ```
+
+其中 `linear` 是旧的 direct semantic-token CE baseline，即 `LayerNorm -> Linear` 线性预测头；`mlp` 是多层 MLP projector baseline，用 EEG token/summary 通过非线性映射预测 audio semantic token/summary。
 
 默认使用：
 

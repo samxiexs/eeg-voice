@@ -4,7 +4,9 @@ import argparse
 import csv
 import json
 import math
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,6 @@ from scripts.train_karaone_v12 import make_model_config  # noqa: E402
 from src.karaone_v9.data import KaraOneV9TargetBank  # noqa: E402
 from src.karaone_v12.data import KaraOneV10ClusterBank, KaraOneV11TokenBank, KaraOneV12Dataset, KaraOneV12TimeAnchorBank  # noqa: E402
 from src.karaone_v12.model import KaraOneV12TokenGenerator  # noqa: E402
-from src.karaone_v12.time_anchor import shift_audio  # noqa: E402
 from src.utils import ensure_dir, load_simple_yaml, load_wav_fixed, normalize_rms, pad_or_crop_audio, resolve_bundle_path, save_wav, write_json  # noqa: E402
 
 
@@ -62,6 +63,26 @@ def main() -> None:
 
 
 def synthesize(args: argparse.Namespace) -> dict[str, Any]:
+    log_interval = int(os.environ.get("LOG_INTERVAL", "0") or 0)
+    progress_enabled = log_interval > 0 or os.environ.get("VERBOSE", "0") == "1"
+    progress_started = time.time()
+
+    def log_progress(done: int, total: int, split_name: str, sample_key: str) -> None:
+        if not progress_enabled:
+            return
+        if done != total and log_interval > 0 and done % log_interval != 0:
+            return
+        elapsed = max(1e-6, time.time() - progress_started)
+        rate = done / elapsed
+        remaining = max(0, total - done)
+        eta = remaining / rate if rate > 0 else float("nan")
+        pct = 100.0 * done / total if total else 0.0
+        print(
+            f"[synthesize progress] {done}/{total} ({pct:.1f}%) "
+            f"split={split_name} sample={sample_key} rate={rate:.2f}/s eta={eta/60:.1f}m",
+            flush=True,
+        )
+
     cfg = load_simple_yaml(args.config)
     synth_cfg = cfg.get("synthesis", {})
     device = torch.device(args.device or default_device())
@@ -90,6 +111,8 @@ def synthesize(args: argparse.Namespace) -> dict[str, Any]:
     checkpoint = torch.load(resolve_bundle_path(args.checkpoint, BUNDLE_DIR), map_location="cpu", weights_only=False)
     state = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
     missing, unexpected = model.load_state_dict(state, strict=False)
+    if isinstance(checkpoint, dict) and checkpoint.get("aligner"):
+        model.cfg.aligner = str(checkpoint["aligner"]).lower()
     model.eval()
     train_bank = build_train_audio_bank(root, targets, train_ds)
     codec_backend = build_codec_decoder(args, cfg) if args.include_generated_codec else None
@@ -102,6 +125,7 @@ def synthesize(args: argparse.Namespace) -> dict[str, Any]:
     limit = int(args.limit if args.limit is not None else synth_cfg.get("limit", 12))
     if limit <= 0:
         limit = 10**12
+    total_target = min(limit, sum(len(eval_ds) for _, eval_ds in eval_datasets))
     rows, manifest_rows, trace_rows = [], [], []
     total_seen = 0
     with torch.no_grad():
@@ -150,8 +174,10 @@ def synthesize(args: argparse.Namespace) -> dict[str, Any]:
                     "pred_onset_sec": pred_onset,
                     "pred_duration_sec": pred_duration,
                     "pred_lag_sec": pred_lag,
+                    "pred_wav_shift_sec": 0.0,
+                    "timing_basis": "none",
                     "best_lag_sec": "",
-                    "generated_status": "codec_token_generation_with_predicted_lag",
+                    "generated_status": "codec_token_generation_with_time_anchor",
                 }
                 append_manifest(manifest_rows, trace_rows, base, wav_type="original", file=reference_file, rms_value=rms(reference_audio), diagnostic=False)
                 row_payload: dict[str, Any] = {**base, "reference_wav": str(out_dir / reference_file)}
@@ -168,22 +194,49 @@ def synthesize(args: argparse.Namespace) -> dict[str, Any]:
                         raise RuntimeError("Generated codec wavs require codec cache and local EnCodec backend")
                     pred_norm = out["pred_codec_seq"].detach().cpu().numpy()[0].astype(np.float32)
                     pred_raw = pred_norm * targets.codec.target_std.reshape(1, -1) + targets.codec.target_mean.reshape(1, -1)
+                    placed_norm = out.get("pred_codec_seq_placed", out["pred_codec_seq"]).detach().cpu().numpy()[0].astype(np.float32)
+                    placed_raw = placed_norm * targets.codec.target_std.reshape(1, -1) + targets.codec.target_mean.reshape(1, -1)
                     latent_path = out_dir / "generated_codec_latents" / f"generated_codec_{sample_key}.npz"
-                    np.savez_compressed(latent_path, pred_codec_norm=pred_norm, pred_codec_raw=pred_raw, pred_codec_token_ids=out["pred_codec_token_ids"].detach().cpu().numpy()[0])
+                    np.savez_compressed(
+                        latent_path,
+                        pred_codec_norm=pred_norm,
+                        pred_codec_raw=pred_raw,
+                        pred_codec_placed_norm=placed_norm,
+                        pred_codec_placed_raw=placed_raw,
+                        pred_codec_token_ids=out["pred_codec_token_ids"].detach().cpu().numpy()[0],
+                    )
                     audio = codec_backend.decode(pred_raw.astype(np.float32), decoder_scales=targets.codec.default_decoder_scales)
                     codec_sr = int(codec_backend.sample_rate)
                     audio = normalize_rms(pad_or_crop_audio(np.asarray(audio, dtype=np.float32), int(round(codec_sr * duration_sec))), target_rms=0.08, max_gain=8.0)
                     generated_file = f"generated_codec/generated_codec_{sample_key}.wav"
                     save_wav(out_dir / generated_file, audio.astype(np.float32), codec_sr)
-                    append_manifest(manifest_rows, trace_rows, base, wav_type="generated_codec", file=generated_file, rms_value=rms(audio), diagnostic=False)
-                    shifted = shift_audio(audio, pred_lag, sample_rate=codec_sr)
-                    shifted_file = f"generated_codec_pred_lag/generated_codec_pred_lag_{sample_key}.wav"
-                    save_wav(out_dir / shifted_file, shifted.astype(np.float32), codec_sr)
-                    append_manifest(manifest_rows, trace_rows, base, wav_type="generated_codec_pred_lag", file=shifted_file, rms_value=rms(shifted), diagnostic=False)
+                    append_manifest(
+                        manifest_rows,
+                        trace_rows,
+                        {**base, "timing_basis": "raw_codec_sequence", "pred_wav_shift_sec": 0.0},
+                        wav_type="generated_codec",
+                        file=generated_file,
+                        rms_value=rms(audio),
+                        diagnostic=False,
+                    )
+                    placed_audio = codec_backend.decode(placed_raw.astype(np.float32), decoder_scales=targets.codec.default_decoder_scales)
+                    placed_audio = normalize_rms(pad_or_crop_audio(np.asarray(placed_audio, dtype=np.float32), int(round(codec_sr * duration_sec))), target_rms=0.08, max_gain=8.0)
+                    placed_file = f"generated_codec_pred_lag/generated_codec_pred_lag_{sample_key}.wav"
+                    save_wav(out_dir / placed_file, placed_audio.astype(np.float32), codec_sr)
+                    append_manifest(
+                        manifest_rows,
+                        trace_rows,
+                        {**base, "timing_basis": "predicted_onset_duration_codec_placement", "pred_wav_shift_sec": 0.0},
+                        wav_type="generated_codec_pred_lag",
+                        file=placed_file,
+                        rms_value=rms(placed_audio),
+                        diagnostic=False,
+                    )
                     row_payload["generated_codec_wav"] = str(out_dir / generated_file)
-                    row_payload["generated_codec_pred_lag_wav"] = str(out_dir / shifted_file)
+                    row_payload["generated_codec_pred_lag_wav"] = str(out_dir / placed_file)
                     row_payload["generated_codec_latent"] = str(latent_path)
                 rows.append(row_payload)
+                log_progress(len(rows), total_target, split_name, sample_key)
             if total_seen >= limit:
                 break
     if not manifest_rows:
@@ -202,8 +255,8 @@ def synthesize(args: argparse.Namespace) -> dict[str, Any]:
         "n_pairs": len(rows),
         "include_retrieval": bool(args.include_retrieval),
         "include_generated_codec": bool(args.include_generated_codec),
-        "waveform_status": "generated_codec_token_attempt_with_predicted_lag",
-        "claim": "generated_codec_pred_lag wavs use EEG-predicted lag/onset diagnostics; retrieval_diagnostic wavs remain diagnostic only",
+        "waveform_status": "generated_codec_token_attempt_with_time_anchor",
+        "claim": "generated_codec_pred_lag wavs use EEG-predicted onset/duration time placement; retrieval_diagnostic wavs remain diagnostic only",
         "alignment_gate_pass": bool(metrics.get("subject_val_v12_alignment_gate_pass", False) and metrics.get("subject_test_v12_alignment_gate_pass", False)),
         "predicted_lag_generation_gate_pass": bool(metrics.get("subject_val_v12_predicted_lag_generation_gate_pass", False) and metrics.get("subject_test_v12_predicted_lag_generation_gate_pass", False)),
         "checkpoint_missing_keys": missing,
@@ -220,7 +273,7 @@ def synthesize(args: argparse.Namespace) -> dict[str, Any]:
                 "- `reference/`: ground-truth trial audio for evaluation.",
                 "- `retrieval_diagnostic/`: train-audio retrieval baseline; diagnostic only.",
                 "- `generated_codec/`: EEG-conditioned codec-token generation.",
-                "- `generated_codec_pred_lag/`: generated codec shifted by model-predicted lag.",
+                "- `generated_codec_pred_lag/`: generated codec after model-predicted onset/duration placement; it is not a direct EEG-lag waveform shift.",
                 "- `generation_trace.csv`: per-wav provenance and timing fields.",
                 "",
             ]
