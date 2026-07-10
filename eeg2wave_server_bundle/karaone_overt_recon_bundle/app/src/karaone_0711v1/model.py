@@ -138,11 +138,11 @@ def sinusoidal_time_embedding(t: torch.Tensor, dim: int) -> torch.Tensor:
 class ConditionalFlowDecoder(nn.Module):
     """Continuous EnCodec-latent probability-flow velocity decoder."""
 
-    def __init__(self, latent_dim: int = 128, d_model: int = 256, heads: int = 4, layers: int = 6, dropout: float = 0.1):
+    def __init__(self, latent_dim: int = 128, eeg_dim: int = 192, d_model: int = 256, heads: int = 4, layers: int = 6, dropout: float = 0.1):
         super().__init__()
         self.latent_dim = int(latent_dim)
         self.input_projection = nn.Linear(latent_dim, d_model)
-        self.eeg_projection = nn.Linear(192, d_model)
+        self.eeg_projection = nn.Linear(eeg_dim, d_model)
         self.time_projection = nn.Sequential(nn.Linear(3, d_model), nn.GELU(), nn.Linear(d_model, d_model))
         self.t_projection = nn.Sequential(nn.Linear(d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model))
         layer = nn.TransformerDecoderLayer(d_model, heads, d_model * 4, dropout=dropout, activation="gelu", batch_first=True, norm_first=True)

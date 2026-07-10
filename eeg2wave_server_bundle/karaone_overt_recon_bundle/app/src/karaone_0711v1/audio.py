@@ -109,7 +109,7 @@ def kmeans_train_only(values: np.ndarray, n_clusters: int, *, iterations: int = 
 def nearest_centers(values: np.ndarray, centers: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=np.float32)
     centers = np.asarray(centers, dtype=np.float32)
-    distance = (values[:, None, :] - centers[None, :, :]).square().sum(axis=-1)
+    distance = np.square(values[:, None, :] - centers[None, :, :]).sum(axis=-1)
     return distance.argmin(axis=1).astype(np.int64)
 
 
@@ -140,7 +140,7 @@ def build_adapted_audio_cache(
     train_records = [row for row in records if manifest.split_for(row.subject) == "subject_train"]
     assert_train_only(train_records, manifest, "adapted_hubert_codebook")
     adapter.eval()
-    sequences, summaries, labels, subjects, trial_indices, audio_paths, anchors = [], [], [], [], [], [], []
+    sequences, summaries, clip_embeddings, labels, subjects, trial_indices, audio_paths, anchors = [], [], [], [], [], [], [], []
     for start in range(0, len(records), int(batch_size)):
         chunk = records[start : start + int(batch_size)]
         waveform = torch.from_numpy(np.stack([load_audio(root / row.audio_path) for row in chunk])).to(device)
@@ -150,8 +150,10 @@ def build_adapted_audio_cache(
         out = adapter(values, attention_mask=mask.to(device) if mask is not None else None)
         seq = mean_pool_to_steps(out["sequence"], semantic_steps).detach().cpu().numpy().astype(np.float32)
         summary = out["summary"].detach().cpu().numpy().astype(np.float32)
+        clip_embedding = out["embedding"].detach().cpu().numpy().astype(np.float32)
         sequences.append(seq)
         summaries.append(summary)
+        clip_embeddings.append(clip_embedding)
         labels.extend(row.label for row in chunk)
         subjects.extend(row.subject for row in chunk)
         trial_indices.extend(row.trial_index for row in chunk)
@@ -159,6 +161,7 @@ def build_adapted_audio_cache(
         anchors.extend(compute_time_anchor(load_audio(root / row.audio_path)) for row in chunk)
     sequence_array = np.concatenate(sequences, axis=0)
     summary_array = np.concatenate(summaries, axis=0)
+    clip_embedding_array = np.concatenate(clip_embeddings, axis=0)
     train_mask = np.asarray([subject in manifest.train_subjects for subject in subjects], dtype=bool)
     centers = kmeans_train_only(sequence_array[train_mask].reshape(-1, sequence_array.shape[-1]), semantic_vocab)
     semantic_ids = nearest_centers(sequence_array.reshape(-1, sequence_array.shape[-1]), centers).reshape(sequence_array.shape[:2])
@@ -174,6 +177,7 @@ def build_adapted_audio_cache(
         "fit_split": train_mask,
         "semantic_sequence": sequence_array,
         "semantic_summary": summary_array,
+        "clip_embedding": clip_embedding_array,
         "semantic_token_ids": semantic_ids.astype(np.int64),
         "semantic_token_mask": np.ones_like(semantic_ids, dtype=np.float32),
         "semantic_codebook": centers,

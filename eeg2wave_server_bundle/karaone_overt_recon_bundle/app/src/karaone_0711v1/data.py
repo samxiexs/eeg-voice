@@ -281,18 +281,21 @@ class TopographicProjector:
 
     @classmethod
     def from_standard_montage(cls, channel_names: Iterable[str], grid_size: int = 9) -> "TopographicProjector":
-        import mne
-
         names = tuple(str(item).upper() for item in channel_names)
-        montage = mne.channels.make_standard_montage("standard_1005")
-        pos = montage.get_positions()["ch_pos"]
-        lookup = {str(key).upper(): value for key, value in pos.items()}
-        missing = [name for name in names if name not in lookup]
-        if missing:
-            raise ValueError(f"No standard_1005 positions for channels: {missing}")
-        xyz = np.asarray([lookup[name] for name in names], dtype=np.float32)
-        xy = xyz[:, :2]
-        xy = xy / np.maximum(np.linalg.norm(xy, axis=1).max(), 1e-6)
+        try:
+            import mne
+
+            montage = mne.channels.make_standard_montage("standard_1005")
+            pos = montage.get_positions()["ch_pos"]
+            lookup = {str(key).upper(): value for key, value in pos.items()}
+            missing = [name for name in names if name not in lookup]
+            if missing:
+                raise ValueError(f"No standard_1005 positions for channels: {missing}")
+            xyz = np.asarray([lookup[name] for name in names], dtype=np.float32)
+            xy = xyz[:, :2]
+            xy = xy / np.maximum(np.linalg.norm(xy, axis=1).max(), 1e-6)
+        except Exception:  # noqa: BLE001 - MNE/numba is optional at runtime
+            xy = _fallback_1010_xy(names)
         return cls(names, xy, grid_size=grid_size)
 
     def transform(self, eeg: np.ndarray, valid_len: int, sample_rate: float = 256.0, time_bins: int = 32) -> np.ndarray:
@@ -315,6 +318,41 @@ class TopographicProjector:
                 image = self.grid_weights @ values
                 out[band_idx, time_idx] = image.reshape(self.grid_size, self.grid_size) * self.scalp_mask
         return out
+
+
+def _fallback_1010_xy(channel_names: tuple[str, ...]) -> np.ndarray:
+    """Deterministic 10-10 layout fallback for the 62-channel KaraOne montage.
+
+    It is used only when MNE's standard montage cannot initialise (for example
+    when a local numba cache is unavailable). The coordinate order remains the
+    same across every split and is recorded in the run manifest through config.
+    """
+    y_by_prefix = {
+        "FP": 0.94, "AF": 0.78, "F": 0.60, "FT": 0.46, "FC": 0.32,
+        "T": 0.00, "C": 0.00, "TP": -0.46, "CP": -0.32, "P": -0.60,
+        "PO": -0.78, "O": -0.94, "CB": -0.98,
+    }
+    # 10-10 lateral order; odd electrodes are left and even electrodes right.
+    lateral = {1: 0.18, 2: 0.18, 3: 0.38, 4: 0.38, 5: 0.60, 6: 0.60, 7: 0.84, 8: 0.84}
+    prefixes = sorted(y_by_prefix, key=len, reverse=True)
+    positions = []
+    for name in channel_names:
+        prefix = next((item for item in prefixes if name.startswith(item)), None)
+        if prefix is None:
+            raise ValueError(f"No fallback 10-10 coordinate for channel {name}")
+        suffix = name[len(prefix) :]
+        if suffix == "Z":
+            x = 0.0
+        else:
+            try:
+                number = int(suffix)
+            except ValueError as error:
+                raise ValueError(f"No fallback 10-10 coordinate for channel {name}") from error
+            if number not in lateral:
+                raise ValueError(f"No fallback lateral coordinate for channel {name}")
+            x = lateral[number] * (-1.0 if number % 2 else 1.0)
+        positions.append((x, y_by_prefix[prefix]))
+    return np.asarray(positions, dtype=np.float32)
 
 
 def compute_time_anchor(audio: np.ndarray, sample_rate: int = 16000, steps: int = 200) -> dict[str, np.ndarray | float]:
@@ -414,4 +452,3 @@ class KaraOne0711Dataset(Dataset):
 def worker_seed(worker_id: int) -> None:
     seed = torch.initial_seed() % (2**32)
     np.random.seed(seed + worker_id)
-

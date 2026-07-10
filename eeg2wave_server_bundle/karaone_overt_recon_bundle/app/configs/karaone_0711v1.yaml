@@ -1,0 +1,81 @@
+version: 0711v1
+
+data:
+  root: ../data/karaone
+  stage: overt_like
+  eeg_len: 1280
+  eeg_sample_rate: 256
+  subject_val: P02
+  subject_test: MM21
+  train_subjects: [MM05, MM08, MM09, MM10, MM11, MM12, MM14, MM15, MM16, MM18, MM19, MM20]
+
+paths:
+  cache_root: ../artifacts/karaone_0711v1
+  output_root: ../artifacts/outputs_karaone_0711v1
+  hubert_model: ../../feis_subject_aware_bundle/models/hubert-base-ls960
+  encodec_model: ../models/encodec_24khz
+
+audio_ssl:
+  sample_rate: 16000
+  batch_size: 4
+  epochs: 20
+  lr: 0.00001
+  weight_decay: 0.0001
+  top_unfrozen_layers: 2
+  projection_dim: 256
+  semantic_steps: 50
+  semantic_vocab: 64
+  lambda_view: 1.0
+  lambda_label: 0.25
+  lambda_cross_subject: 0.25
+
+eeg_ssl:
+  batch_size: 24
+  epochs: 50
+  lr: 0.0003
+  weight_decay: 0.001
+  temperature: 0.10
+  channel_dropout: 0.08
+  time_mask_ratio: 0.08
+  noise_std: 0.02
+
+model:
+  channels: 62
+  d_model: 192
+  layers: 4
+  heads: 4
+  dropout: 0.10
+  embed_dim: 256
+  semantic_steps: 50
+  semantic_vocab: 64
+
+alignment:
+  batch_size: 24
+  epochs: 60
+  lr: 0.0002
+  weight_decay: 0.001
+  temperature: 0.07
+  cross_subject_positive_weight: 0.25
+  lambda_token: 0.25
+  lambda_vicreg: 0.05
+  group_dro_eta: 0.10
+
+flow:
+  batch_size: 12
+  epochs: 60
+  lr: 0.0002
+  weight_decay: 0.0001
+  d_model: 256
+  heads: 4
+  layers: 6
+  sample_steps: 24
+
+evaluation:
+  bootstrap_samples: 1000
+  std_ratio_min: 0.10
+  pairwise_corr_max: 0.95
+
+run:
+  seed: 11
+  grad_clip: 1.0
+  num_workers: 0

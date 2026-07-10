@@ -46,7 +46,9 @@ def _multi_positive_targets(labels: torch.Tensor, subjects: Iterable[str], alpha
 
 
 def _soft_ce(logits: torch.Tensor, targets: torch.Tensor, allowed: torch.Tensor) -> torch.Tensor:
-    logits = logits.masked_fill(~allowed, -torch.inf)
+    # A finite sentinel avoids the otherwise undefined 0 * -inf for ignored
+    # same-label/same-subject pairs in the soft target matrix.
+    logits = logits.masked_fill(~allowed, -1e9)
     log_probs = F.log_softmax(logits, dim=1)
     return -(targets * log_probs).sum(dim=1)
 
