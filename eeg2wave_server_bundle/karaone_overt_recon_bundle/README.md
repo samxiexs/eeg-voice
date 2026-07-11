@@ -46,6 +46,17 @@ reconstruction claim.
 All artefacts use `karaone_0711v1_<stage>_<phase>_s<seed>`; timestamps are
 stored only in `run_manifest.json`.
 
+The full strict run (including final MM21 evaluation and EEG-only synthesis only
+after both validation gates pass) is:
+
+```bash
+bash run_full_karaone_0711v1.sh
+```
+
+Set `STAGE`, `SEED`, `CONFIG`, or `PYTHON` as environment variables when needed.
+
+To run individual phases instead:
+
 ```bash
 cd app
 
