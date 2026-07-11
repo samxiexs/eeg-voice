@@ -55,6 +55,16 @@ bash run_full_karaone_0711v1.sh
 
 Set `STAGE`, `SEED`, `CONFIG`, or `PYTHON` as environment variables when needed.
 
+To intentionally run the flow path even after a failed P02 gate, use exploratory
+mode. It exports all 1,913 canonical reference wavs, EEG reconstructions, and
+per-trial waveform/spectrogram comparison figures. It is labeled
+`exploratory_all_splits_diagnostic_not_reportable`; the MM21 files are diagnostics,
+not formal test claims:
+
+```bash
+ALLOW_EXPLORATORY=true PYTHON=python3 bash run_full_karaone_0711v1.sh
+```
+
 To run individual phases instead:
 
 ```bash

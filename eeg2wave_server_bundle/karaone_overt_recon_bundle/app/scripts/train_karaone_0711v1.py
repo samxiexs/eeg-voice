@@ -38,6 +38,7 @@ from src.karaone_0711v1.eval import (  # noqa: E402
     evaluate_global_gate,
     final_test_report,
     require_flow_gate,
+    validate_gate_context,
     write_gate,
 )
 from src.karaone_0711v1.losses import (  # noqa: E402
@@ -64,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default=None)
     parser.add_argument("--resume", default=None, help="Required for align/flow/evaluate phases as applicable.")
     parser.add_argument("--gate", default=None, help="Validation gate JSON; required for flow.")
+    parser.add_argument("--allow-gate-bypass", action="store_true", help="Exploratory-only: permit token/flow after a failed P02 gate; MM21 remains prohibited.")
     parser.add_argument("--allow-final-test", action="store_true", help="Explicitly authorise the one-time MM21 evaluation phase.")
     parser.add_argument("--smoke", action="store_true")
     return parser.parse_args()
@@ -378,7 +380,7 @@ def train_alignment(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
 def train_flow(args: argparse.Namespace, cfg: dict[str, Any], manifest: SplitManifest, stage: str, seed: int, device: torch.device, out_dir: Path) -> None:
     if not args.resume or not args.gate:
         raise ValueError("flow requires --resume <align_token_checkpoint> and --gate <validation_gate.json>")
-    require_flow_gate(args.gate, manifest)
+    gate = validate_gate_context(args.gate, manifest) if args.allow_gate_bypass else require_flow_gate(args.gate, manifest)
     bank = AudioTargetBank(cache_paths(cfg, stage, seed)["audio_targets"])
     if bank.encodec_latent is None:
         raise FileNotFoundError("Flow is blocked: adapted audio cache has no EnCodec latent targets")
@@ -417,7 +419,13 @@ def train_flow(args: argparse.Namespace, cfg: dict[str, Any], manifest: SplitMan
         history.append(row)
         write_json(out_dir / "metrics" / "latest_metrics.json", row)
         save_model(out_dir / "checkpoints" / "last.pt", flow, cfg=cfg, phase="flow", epoch=epoch, metrics=row)
-    write_json(out_dir / "metrics" / "history.json", {"history": history, "gate": str(args.gate), "test_accessed": False})
+    write_json(out_dir / "metrics" / "history.json", {
+        "history": history,
+        "gate": str(args.gate),
+        "gate_bypassed": bool(args.allow_gate_bypass and not gate.get("passed")),
+        "claim_status": "exploratory_not_reportable" if args.allow_gate_bypass and not gate.get("passed") else "gate_passed",
+        "test_accessed": False,
+    })
 
 
 def final_evaluate(args: argparse.Namespace, cfg: dict[str, Any], manifest: SplitManifest, stage: str, seed: int, device: torch.device, out_dir: Path) -> None:
@@ -464,7 +472,10 @@ def main() -> None:
     elif args.phase == "align_token":
         if not args.gate:
             raise ValueError("align_token requires --gate <passed align_global validation gate>")
-        require_flow_gate(args.gate, manifest)
+        if args.allow_gate_bypass:
+            validate_gate_context(args.gate, manifest)
+        else:
+            require_flow_gate(args.gate, manifest)
         train_alignment(args, cfg, manifest, stage, seed, device, out_dir, args.phase)
     elif args.phase == "flow":
         train_flow(args, cfg, manifest, stage, seed, device, out_dir)

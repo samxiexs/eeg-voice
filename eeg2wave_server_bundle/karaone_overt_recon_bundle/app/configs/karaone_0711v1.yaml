@@ -79,3 +79,4 @@ run:
   seed: 11
   grad_clip: 1.0
   num_workers: 0
+  allow_exploratory_without_gate: false

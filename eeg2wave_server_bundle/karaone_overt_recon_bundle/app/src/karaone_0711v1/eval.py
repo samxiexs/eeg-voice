@@ -150,13 +150,23 @@ def write_gate(path: str | Path, result: GateResult, *, split: str, manifest: Sp
 
 
 def require_flow_gate(path: str | Path, manifest: SplitManifest) -> dict[str, Any]:
+    payload = validate_gate_context(path, manifest)
+    if not payload.get("passed"):
+        raise RuntimeError(f"Flow is blocked: {payload.get('reasons', [])}")
+    return payload
+
+
+def validate_gate_context(path: str | Path, manifest: SplitManifest) -> dict[str, Any]:
+    """Validate gate provenance without requiring that it passed.
+
+    This enables explicitly labelled exploratory generation while retaining the
+    split boundary: a failed gate never authorises test-subject access.
+    """
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if payload.get("split_checksum") != manifest.checksum:
         raise ValueError("Gate split checksum does not match current split")
     if payload.get("selection_split") != "subject_val" or payload.get("test_accessed"):
         raise ValueError("Flow requires a validation-only gate")
-    if not payload.get("passed"):
-        raise RuntimeError(f"Flow is blocked: {payload.get('reasons', [])}")
     return payload
 
 
