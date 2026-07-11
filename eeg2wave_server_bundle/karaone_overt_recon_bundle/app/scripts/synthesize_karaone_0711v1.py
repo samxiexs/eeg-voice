@@ -15,6 +15,7 @@ import yaml
 from scipy.io import wavfile
 from scipy.signal import stft
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 BUNDLE_DIR = Path(__file__).resolve().parents[1]
 if str(BUNDLE_DIR) not in sys.path:
@@ -117,7 +118,7 @@ def main() -> None:
             ref_dir, rec_dir, fig_dir = (output / "reference" / split, output / "reconstructed" / split, output / "comparison" / split)
             for directory in (ref_dir, rec_dir, fig_dir):
                 directory.mkdir(parents=True, exist_ok=True)
-            for batch in data:
+            for batch in tqdm(data, desc=f"[0711v1] synthesize {split}", unit="batch", dynamic_ncols=True):
                 batch = move_batch(batch, device)
                 encoded = encoder(batch["eeg"], batch["eeg_valid_len"], batch["topography"])
                 latent = flow.sample(encoded["tokens"], encoded["pred_onset_sec"], encoded["pred_duration_sec"], encoded["pred_active_logit"], steps=int(args.steps or flow_cfg["sample_steps"])).cpu().numpy()

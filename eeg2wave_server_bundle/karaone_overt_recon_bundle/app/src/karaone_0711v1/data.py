@@ -205,7 +205,7 @@ def make_run_manifest(
 
 
 def run_name(stage: str, phase: str, seed: int) -> str:
-    allowed = {"audit", "audio_ssl", "eeg_ssl", "align_global", "align_token", "flow", "evaluate"}
+    allowed = {"audit", "audio_ssl", "audio_cache", "eeg_ssl", "align_global", "align_token", "flow", "evaluate"}
     if phase not in allowed:
         raise ValueError(f"Unknown 0711v1 phase: {phase}")
     if stage not in {"overt_like", "thinking"}:

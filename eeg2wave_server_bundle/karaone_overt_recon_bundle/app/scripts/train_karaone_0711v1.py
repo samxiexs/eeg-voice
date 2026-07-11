@@ -13,6 +13,7 @@ import torch.nn.functional as F
 import yaml
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 BUNDLE_DIR = Path(__file__).resolve().parents[1]
 if str(BUNDLE_DIR) not in sys.path:
@@ -52,7 +53,7 @@ from src.karaone_0711v1.losses import (  # noqa: E402
 from src.karaone_0711v1.model import ConditionalFlowDecoder, EEG0711Config, EEG0711Encoder  # noqa: E402
 
 
-PHASES = ("audit", "audio_ssl", "eeg_ssl", "align_global", "align_token", "flow", "evaluate")
+PHASES = ("audit", "audio_ssl", "audio_cache", "eeg_ssl", "align_global", "align_token", "flow", "evaluate")
 
 
 def parse_args() -> argparse.Namespace:
@@ -256,7 +257,8 @@ def train_audio_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
     for epoch in range(1, epochs + 1):
         model.train()
         losses = []
-        for batch in train_data:
+        iterator = tqdm(train_data, desc=f"[0711v1] audio_ssl {epoch}/{epochs}", unit="batch", dynamic_ncols=True)
+        for batch in iterator:
             batch = move_batch(batch, device)
             a = audio_augment(batch["audio"])
             b = audio_augment(batch["audio"])
@@ -272,10 +274,11 @@ def train_audio_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
             clip_grad_norm_(model.parameters(), float(cfg["run"]["grad_clip"]))
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
+            iterator.set_postfix(loss=f"{losses[-1]:.4f}")
         model.eval()
         correct = total = 0
         with torch.no_grad():
-            for batch in val_data:
+            for batch in tqdm(val_data, desc=f"[0711v1] audio_ssl val {epoch}/{epochs}", unit="batch", leave=False, dynamic_ncols=True):
                 batch = move_batch(batch, device)
                 values = extractor(batch["audio"].detach().cpu().numpy(), sampling_rate=16000, return_tensors="pt", padding=True)
                 out = model(values["input_values"].to(device), values.get("attention_mask").to(device) if values.get("attention_mask") is not None else None)
@@ -286,6 +289,7 @@ def train_audio_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
         row = {"epoch": epoch, "train_loss": float(np.mean(losses)), "subject_val_audio_label_acc": metric}
         history.append(row)
         write_json(out_dir / "metrics" / "latest_metrics.json", row)
+        print("[0711v1] audio_ssl epoch=" + json.dumps(row, ensure_ascii=False), flush=True)
         if metric > best:
             best = metric
             audit = FitAudit.from_records("hubert_domain_adapter", manifest, records_for_split(root, manifest, "subject_train"))
@@ -299,6 +303,41 @@ def train_audio_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
     build_adapted_audio_cache(root=root, manifest=manifest, adapter=model, feature_extractor=extractor, output_path=paths["audio_targets"], audit_path=paths["audio_audit"], device=device, stage=stage, semantic_steps=adapter_cfg.semantic_steps, semantic_vocab=adapter_cfg.semantic_vocab, codec_model_path=codec if codec.exists() else None)
 
 
+def rebuild_audio_cache(args: argparse.Namespace, cfg: dict[str, Any], manifest: SplitManifest, stage: str, seed: int, device: torch.device, out_dir: Path) -> None:
+    """Recover from cache extraction failures without retraining adapted HuBERT."""
+    if not args.resume:
+        raise ValueError("audio_cache requires --resume <audio_ssl/checkpoints/best.pt>")
+    settings = cfg["audio_ssl"]
+    adapter_cfg = HubertAdaptationConfig(
+        model_path=str(resolve(cfg["paths"]["hubert_model"])),
+        top_unfrozen_layers=int(settings["top_unfrozen_layers"]),
+        projection_dim=int(settings["projection_dim"]),
+        semantic_steps=int(settings["semantic_steps"]),
+        semantic_vocab=int(settings["semantic_vocab"]),
+    )
+    model, extractor = load_hubert_adapter(adapter_cfg, device=device)
+    payload = torch.load(args.resume, map_location=device, weights_only=False)
+    model.load_state_dict(payload["state_dict"], strict=True)
+    paths = cache_paths(cfg, stage, seed)
+    root = resolve(cfg["data"]["root"])
+    codec = resolve(cfg["paths"]["encodec_model"])
+    print(f"[0711v1] rebuilding audio target cache from {args.resume}; HuBERT will not be retrained.", flush=True)
+    audit = build_adapted_audio_cache(
+        root=root,
+        manifest=manifest,
+        adapter=model,
+        feature_extractor=extractor,
+        output_path=paths["audio_targets"],
+        audit_path=paths["audio_audit"],
+        device=device,
+        stage=stage,
+        semantic_steps=adapter_cfg.semantic_steps,
+        semantic_vocab=adapter_cfg.semantic_vocab,
+        codec_model_path=codec if codec.exists() else None,
+    )
+    write_json(out_dir / "metrics" / "audio_cache.json", {"source_checkpoint": str(args.resume), "retrained_hubert": False, **audit})
+
+
 def train_eeg_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: SplitManifest, stage: str, device: torch.device, out_dir: Path) -> None:
     settings = cfg["eeg_ssl"]
     model = make_eeg_model(cfg).to(device)
@@ -310,7 +349,8 @@ def train_eeg_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Split
     for epoch in range(1, epochs + 1):
         model.train()
         values = []
-        for batch in train_data:
+        iterator = tqdm(train_data, desc=f"[0711v1] eeg_ssl {epoch}/{epochs}", unit="batch", dynamic_ncols=True)
+        for batch in iterator:
             batch = move_batch(batch, device)
             eeg, topo = augment_eeg(batch, cfg)
             out = model(eeg, batch["eeg_valid_len"], topo)
@@ -320,10 +360,12 @@ def train_eeg_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Split
             clip_grad_norm_(model.parameters(), float(cfg["run"]["grad_clip"]))
             optimizer.step()
             values.append(float(loss.detach().cpu()))
+            iterator.set_postfix(view_loss=f"{values[-1]:.4f}")
         val_loss = evaluate_eeg_ssl(model, val_data, cfg, device)
         row = {"epoch": epoch, "train_view_loss": float(np.mean(values)), "subject_val_view_loss": val_loss}
         history.append(row)
         write_json(out_dir / "metrics" / "latest_metrics.json", row)
+        print("[0711v1] eeg_ssl epoch=" + json.dumps(row, ensure_ascii=False), flush=True)
         if val_loss < best:
             best = val_loss
             save_model(out_dir / "checkpoints" / "best.pt", model, cfg=cfg, phase="eeg_ssl", epoch=epoch, metrics=row)
@@ -345,7 +387,8 @@ def train_alignment(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
     for epoch in range(1, epochs + 1):
         model.train()
         train_losses = []
-        for batch in train_data:
+        iterator = tqdm(train_data, desc=f"[0711v1] {phase} {epoch}/{epochs}", unit="batch", dynamic_ncols=True)
+        for batch in iterator:
             batch = move_batch(batch, device)
             out = model(batch["eeg"], batch["eeg_valid_len"], batch["topography"])
             targets = bank.batch(batch["key"], device)
@@ -360,6 +403,7 @@ def train_alignment(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
             clip_grad_norm_(model.parameters(), float(cfg["run"]["grad_clip"]))
             optimizer.step()
             train_losses.append(float(loss.detach().cpu()))
+            iterator.set_postfix(loss=f"{train_losses[-1]:.4f}")
         collected = collect_alignment(model, val_data, bank, device)
         train_embed, train_labels, train_tokens = bank.train_bank()
         # Validation labels are recovered from numeric ids without ever constructing the test split.
@@ -368,6 +412,7 @@ def train_alignment(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
         row = {"epoch": epoch, "train_loss": float(np.mean(train_losses)), **gate.to_dict(), "selection_split": "subject_val", "test_accessed": False}
         history.append(row)
         write_json(out_dir / "metrics" / "latest_metrics.json", row)
+        print(f"[0711v1] {phase} epoch=" + json.dumps(row, ensure_ascii=False), flush=True)
         score = gate.semantic_retrieval_gain + gate.token_retrieval_gain + gate.semantic_over_zero_gain
         if score > best_score:
             best_score, best_gate = score, gate
@@ -398,7 +443,8 @@ def train_flow(args: argparse.Namespace, cfg: dict[str, Any], manifest: SplitMan
     for epoch in range(1, epochs + 1):
         flow.train()
         values = []
-        for batch in data:
+        iterator = tqdm(data, desc=f"[0711v1] flow {epoch}/{epochs}", unit="batch", dynamic_ncols=True)
+        for batch in iterator:
             batch = move_batch(batch, device)
             targets = bank.batch(batch["key"], device)
             z0 = targets["encodec_latent"]
@@ -415,9 +461,11 @@ def train_flow(args: argparse.Namespace, cfg: dict[str, Any], manifest: SplitMan
             clip_grad_norm_(flow.parameters(), float(cfg["run"]["grad_clip"]))
             optimizer.step()
             values.append(float(loss.detach().cpu()))
+            iterator.set_postfix(flow_loss=f"{values[-1]:.4f}")
         row = {"epoch": epoch, "train_flow_loss": float(np.mean(values)), "selection_split": "subject_val", "test_accessed": False}
         history.append(row)
         write_json(out_dir / "metrics" / "latest_metrics.json", row)
+        print("[0711v1] flow epoch=" + json.dumps(row, ensure_ascii=False), flush=True)
         save_model(out_dir / "checkpoints" / "last.pt", flow, cfg=cfg, phase="flow", epoch=epoch, metrics=row)
     write_json(out_dir / "metrics" / "history.json", {
         "history": history,
@@ -465,6 +513,8 @@ def main() -> None:
         write_json(out_dir / "metrics" / "audit.json", {**audit.to_dict(), "subject_val_n": len(records_for_split(root, manifest, "subject_val")), "subject_test_n": len(records_for_split(root, manifest, "subject_test")), "test_accessed": False})
     elif args.phase == "audio_ssl":
         train_audio_ssl(args, cfg, manifest, stage, seed, device, out_dir)
+    elif args.phase == "audio_cache":
+        rebuild_audio_cache(args, cfg, manifest, stage, seed, device, out_dir)
     elif args.phase == "eeg_ssl":
         train_eeg_ssl(args, cfg, manifest, stage, device, out_dir)
     elif args.phase == "align_global":

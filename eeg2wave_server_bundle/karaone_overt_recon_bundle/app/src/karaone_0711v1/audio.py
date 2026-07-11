@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm.auto import tqdm
 
 from .data import FitAudit, LABELS, SplitManifest, TrialRecord, assert_train_only, compute_time_anchor, load_audio, read_trial_records, write_json
 
@@ -87,7 +88,18 @@ def audio_augment(audio: torch.Tensor, *, noise_std: float = 0.005, max_mask_sam
 
 
 def mean_pool_to_steps(sequence: torch.Tensor, steps: int) -> torch.Tensor:
-    return F.adaptive_avg_pool1d(sequence.transpose(1, 2), int(steps)).transpose(1, 2)
+    """Pool HuBERT frames while working around MPS non-divisible adaptive pooling.
+
+    PyTorch MPS currently rejects e.g. 99 input frames -> 50 output frames. This
+    function is used while freezing/extracting target features, so a short CPU
+    pooling hop is safe and preserves the surrounding model/device placement.
+    """
+    values = sequence
+    use_cpu_pool = values.device.type == "mps" and values.shape[1] % int(steps) != 0
+    if use_cpu_pool:
+        values = values.detach().cpu()
+    pooled = F.adaptive_avg_pool1d(values.transpose(1, 2), int(steps)).transpose(1, 2)
+    return pooled.to(sequence.device) if use_cpu_pool else pooled
 
 
 def kmeans_train_only(values: np.ndarray, n_clusters: int, *, iterations: int = 50, seed: int = 11) -> np.ndarray:
@@ -141,7 +153,7 @@ def build_adapted_audio_cache(
     assert_train_only(train_records, manifest, "adapted_hubert_codebook")
     adapter.eval()
     sequences, summaries, clip_embeddings, labels, subjects, trial_indices, audio_paths, anchors = [], [], [], [], [], [], [], []
-    for start in range(0, len(records), int(batch_size)):
+    for start in tqdm(range(0, len(records), int(batch_size)), desc="[0711v1] adapted HuBERT cache", unit="batch", dynamic_ncols=True):
         chunk = records[start : start + int(batch_size)]
         waveform = torch.from_numpy(np.stack([load_audio(root / row.audio_path) for row in chunk])).to(device)
         inputs = feature_extractor(waveform.detach().cpu().numpy(), sampling_rate=16000, return_tensors="pt", padding=True)
@@ -210,7 +222,7 @@ def _extract_encodec_latents(root: Path, records: list[TrialRecord], codec_model
         codec_bandwidth=6.0,
     )
     backend = load_codec_backend(cfg)
-    values = [backend.extract(load_audio(root / row.audio_path), 16000)["target_sequence"] for row in records]
+    values = [backend.extract(load_audio(root / row.audio_path), 16000)["target_sequence"] for row in tqdm(records, desc="[0711v1] EnCodec target cache", unit="trial", dynamic_ncols=True)]
     return np.stack(values).astype(np.float32)
 
 

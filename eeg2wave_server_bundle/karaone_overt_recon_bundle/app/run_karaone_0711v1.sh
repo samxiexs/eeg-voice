@@ -39,7 +39,7 @@ preflight() {
 }
 
 case "$phase" in
-  audit|audio_ssl|eeg_ssl)
+  audit|audio_ssl|audio_cache|eeg_ssl)
     "${run[@]}" --phase "$phase"
     ;;
   align_global)
@@ -63,7 +63,16 @@ case "$phase" in
   all|full)
     preflight
     "${run[@]}" --phase audit
-    "${run[@]}" --phase audio_ssl
+    audio_checkpoint="$out/${name}_audio_ssl_s${seed}/checkpoints/best.pt"
+    audio_cache="../artifacts/karaone_0711v1/karaone_0711v1_${stage}_adapted_audio_targets_s${seed}.npz"
+    if [[ -f "$audio_cache" ]]; then
+      echo "[0711v1] reusing completed adapted audio cache: $audio_cache"
+    elif [[ -f "$audio_checkpoint" ]]; then
+      echo "[0711v1] audio_ssl checkpoint found; rebuilding only the interrupted target cache."
+      "${run[@]}" --phase audio_cache --resume "$audio_checkpoint"
+    else
+      "${run[@]}" --phase audio_ssl
+    fi
     "${run[@]}" --phase eeg_ssl
     eeg_checkpoint="$out/${name}_eeg_ssl_s${seed}/checkpoints/best.pt"
     "${run[@]}" --phase align_global --resume "$eeg_checkpoint"
