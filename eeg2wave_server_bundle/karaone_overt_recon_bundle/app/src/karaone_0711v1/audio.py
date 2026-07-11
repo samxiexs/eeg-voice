@@ -102,27 +102,77 @@ def mean_pool_to_steps(sequence: torch.Tensor, steps: int) -> torch.Tensor:
     return pooled.to(sequence.device) if use_cpu_pool else pooled
 
 
-def kmeans_train_only(values: np.ndarray, n_clusters: int, *, iterations: int = 50, seed: int = 11) -> np.ndarray:
+def kmeans_train_only(
+    values: np.ndarray,
+    n_clusters: int,
+    *,
+    iterations: int = 10,
+    max_fit_frames: int = 20000,
+    batch_size: int = 512,
+    seed: int = 11,
+) -> np.ndarray:
+    """Bounded-memory, train-only semantic codebook fit.
+
+    The previous Lloyd implementation materialised an `[N, K, D]` distance
+    tensor (about 15 GB for KaraOne's 80k HuBERT frames), which causes macOS
+    memory swapping. Mini-batch updates keep the largest work array at
+    `batch_size × K` and never include heldout-subject frames.
+    """
     values = np.asarray(values, dtype=np.float32)
     if values.ndim != 2 or len(values) < 1:
         raise ValueError(f"kmeans expects [N,D], got {values.shape}")
     n_clusters = min(max(2, int(n_clusters)), values.shape[0])
     rng = np.random.default_rng(seed)
-    centers = values[rng.choice(values.shape[0], n_clusters, replace=False)].copy()
-    for _ in range(int(iterations)):
-        ids = nearest_centers(values, centers)
-        for cluster in range(n_clusters):
-            matches = values[ids == cluster]
-            if len(matches):
-                centers[cluster] = matches.mean(axis=0)
-    return centers.astype(np.float32)
+    fit_values = values
+    if len(values) > int(max_fit_frames):
+        fit_values = values[rng.choice(len(values), size=int(max_fit_frames), replace=False)]
+    try:
+        from sklearn.cluster import MiniBatchKMeans
+
+        estimator = MiniBatchKMeans(
+            n_clusters=n_clusters,
+            init="k-means++",
+            n_init=1,
+            batch_size=int(batch_size),
+            random_state=int(seed),
+            reassignment_ratio=0.01,
+        )
+        updates_per_epoch = int(np.ceil(len(fit_values) / int(batch_size)))
+        iterator = tqdm(total=int(iterations) * updates_per_epoch, desc="[0711v1] semantic mini-batch k-means", unit="batch", dynamic_ncols=True)
+        for _ in range(int(iterations)):
+            order = rng.permutation(len(fit_values))
+            for start in range(0, len(fit_values), int(batch_size)):
+                estimator.partial_fit(fit_values[order[start : start + int(batch_size)]])
+                iterator.update(1)
+        iterator.close()
+        return estimator.cluster_centers_.astype(np.float32)
+    except ImportError:
+        # Lightweight fallback for minimal environments: sampled, chunked Lloyd.
+        centers = fit_values[rng.choice(len(fit_values), n_clusters, replace=False)].copy()
+        for _ in tqdm(range(int(iterations)), desc="[0711v1] semantic k-means fallback", unit="epoch", dynamic_ncols=True):
+            ids = nearest_centers(fit_values, centers)
+            for cluster in range(n_clusters):
+                matches = fit_values[ids == cluster]
+                if len(matches):
+                    centers[cluster] = matches.mean(axis=0)
+        return centers.astype(np.float32)
 
 
-def nearest_centers(values: np.ndarray, centers: np.ndarray) -> np.ndarray:
+def nearest_centers(values: np.ndarray, centers: np.ndarray, *, chunk_size: int = 2048, progress_desc: str | None = None) -> np.ndarray:
+    """Nearest-centroid assignment using `[chunk, K]` distances only."""
     values = np.asarray(values, dtype=np.float32)
     centers = np.asarray(centers, dtype=np.float32)
-    distance = np.square(values[:, None, :] - centers[None, :, :]).sum(axis=-1)
-    return distance.argmin(axis=1).astype(np.int64)
+    ids = np.empty(len(values), dtype=np.int64)
+    center_norm = np.square(centers).sum(axis=1, dtype=np.float64).astype(np.float32)
+    iterator = range(0, len(values), int(chunk_size))
+    if progress_desc:
+        iterator = tqdm(iterator, total=int(np.ceil(len(values) / int(chunk_size))), desc=progress_desc, unit="chunk", dynamic_ncols=True)
+    for start in iterator:
+        chunk = values[start : start + int(chunk_size)]
+        # ||x-c||² = ||x||² + ||c||² - 2 x·c; avoids a 3D broadcast allocation.
+        distance = np.square(chunk).sum(axis=1, keepdims=True) + center_norm[None, :] - 2.0 * (chunk @ centers.T)
+        ids[start : start + len(chunk)] = distance.argmin(axis=1)
+    return ids
 
 
 @torch.no_grad()
@@ -175,8 +225,18 @@ def build_adapted_audio_cache(
     summary_array = np.concatenate(summaries, axis=0)
     clip_embedding_array = np.concatenate(clip_embeddings, axis=0)
     train_mask = np.asarray([subject in manifest.train_subjects for subject in subjects], dtype=bool)
-    centers = kmeans_train_only(sequence_array[train_mask].reshape(-1, sequence_array.shape[-1]), semantic_vocab)
-    semantic_ids = nearest_centers(sequence_array.reshape(-1, sequence_array.shape[-1]), centers).reshape(sequence_array.shape[:2])
+    centers = kmeans_train_only(
+        sequence_array[train_mask].reshape(-1, sequence_array.shape[-1]),
+        semantic_vocab,
+        iterations=10,
+        max_fit_frames=20000,
+        batch_size=512,
+    )
+    semantic_ids = nearest_centers(
+        sequence_array.reshape(-1, sequence_array.shape[-1]),
+        centers,
+        progress_desc="[0711v1] semantic token assignment",
+    ).reshape(sequence_array.shape[:2])
     codec_latents = _extract_encodec_latents(root, records, codec_model_path) if codec_model_path else None
     payload: dict[str, Any] = {
         "version": np.asarray("0711v1"),
