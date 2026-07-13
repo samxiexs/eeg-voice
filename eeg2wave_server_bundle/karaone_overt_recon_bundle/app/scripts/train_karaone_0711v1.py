@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--resume", default=None, help="Required for align/flow/evaluate phases as applicable.")
+    parser.add_argument("--resume-training", default=None, help="Resume this phase from a training checkpoint (model, optimizer, epoch and RNG state).")
     parser.add_argument("--gate", default=None, help="Validation gate JSON; required for flow.")
     parser.add_argument("--allow-gate-bypass", action="store_true", help="Exploratory-only: permit token/flow after a failed P02 gate; MM21 remains prohibited.")
     parser.add_argument("--allow-final-test", action="store_true", help="Explicitly authorise the one-time MM21 evaluation phase.")
@@ -190,6 +191,95 @@ def load_model(path: str | Path, model: torch.nn.Module, device: torch.device) -
     return payload
 
 
+def _rng_state() -> dict[str, Any]:
+    """Capture all RNGs that influence shuffled batches and stochastic augmentation."""
+    state: dict[str, Any] = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def _restore_rng_state(state: dict[str, Any]) -> None:
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+    if torch.cuda.is_available() and "cuda" in state:
+        torch.cuda.set_rng_state_all(state["cuda"])
+
+
+def save_training_checkpoint(
+    path: Path,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    *,
+    cfg: dict[str, Any],
+    phase: str,
+    epoch: int,
+    metrics: dict[str, Any],
+    history: list[dict[str, Any]],
+    selection: dict[str, Any],
+) -> None:
+    """Write a complete, phase-local checkpoint after every completed epoch."""
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "rng_state": _rng_state(),
+            "phase": phase,
+            "epoch": epoch,
+            "metrics": metrics,
+            "history": history,
+            "selection": selection,
+            "config": cfg,
+        },
+        path,
+    )
+
+
+def training_resume_path(args: argparse.Namespace, out_dir: Path) -> Path | None:
+    candidate = Path(args.resume_training) if args.resume_training else out_dir / "checkpoints" / "last.pt"
+    if not candidate.exists():
+        if args.resume_training:
+            raise FileNotFoundError(f"Requested training checkpoint does not exist: {candidate}")
+        return None
+    return candidate
+
+
+def resume_training(
+    args: argparse.Namespace,
+    out_dir: Path,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    phase: str,
+) -> tuple[int, list[dict[str, Any]], dict[str, Any]]:
+    """Restore a completed epoch; legacy model-only checkpoints remain usable."""
+    checkpoint = training_resume_path(args, out_dir)
+    if checkpoint is None:
+        return 0, [], {}
+    payload = torch.load(checkpoint, map_location=device, weights_only=False)
+    if payload.get("phase") != phase:
+        raise ValueError(f"Training checkpoint phase mismatch: expected {phase}, got {payload.get('phase')}")
+    model.load_state_dict(payload["state_dict"], strict=True)
+    if "optimizer_state_dict" in payload:
+        optimizer.load_state_dict(payload["optimizer_state_dict"])
+    else:
+        print(f"[0711v1] resuming legacy {phase} checkpoint without optimizer state; optimizer restarts at the configured LR.", flush=True)
+    if "rng_state" in payload:
+        _restore_rng_state(payload["rng_state"])
+    else:
+        print(f"[0711v1] resuming legacy {phase} checkpoint without RNG state; the next epoch is not bitwise-identical.", flush=True)
+    epoch = int(payload.get("epoch", 0))
+    history = list(payload.get("history", []))
+    selection = dict(payload.get("selection", {}))
+    print(f"[0711v1] resumed {phase} from {checkpoint} after completed epoch {epoch}.", flush=True)
+    return epoch, history, selection
+
+
 def augment_eeg(batch: dict[str, Any], cfg: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
     eeg = batch["eeg"].clone()
     topo = batch["topography"].clone()
@@ -253,8 +343,9 @@ def train_audio_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
     optimizer = torch.optim.AdamW((item for item in model.parameters() if item.requires_grad), lr=float(settings["lr"]), weight_decay=float(settings["weight_decay"]))
     labels = {label: idx for idx, label in enumerate(("/diy/", "/iy/", "/m/", "/n/", "/piy/", "/tiy/", "/uw/", "gnaw", "knew", "pat", "pot"))}
     epochs = 1 if args.smoke else int(args.epochs or settings["epochs"])
-    best, history = -1.0, []
-    for epoch in range(1, epochs + 1):
+    start_epoch, history, selection = resume_training(args, out_dir, model, optimizer, device, "audio_ssl")
+    best = float(selection.get("best", max((row.get("subject_val_audio_label_acc", -1.0) for row in history), default=-1.0)))
+    for epoch in range(start_epoch + 1, epochs + 1):
         model.train()
         losses = []
         iterator = tqdm(train_data, desc=f"[0711v1] audio_ssl {epoch}/{epochs}", unit="batch", dynamic_ncols=True)
@@ -294,6 +385,8 @@ def train_audio_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
             best = metric
             audit = FitAudit.from_records("hubert_domain_adapter", manifest, records_for_split(root, manifest, "subject_train"))
             save_audio_adapter(out_dir / "checkpoints" / "best.pt", model, adapter_cfg, audit)
+        write_json(out_dir / "metrics" / "history.json", {"history": history, "selection_split": "subject_val", "test_accessed": False})
+        save_training_checkpoint(out_dir / "checkpoints" / "last.pt", model, optimizer, cfg=cfg, phase="audio_ssl", epoch=epoch, metrics=row, history=history, selection={"best": best})
     write_json(out_dir / "metrics" / "history.json", {"history": history, "selection_split": "subject_val", "test_accessed": False})
     best_path = out_dir / "checkpoints" / "best.pt"
     payload = torch.load(best_path, map_location=device, weights_only=False)
@@ -345,8 +438,9 @@ def train_eeg_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Split
     val_data = loader(make_dataset(cfg, manifest, "subject_val", stage), int(settings["batch_size"]), cfg, shuffle=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(settings["lr"]), weight_decay=float(settings["weight_decay"]))
     epochs = 1 if args.smoke else int(args.epochs or settings["epochs"])
-    best, history = float("inf"), []
-    for epoch in range(1, epochs + 1):
+    start_epoch, history, selection = resume_training(args, out_dir, model, optimizer, device, "eeg_ssl")
+    best = float(selection.get("best", min((row.get("subject_val_view_loss", float("inf")) for row in history), default=float("inf"))))
+    for epoch in range(start_epoch + 1, epochs + 1):
         model.train()
         values = []
         iterator = tqdm(train_data, desc=f"[0711v1] eeg_ssl {epoch}/{epochs}", unit="batch", dynamic_ncols=True)
@@ -369,6 +463,8 @@ def train_eeg_ssl(args: argparse.Namespace, cfg: dict[str, Any], manifest: Split
         if val_loss < best:
             best = val_loss
             save_model(out_dir / "checkpoints" / "best.pt", model, cfg=cfg, phase="eeg_ssl", epoch=epoch, metrics=row)
+        write_json(out_dir / "metrics" / "history.json", {"history": history, "selection_split": "subject_val", "test_accessed": False})
+        save_training_checkpoint(out_dir / "checkpoints" / "last.pt", model, optimizer, cfg=cfg, phase="eeg_ssl", epoch=epoch, metrics=row, history=history, selection={"best": best})
     write_json(out_dir / "metrics" / "history.json", {"history": history, "selection_split": "subject_val", "test_accessed": False})
 
 
@@ -383,8 +479,9 @@ def train_alignment(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
     val_data = loader(make_dataset(cfg, manifest, "subject_val", stage), int(settings["batch_size"]), cfg, shuffle=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(settings["lr"]), weight_decay=float(settings["weight_decay"]))
     epochs = 1 if args.smoke else int(args.epochs or settings["epochs"])
-    best_score, history, best_gate = -float("inf"), [], None
-    for epoch in range(1, epochs + 1):
+    start_epoch, history, selection = resume_training(args, out_dir, model, optimizer, device, phase)
+    best_score = float(selection.get("best_score", max((row.get("semantic_retrieval_gain", -float("inf")) + row.get("token_retrieval_gain", 0.0) + row.get("semantic_over_zero_gain", 0.0) for row in history), default=-float("inf"))))
+    for epoch in range(start_epoch + 1, epochs + 1):
         model.train()
         train_losses = []
         iterator = tqdm(train_data, desc=f"[0711v1] {phase} {epoch}/{epochs}", unit="batch", dynamic_ncols=True)
@@ -415,10 +512,12 @@ def train_alignment(args: argparse.Namespace, cfg: dict[str, Any], manifest: Spl
         print(f"[0711v1] {phase} epoch=" + json.dumps(row, ensure_ascii=False), flush=True)
         score = gate.semantic_retrieval_gain + gate.token_retrieval_gain + gate.semantic_over_zero_gain
         if score > best_score:
-            best_score, best_gate = score, gate
+            best_score = score
             checkpoint = out_dir / "checkpoints" / "best.pt"
             save_model(checkpoint, model, cfg=cfg, phase=phase, epoch=epoch, metrics=row)
             write_gate(out_dir / "metrics" / "validation_gate.json", gate, split="subject_val", manifest=manifest, checkpoint=checkpoint)
+        write_json(out_dir / "metrics" / "history.json", {"history": history, "best_score": best_score, "selection_split": "subject_val", "test_accessed": False})
+        save_training_checkpoint(out_dir / "checkpoints" / "last.pt", model, optimizer, cfg=cfg, phase=phase, epoch=epoch, metrics=row, history=history, selection={"best_score": best_score})
     write_json(out_dir / "metrics" / "history.json", {"history": history, "best_score": best_score, "selection_split": "subject_val", "test_accessed": False})
 
 
@@ -439,8 +538,8 @@ def train_flow(args: argparse.Namespace, cfg: dict[str, Any], manifest: SplitMan
     data = loader(make_dataset(cfg, manifest, "subject_train", stage), int(settings["batch_size"]), cfg, shuffle=True)
     optimizer = torch.optim.AdamW(flow.parameters(), lr=float(settings["lr"]), weight_decay=float(settings["weight_decay"]))
     epochs = 1 if args.smoke else int(args.epochs or settings["epochs"])
-    history = []
-    for epoch in range(1, epochs + 1):
+    start_epoch, history, _ = resume_training(args, out_dir, flow, optimizer, device, "flow")
+    for epoch in range(start_epoch + 1, epochs + 1):
         flow.train()
         values = []
         iterator = tqdm(data, desc=f"[0711v1] flow {epoch}/{epochs}", unit="batch", dynamic_ncols=True)
@@ -466,7 +565,14 @@ def train_flow(args: argparse.Namespace, cfg: dict[str, Any], manifest: SplitMan
         history.append(row)
         write_json(out_dir / "metrics" / "latest_metrics.json", row)
         print("[0711v1] flow epoch=" + json.dumps(row, ensure_ascii=False), flush=True)
-        save_model(out_dir / "checkpoints" / "last.pt", flow, cfg=cfg, phase="flow", epoch=epoch, metrics=row)
+        write_json(out_dir / "metrics" / "history.json", {
+            "history": history,
+            "gate": str(args.gate),
+            "gate_bypassed": bool(args.allow_gate_bypass and not gate.get("passed")),
+            "claim_status": "exploratory_not_reportable" if args.allow_gate_bypass and not gate.get("passed") else "gate_passed",
+            "test_accessed": False,
+        })
+        save_training_checkpoint(out_dir / "checkpoints" / "last.pt", flow, optimizer, cfg=cfg, phase="flow", epoch=epoch, metrics=row, history=history, selection={})
     write_json(out_dir / "metrics" / "history.json", {
         "history": history,
         "gate": str(args.gate),

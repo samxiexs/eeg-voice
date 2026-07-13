@@ -25,6 +25,44 @@ is_true() {
   [[ "$1" == "true" || "$1" == "TRUE" || "$1" == "1" ]]
 }
 
+phase_done() {
+  # Usage: phase_done <latest_metrics.json> <checkpoint> <expected_epochs>
+  "$python_bin" - "$1" "$2" "$3" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+metrics = Path(sys.argv[1])
+checkpoint = Path(sys.argv[2])
+expected = int(sys.argv[3])
+if not metrics.is_file() or not checkpoint.is_file():
+    raise SystemExit(1)
+try:
+    epoch = int(json.loads(metrics.read_text())["epoch"])
+except (ValueError, KeyError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if epoch >= expected else 1)
+PY
+}
+
+resume_training_arg() {
+  local checkpoint="$1"
+  if [[ -f "$checkpoint" ]]; then
+    printf '%s\n' "--resume-training" "$checkpoint"
+  fi
+}
+
+epochs_for() {
+  "$python_bin" - "$config" "$1" <<'PY'
+import sys
+import yaml
+
+cfg = yaml.safe_load(open(sys.argv[1]))
+key = sys.argv[2]
+print(int(cfg[key]["epochs"]))
+PY
+}
+
 exploratory_arg=()
 if is_true "$allow_exploratory"; then
   exploratory_arg=(--allow-gate-bypass)
@@ -73,9 +111,22 @@ case "$phase" in
     else
       "${run[@]}" --phase audio_ssl
     fi
-    "${run[@]}" --phase eeg_ssl
     eeg_checkpoint="$out/${name}_eeg_ssl_s${seed}/checkpoints/best.pt"
-    "${run[@]}" --phase align_global --resume "$eeg_checkpoint"
+    eeg_last="$out/${name}_eeg_ssl_s${seed}/checkpoints/last.pt"
+    if phase_done "$out/${name}_eeg_ssl_s${seed}/metrics/latest_metrics.json" "$eeg_checkpoint" "$(epochs_for eeg_ssl)"; then
+      echo "[0711v1] reusing completed eeg_ssl checkpoint: $eeg_checkpoint"
+    else
+      eeg_resume=( $(resume_training_arg "$eeg_last") )
+      "${run[@]}" --phase eeg_ssl "${eeg_resume[@]}"
+    fi
+    global_last="$out/${name}_align_global_s${seed}/checkpoints/last.pt"
+    global_checkpoint="$out/${name}_align_global_s${seed}/checkpoints/best.pt"
+    if phase_done "$out/${name}_align_global_s${seed}/metrics/latest_metrics.json" "$global_checkpoint" "$(epochs_for alignment)"; then
+      echo "[0711v1] reusing completed align_global checkpoint: $global_checkpoint"
+    else
+      global_resume=( $(resume_training_arg "$global_last") )
+      "${run[@]}" --phase align_global --resume "$eeg_checkpoint" "${global_resume[@]}"
+    fi
     global_gate="$out/${name}_align_global_s${seed}/metrics/validation_gate.json"
     if ! passed_gate "$global_gate"; then
       if ! is_true "$allow_exploratory"; then
@@ -84,8 +135,14 @@ case "$phase" in
       fi
       echo "0711v1 exploratory mode: bypassing failed global gate; all-split output will be diagnostic-only."
     fi
-    global_checkpoint="$out/${name}_align_global_s${seed}/checkpoints/best.pt"
-    "${run[@]}" --phase align_token --resume "$global_checkpoint" --gate "$global_gate" "${exploratory_arg[@]}"
+    token_last="$out/${name}_align_token_s${seed}/checkpoints/last.pt"
+    token_checkpoint="$out/${name}_align_token_s${seed}/checkpoints/best.pt"
+    if phase_done "$out/${name}_align_token_s${seed}/metrics/latest_metrics.json" "$token_checkpoint" "$(epochs_for alignment)"; then
+      echo "[0711v1] reusing completed align_token checkpoint: $token_checkpoint"
+    else
+      token_resume=( $(resume_training_arg "$token_last") )
+      "${run[@]}" --phase align_token --resume "$global_checkpoint" --gate "$global_gate" "${exploratory_arg[@]}" "${token_resume[@]}"
+    fi
     token_gate="$out/${name}_align_token_s${seed}/metrics/validation_gate.json"
     token_passed=true
     if ! passed_gate "$token_gate"; then
@@ -96,9 +153,13 @@ case "$phase" in
       fi
       echo "0711v1 exploratory mode: bypassing failed token gate; all-split output will be diagnostic-only."
     fi
-    token_checkpoint="$out/${name}_align_token_s${seed}/checkpoints/best.pt"
-    "${run[@]}" --phase flow --resume "$token_checkpoint" --gate "$token_gate" "${exploratory_arg[@]}"
     flow_checkpoint="$out/${name}_flow_s${seed}/checkpoints/last.pt"
+    if phase_done "$out/${name}_flow_s${seed}/metrics/latest_metrics.json" "$flow_checkpoint" "$(epochs_for flow)"; then
+      echo "[0711v1] reusing completed flow checkpoint: $flow_checkpoint"
+    else
+      flow_resume=( $(resume_training_arg "$flow_checkpoint") )
+      "${run[@]}" --phase flow --resume "$token_checkpoint" --gate "$token_gate" "${exploratory_arg[@]}" "${flow_resume[@]}"
+    fi
     if [[ "$token_passed" != true ]] || ! passed_gate "$global_gate"; then
       "$python_bin" scripts/synthesize_karaone_0711v1.py \
         --config "$config" --stage "$stage" --seed "$seed" \
