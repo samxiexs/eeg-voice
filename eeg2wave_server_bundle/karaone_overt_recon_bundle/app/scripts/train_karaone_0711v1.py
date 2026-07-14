@@ -206,9 +206,11 @@ def _rng_state() -> dict[str, Any]:
 def _restore_rng_state(state: dict[str, Any]) -> None:
     random.setstate(state["python"])
     np.random.set_state(state["numpy"])
-    torch.set_rng_state(state["torch"])
+    # map_location=device may place serialized RNG byte tensors on MPS/CUDA.
+    # PyTorch's default CPU generator only accepts a CPU ByteTensor here.
+    torch.set_rng_state(state["torch"].detach().to(device="cpu", dtype=torch.uint8))
     if torch.cuda.is_available() and "cuda" in state:
-        torch.cuda.set_rng_state_all(state["cuda"])
+        torch.cuda.set_rng_state_all([item.detach().to(device="cpu", dtype=torch.uint8) for item in state["cuda"]])
 
 
 def save_training_checkpoint(
