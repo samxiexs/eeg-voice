@@ -36,7 +36,7 @@ from src.karaone_0711v1.data import (  # noqa: E402
 )
 from src.karaone_0711v1.hubert_roundtrip import (  # noqa: E402
     HubertRoundTripConfig,
-    HubertToEncodecDecoder,
+    HubertTokenToEncodecDecoder,
     per_example_latent_metrics,
 )
 
@@ -47,7 +47,7 @@ SPLITS = ("subject_train", "subject_val", "subject_test")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Audio-only audit: frozen adapted-HuBERT sequence -> EnCodec latent -> wav."
+        description="Audio-only decoder: adapted-HuBERT semantic token IDs -> EnCodec latent -> wav."
     )
     parser.add_argument("--config", default=str(BUNDLE_DIR / "configs" / "karaone_0711v1.yaml"))
     parser.add_argument("--phase", choices=PHASES, default="all")
@@ -95,7 +95,7 @@ class RoundTripBank:
     def __init__(self, path: str | Path, manifest: SplitManifest):
         self.path = Path(path)
         raw = np.load(self.path, allow_pickle=False)
-        required = {"keys", "subjects", "labels", "audio_paths", "fit_split", "semantic_sequence", "encodec_latent"}
+        required = {"keys", "subjects", "labels", "audio_paths", "fit_split", "semantic_token_ids", "semantic_codebook", "encodec_latent"}
         missing = required - set(raw.files)
         if missing:
             raise ValueError(f"Round-trip audit requires cache fields: {sorted(missing)}")
@@ -104,12 +104,15 @@ class RoundTripBank:
         self.labels = np.asarray(raw["labels"]).astype(str)
         self.audio_paths = np.asarray(raw["audio_paths"]).astype(str)
         self.fit_split = np.asarray(raw["fit_split"], dtype=bool)
-        self.sequence = np.asarray(raw["semantic_sequence"], dtype=np.float32)
+        self.token_ids = np.asarray(raw["semantic_token_ids"], dtype=np.int64)
+        self.vocab_size = int(np.asarray(raw["semantic_codebook"]).shape[0])
         self.latent = np.asarray(raw["encodec_latent"], dtype=np.float32)
-        if len({len(self.keys), len(self.subjects), len(self.labels), len(self.audio_paths), len(self.fit_split), len(self.sequence), len(self.latent)}) != 1:
+        if len({len(self.keys), len(self.subjects), len(self.labels), len(self.audio_paths), len(self.fit_split), len(self.token_ids), len(self.latent)}) != 1:
             raise ValueError("Audio cache arrays do not share a common trial count")
-        if self.sequence.ndim != 3 or self.latent.ndim != 3:
-            raise ValueError(f"Expected sequences [N,T,D], got {self.sequence.shape} and {self.latent.shape}")
+        if self.token_ids.ndim != 2 or self.latent.ndim != 3:
+            raise ValueError(f"Expected token IDs [N,T] and latents [N,T,D], got {self.token_ids.shape} and {self.latent.shape}")
+        if self.token_ids.min() < 0 or self.token_ids.max() >= self.vocab_size:
+            raise ValueError("semantic_token_ids contain values outside the fitted codebook vocabulary")
         self.splits = np.asarray([manifest.split_for(subject) for subject in self.subjects])
         if not np.array_equal(self.fit_split, self.splits == "subject_train"):
             raise ValueError("fit_split disagrees with the fixed 0711v1 subject split")
@@ -132,7 +135,7 @@ class IndexedCacheDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
     def __getitem__(self, item: int) -> tuple[torch.Tensor, torch.Tensor]:
         index = int(self.indices[item])
-        source = torch.from_numpy(np.ascontiguousarray(self.bank.sequence[index]))
+        source = torch.from_numpy(np.ascontiguousarray(self.bank.token_ids[index])).long()
         target = (self.bank.latent[index] - self.latent_mean[None, :]) / self.latent_std[None, :]
         return source, torch.from_numpy(np.ascontiguousarray(target))
 
@@ -159,8 +162,8 @@ def inner_train_validation_indices(bank: RoundTripBank, fraction: float) -> tupl
 
 def roundtrip_config(settings: dict[str, Any], bank: RoundTripBank) -> HubertRoundTripConfig:
     return HubertRoundTripConfig(
-        source_dim=int(bank.sequence.shape[-1]),
-        source_steps=int(bank.sequence.shape[1]),
+        vocab_size=int(bank.vocab_size),
+        token_steps=int(bank.token_ids.shape[1]),
         latent_dim=int(bank.latent.shape[-1]),
         latent_steps=int(bank.latent.shape[1]),
         d_model=int(settings["d_model"]),
@@ -194,19 +197,23 @@ def summarise_vectors(vectors: dict[str, np.ndarray]) -> dict[str, dict[str, flo
 
 @torch.no_grad()
 def predict_latents(
-    model: HubertToEncodecDecoder,
+    model: HubertTokenToEncodecDecoder,
     bank: RoundTripBank,
     indices: np.ndarray,
     latent_mean: np.ndarray,
     latent_std: np.ndarray,
     batch_size: int,
     device: torch.device,
+    progress_desc: str | None = None,
 ) -> np.ndarray:
     model.eval()
     output: list[np.ndarray] = []
-    for start in range(0, len(indices), int(batch_size)):
+    batch_starts = range(0, len(indices), int(batch_size))
+    if progress_desc is not None:
+        batch_starts = tqdm(batch_starts, desc=progress_desc, unit="batch", dynamic_ncols=True)
+    for start in batch_starts:
         rows = indices[start : start + int(batch_size)]
-        source = torch.from_numpy(np.ascontiguousarray(bank.sequence[rows])).to(device)
+        source = torch.from_numpy(np.ascontiguousarray(bank.token_ids[rows])).long().to(device)
         predicted = model(source).cpu().numpy()
         output.append(predicted * latent_std[None, None, :] + latent_mean[None, None, :])
     return np.concatenate(output, axis=0).astype(np.float32)
@@ -235,7 +242,7 @@ def checkpoint_path(args: argparse.Namespace, out_dir: Path) -> Path:
 
 def save_checkpoint(
     path: Path,
-    model: HubertToEncodecDecoder,
+    model: HubertTokenToEncodecDecoder,
     optimizer: torch.optim.Optimizer,
     *,
     cfg: HubertRoundTripConfig,
@@ -265,14 +272,14 @@ def save_checkpoint(
     )
 
 
-def load_decoder(path: Path, bank: RoundTripBank, device: torch.device) -> tuple[HubertToEncodecDecoder, dict[str, Any], np.ndarray, np.ndarray]:
+def load_decoder(path: Path, bank: RoundTripBank, device: torch.device) -> tuple[HubertTokenToEncodecDecoder, dict[str, Any], np.ndarray, np.ndarray]:
     payload = torch.load(path, map_location=device, weights_only=False)
     cfg = HubertRoundTripConfig(**payload["roundtrip_config"])
-    expected = (cfg.source_steps, cfg.source_dim, cfg.latent_steps, cfg.latent_dim)
-    observed = (bank.sequence.shape[1], bank.sequence.shape[-1], bank.latent.shape[1], bank.latent.shape[-1])
+    expected = (cfg.token_steps, cfg.vocab_size, cfg.latent_steps, cfg.latent_dim)
+    observed = (bank.token_ids.shape[1], bank.vocab_size, bank.latent.shape[1], bank.latent.shape[-1])
     if expected != observed:
         raise ValueError(f"Checkpoint/cache shape mismatch: checkpoint={expected}, cache={observed}")
-    model = HubertToEncodecDecoder(cfg).to(device)
+    model = HubertTokenToEncodecDecoder(cfg).to(device)
     model.load_state_dict(payload["state_dict"], strict=True)
     return model, payload, np.asarray(payload["latent_mean"], dtype=np.float32), np.asarray(payload["latent_std"], dtype=np.float32)
 
@@ -283,7 +290,7 @@ def train_decoder(args: argparse.Namespace, cfg: dict[str, Any], bank: RoundTrip
     latent_mean = bank.latent[inner_train].mean(axis=(0, 1)).astype(np.float32)
     latent_std = np.maximum(bank.latent[inner_train].std(axis=(0, 1)), 1e-6).astype(np.float32)
     architecture = roundtrip_config(settings, bank)
-    model = HubertToEncodecDecoder(architecture).to(device)
+    model = HubertTokenToEncodecDecoder(architecture).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(settings["lr"]), weight_decay=float(settings["weight_decay"]))
     epochs = int(args.epochs or settings["epochs"])
     history: list[dict[str, float]] = []
@@ -327,7 +334,16 @@ def train_decoder(args: argparse.Namespace, cfg: dict[str, Any], bank: RoundTrip
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
             iterator.set_postfix(normalized_latent_mse=f"{losses[-1]:.4f}")
-        validation_prediction = predict_latents(model, bank, inner_val, latent_mean, latent_std, int(settings["batch_size"]), device)
+        validation_prediction = predict_latents(
+            model,
+            bank,
+            inner_val,
+            latent_mean,
+            latent_std,
+            int(settings["batch_size"]),
+            device,
+            progress_desc=f"[hubert_roundtrip] validate {epoch}/{epochs}",
+        )
         validation_target = bank.latent[inner_val]
         raw_mse = float(np.mean((validation_prediction - validation_target) ** 2))
         cosine = float(latent_vectors(validation_prediction, validation_target)["latent_cosine"].mean())
@@ -394,7 +410,16 @@ def evaluate_decoder(args: argparse.Namespace, bank: RoundTripBank, out_dir: Pat
     path = checkpoint_path(args, out_dir)
     model, payload, latent_mean, latent_std = load_decoder(path, bank, device)
     indices = bank.indices(args.split)
-    prediction = predict_latents(model, bank, indices, latent_mean, latent_std, batch_size=32, device=device)
+    prediction = predict_latents(
+        model,
+        bank,
+        indices,
+        latent_mean,
+        latent_std,
+        batch_size=32,
+        device=device,
+        progress_desc=f"[hubert_roundtrip] evaluate {args.split}",
+    )
     target = bank.latent[indices]
     train_indices = bank.indices("subject_train")
     mean_baseline = np.broadcast_to(bank.latent[train_indices].mean(axis=0, keepdims=True), target.shape).copy()
@@ -405,7 +430,7 @@ def evaluate_decoder(args: argparse.Namespace, bank: RoundTripBank, out_dir: Pat
         "checkpoint_epoch": int(payload["epoch"]),
         "split": args.split,
         "n_trials": int(len(indices)),
-        "input": "frozen_adapted_hubert_semantic_sequence_[50,768]",
+        "input": "frozen_adapted_hubert_semantic_token_ids_[50]_vocab_64",
         "target": "cached_encodec_latent_[150,128]",
         "roundtrip": summarise_vectors(latent_vectors(prediction, target)),
         "mean_latent_baseline": summarise_vectors(latent_vectors(mean_baseline, target)),
@@ -483,7 +508,16 @@ def synthesise_decoder(args: argparse.Namespace, cfg: dict[str, Any], bank: Roun
     indices = bank.indices(args.split)
     if args.limit is not None:
         indices = indices[: int(args.limit)]
-    prediction = predict_latents(model, bank, indices, latent_mean, latent_std, batch_size=16, device=device)
+    prediction = predict_latents(
+        model,
+        bank,
+        indices,
+        latent_mean,
+        latent_std,
+        batch_size=16,
+        device=device,
+        progress_desc=f"[hubert_roundtrip] predict {args.split}",
+    )
     root = resolve(cfg["data"]["root"])
     codec_path = resolve(cfg["paths"]["encodec_model"])
     codec = load_codec_backend(
@@ -544,7 +578,7 @@ def synthesise_decoder(args: argparse.Namespace, cfg: dict[str, Any], bank: Roun
         "waveform_sample_rate": int(codec.sample_rate),
         "reference_audio": "KaraOne source wav standardized to 16 kHz/2 s/RMS, then resampled to the EnCodec decoder sample rate for a fair comparison.",
         "oracle_definition": "cached_encodec_latent decoded without per-example EnCodec decoder scales; this is a cache-latent ceiling, not a lossless waveform oracle.",
-        "roundtrip_input": "frozen adapted-HuBERT semantic_sequence [50,768] from the existing 0711v1 cache",
+        "roundtrip_input": "frozen adapted-HuBERT semantic_token_ids [50] from the existing 0711v1 cache",
         "cache_latent_oracle_vs_reference": summarise_vectors({key: np.asarray(value) for key, value in oracle_metrics.items()}),
         "hubert_roundtrip_vs_reference": summarise_vectors({key: np.asarray(value) for key, value in reconstruction_metrics.items()}),
         "test_accessed": args.split == "subject_test",
@@ -558,7 +592,7 @@ def synthesise_decoder(args: argparse.Namespace, cfg: dict[str, Any], bank: Roun
             "checkpoint": str(path),
             "split": args.split,
             "n_generated": int(len(indices)),
-            "inference_input": "frozen_adapted_hubert_semantic_sequence_only",
+            "inference_input": "frozen_adapted_hubert_semantic_token_ids_only",
             "reference_audio_used_for_reconstruction": False,
             "cache_latent_used_for_reconstruction": False,
             "cache_latent_used_only_for_oracle_export_and_metrics": True,
@@ -599,7 +633,7 @@ def main() -> None:
                 input_paths=[cache],
             ),
             "experiment": "audio_only_frozen_adapted_hubert_roundtrip",
-            "input": "semantic_sequence [50,768]",
+            "input": "semantic_token_ids [50] with 64-unit codebook",
             "target": "encodec_latent [150,128]",
             "eeg_used": False,
             "test_accessed": False,

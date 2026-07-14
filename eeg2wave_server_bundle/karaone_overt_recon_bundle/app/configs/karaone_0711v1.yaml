@@ -71,16 +71,16 @@ flow:
   sample_steps: 24
 
 hubert_roundtrip:
-  # Frozen adapted-HuBERT sequence [50, 768] -> EnCodec latent [150, 128].
-  # This is an audio-only representation audit; it never takes EEG as input.
-  batch_size: 16
+  # Adapted-HuBERT semantic token IDs [50] (64 units) -> EnCodec latent [150, 128].
+  # This is an audio-only token decoder; it never takes EEG or continuous HuBERT hidden states as input.
+  batch_size: 32
   epochs: 80
   lr: 0.0003
   weight_decay: 0.0001
-  d_model: 256
+  d_model: 128
   heads: 4
-  encoder_layers: 4
-  refiner_layers: 2
+  encoder_layers: 2
+  refiner_layers: 1
   dropout: 0.10
   inner_val_fraction: 0.10
 

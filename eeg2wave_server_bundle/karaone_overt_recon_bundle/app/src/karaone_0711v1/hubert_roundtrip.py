@@ -9,34 +9,33 @@ import torch.nn.functional as F
 
 @dataclass(frozen=True)
 class HubertRoundTripConfig:
-    """Architecture for a frozen-HuBERT-to-EnCodec audit decoder.
+    """Architecture for a discrete HuBERT-token-to-EnCodec audit decoder.
 
-    This model is deliberately separate from the EEG flow decoder.  Its input
-    is an adapted HuBERT sequence, and it predicts only the cached continuous
-    EnCodec latent.  It never accepts EEG, subject IDs, labels, or waveform
-    samples as inputs.
+    This model is deliberately separate from the EEG flow decoder. Its only
+    input is the 50-step, 64-unit semantic_token_ids generated from adapted
+    HuBERT. It never accepts EEG, continuous HuBERT hidden states, subject IDs,
+    labels, waveforms, or true EnCodec latents as inputs.
     """
 
-    source_dim: int = 768
-    source_steps: int = 50
+    vocab_size: int = 64
+    token_steps: int = 50
     latent_dim: int = 128
     latent_steps: int = 150
-    d_model: int = 256
+    d_model: int = 128
     heads: int = 4
-    encoder_layers: int = 4
-    refiner_layers: int = 2
+    encoder_layers: int = 2
+    refiner_layers: int = 1
     dropout: float = 0.1
 
 
-class HubertToEncodecDecoder(nn.Module):
-    """Predict EnCodec latents from a frozen, continuous HuBERT sequence."""
+class HubertTokenToEncodecDecoder(nn.Module):
+    """Predict EnCodec latents from discrete adapted-HuBERT token IDs only."""
 
     def __init__(self, cfg: HubertRoundTripConfig = HubertRoundTripConfig()):
         super().__init__()
         self.cfg = cfg
-        self.input_norm = nn.LayerNorm(cfg.source_dim)
-        self.input_projection = nn.Linear(cfg.source_dim, cfg.d_model)
-        self.source_position = nn.Parameter(torch.zeros(1, cfg.source_steps, cfg.d_model))
+        self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.token_position = nn.Parameter(torch.zeros(1, cfg.token_steps, cfg.d_model))
         self.latent_position = nn.Parameter(torch.zeros(1, cfg.latent_steps, cfg.d_model))
         encoder_layer = nn.TransformerEncoderLayer(
             cfg.d_model,
@@ -59,18 +58,15 @@ class HubertToEncodecDecoder(nn.Module):
         )
         self.latent_refiner = nn.TransformerEncoder(refiner_layer, num_layers=cfg.refiner_layers)
         self.output_projection = nn.Sequential(nn.LayerNorm(cfg.d_model), nn.Linear(cfg.d_model, cfg.latent_dim))
-        nn.init.normal_(self.source_position, std=0.02)
+        nn.init.normal_(self.token_position, std=0.02)
         nn.init.normal_(self.latent_position, std=0.02)
 
-    def forward(self, sequence: torch.Tensor) -> torch.Tensor:
-        if sequence.ndim != 3:
-            raise ValueError(f"Expected HuBERT sequence [B,T,D], got {tuple(sequence.shape)}")
-        if sequence.shape[1:] != (self.cfg.source_steps, self.cfg.source_dim):
-            raise ValueError(
-                "HuBERT sequence shape mismatch: expected "
-                f"[B,{self.cfg.source_steps},{self.cfg.source_dim}], got {tuple(sequence.shape)}"
-            )
-        encoded = self.input_projection(self.input_norm(sequence)) + self.source_position
+    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        if token_ids.ndim != 2 or token_ids.shape[1] != self.cfg.token_steps:
+            raise ValueError(f"Expected token IDs [B,{self.cfg.token_steps}], got {tuple(token_ids.shape)}")
+        if token_ids.numel() and (token_ids.min() < 0 or token_ids.max() >= self.cfg.vocab_size):
+            raise ValueError(f"Token IDs must be in [0,{self.cfg.vocab_size - 1}]")
+        encoded = self.token_embedding(token_ids.long()) + self.token_position
         encoded = self.source_encoder(encoded)
         upsampled = F.interpolate(
             encoded.transpose(1, 2),
