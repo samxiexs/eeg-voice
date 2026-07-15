@@ -1,0 +1,88 @@
+version: "0715"
+
+data:
+  root: ../data/karaone
+  eeg_len: 768
+  eeg_sample_rate: 256
+  baseline_mode: robust_clearing
+  baseline_clip: 12.0
+  subject_val: P02
+  subject_test: MM21
+  train_subjects: [MM05, MM08, MM09, MM10, MM11, MM12, MM14, MM15, MM16, MM18, MM19, MM20]
+
+paths:
+  cache_root: ../artifacts/karaone_0715
+  output_root: ../artifacts/outputs_karaone_0715
+  encodec_model: ../models/encodec_24khz
+
+codec:
+  sample_rate: 16000
+  duration_sec: 2.0
+  bandwidth: 6.0
+  codebooks: 8
+  code_steps: 150
+  vocab_size: 1024
+  extraction_batch_size: 8
+
+audio_model:
+  d_model: 192
+  condition_steps: 50
+  encoder_layers: 3
+  decoder_layers: 4
+  heads: 6
+  dropout: 0.10
+  batch_size: 12
+  epochs: 60
+  lr: 0.0003
+  weight_decay: 0.0001
+  mask_ratio_min: 0.50
+  mask_ratio_max: 0.95
+  full_mask_probability: 0.25
+  condition_dropout: 0.20
+  label_dropout: 0.15
+  lambda_label: 0.25
+  codebook_weights: [1.0, 1.0, 0.75, 0.60, 0.45, 0.35, 0.25, 0.20]
+
+eeg_model:
+  d_model: 192
+  condition_steps: 50
+  transformer_layers: 3
+  heads: 6
+  dropout: 0.15
+  temporal_kernels: [15, 31, 63]
+  stem_stride: 4
+  batch_size: 8
+  epochs: 80
+  lr: 0.0002
+  weight_decay: 0.001
+  channel_dropout: 0.10
+  time_mask_ratio: 0.08
+  noise_std: 0.015
+  subject_adversary_max: 0.15
+  code_warmup_epochs: 20
+  lambda_label: 1.0
+  lambda_alignment: 1.0
+  lambda_contrastive: 0.25
+  lambda_code: 0.50
+  lambda_envelope: 0.30
+  lambda_timing: 0.15
+  lambda_subject: 0.10
+  lambda_distill: 0.15
+  lambda_variance: 0.05
+  codebook_weights: [1.0, 0.75, 0.30, 0.20, 0.10, 0.08, 0.05, 0.05]
+
+evaluation:
+  bootstrap_samples: 1000
+  chance_accuracy: 0.0909090909
+  min_p02_balanced_accuracy: 0.20
+  maskgit_steps: 12
+  synthesis_temperature: 0.0
+  synthesis_batch_size: 4
+  audio_roundtrip_export_limit: 12
+  min_audio_condition_content_accuracy: 0.50
+  min_audio_condition_plus_label_accuracy: 0.70
+
+run:
+  seed: 15
+  num_workers: 0
+  grad_clip: 1.0
