@@ -1,0 +1,6 @@
+version: ds004306-audio-audit-v1
+enabled: false
+notes: >-
+  Keep disabled until the published category candidates are manually verified.
+  In particular, flower/1.ogg, flower/2.ogg, and hammer/2.ogg are byte-identical;
+  candidate lists must not be used as trial-level targets.

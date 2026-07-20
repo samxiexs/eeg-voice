@@ -1,0 +1,16 @@
+version: combined-0715-v1-split
+unit: subject_group_id
+
+datasets:
+  feis:
+    train: ["feis:01", "feis:02", "feis:03", "feis:04", "feis:06", "feis:07", "feis:08", "feis:09", "feis:10", "feis:11", "feis:12", "feis:13", "feis:14", "feis:15", "feis:16", "feis:17", "feis:18", "feis:19"]
+    validation: ["feis:20"]
+    test: ["feis:21"]
+  karaone:
+    train: ["karaone:MM05", "karaone:MM08", "karaone:MM09", "karaone:MM10", "karaone:MM11", "karaone:MM12", "karaone:MM14", "karaone:MM15", "karaone:MM16", "karaone:MM18", "karaone:MM19", "karaone:MM20"]
+    validation: ["karaone:P02"]
+    test: ["karaone:MM21"]
+  ds004306:
+    train: ["ds004306:sub-013", "ds004306:sub-012", "ds004306:sub-016", "ds004306:sub-015", "ds004306:sub-03", "ds004306:sub-08", "ds004306:sub-010", "ds004306:sub-018"]
+    validation: ["ds004306:sub-014", "ds004306:sub-019"]
+    test: ["ds004306:sub-011", "ds004306:sub-017"]

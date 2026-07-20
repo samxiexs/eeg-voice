@@ -1,0 +1,97 @@
+version: combined-0715-v1
+
+data:
+  eeg_output_root: ../../eeg_output
+  eeg_len: 768
+  eeg_sample_rate: 256
+  channels: 14
+  split_file: split/combined_0715_v1_split.yaml
+  exclude_feis_subjects: ["05"]
+  label_slices:
+    feis: [0, 16]
+    karaone: [16, 27]
+    ds004306: [27, 30]
+
+paths:
+  cache_root: ../../artifacts/combined_0715_v1/cache
+  output_root: ../../artifacts/combined_0715_v1
+  encodec_model: ../../../karaone_overt_recon_bundle/models/encodec_24khz
+
+codec:
+  sample_rate: 16000
+  duration_sec: 2.0
+  bandwidth: 6.0
+  codebooks: 8
+  code_steps: 150
+  vocab_size: 1024
+  extraction_batch_size: 8
+
+audio_model:
+  d_model: 192
+  condition_steps: 50
+  encoder_layers: 3
+  decoder_layers: 4
+  heads: 6
+  dropout: 0.10
+  batch_size: 8
+  epochs: 60
+  lr: 0.0003
+  weight_decay: 0.0001
+  mask_ratio_min: 0.50
+  mask_ratio_max: 0.95
+  full_mask_probability: 0.25
+  condition_dropout: 0.20
+  label_dropout: 0.15
+  lambda_label: 0.25
+  codebook_weights: [1.0, 1.0, 0.75, 0.60, 0.45, 0.35, 0.25, 0.20]
+
+eeg_model:
+  d_model: 192
+  condition_steps: 50
+  transformer_layers: 3
+  heads: 6
+  dropout: 0.15
+  temporal_kernels: [15, 31, 63]
+  stem_stride: 4
+  batch_size: 4
+  epochs: 80
+  lr: 0.0002
+  weight_decay: 0.001
+  channel_dropout: 0.10
+  time_mask_ratio: 0.08
+  noise_std: 0.015
+  subject_adversary_max: 0.15
+  code_warmup_epochs: 20
+  dataset_weights: {feis: 0.40, karaone: 0.40, ds004306: 0.20}
+  lambda_label: 1.0
+  lambda_alignment: 1.0
+  lambda_contrastive: 0.25
+  contrastive_temperature: 0.08
+  contrastive_cross_subject_weight_feis: 0.25
+  lambda_code_strong: 0.50
+  lambda_code_feis: 0.15
+  lambda_alignment_feis: 0.50
+  lambda_alignment_ds: 0.20
+  lambda_subject: 0.10
+  lambda_distill: 0.15
+  lambda_variance: 0.05
+  codebook_weights: [1.0, 0.75, 0.30, 0.20, 0.10, 0.08, 0.05, 0.05]
+
+evaluation:
+  bootstrap_samples: 1000
+  maskgit_steps: 12
+  synthesis_temperature: 0.0
+  min_audio_condition_accuracy: {feis: 0.60, karaone: 0.50}
+  min_label_assisted_accuracy: {feis: 0.70, karaone: 0.70}
+  minimum_chance_margin: 0.03
+  minimum_probe_gain: 0.02
+  roundtrip_max_per_label: 4
+  minimum_codec_oracle_median_correlation: 0.65
+  minimum_codec_oracle_median_si_sdr_db: 0.0
+  maximum_codec_oracle_median_log_spectrogram_mae_db: 12.0
+
+run:
+  seed: 15
+  num_workers: 0
+  grad_clip: 1.0
+  precision: fp32

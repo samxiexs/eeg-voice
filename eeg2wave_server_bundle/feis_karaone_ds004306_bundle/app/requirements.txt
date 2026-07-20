@@ -1,0 +1,11 @@
+numpy
+scipy
+torch
+tqdm
+pyyaml
+pandas
+scikit-learn
+transformers
+huggingface_hub
+mne
+soundfile
