@@ -36,6 +36,7 @@ audio_model:
   batch_size: 8
   epochs: 60
   lr: 0.0003
+  finetune_lr: 0.0001
   weight_decay: 0.0001
   mask_ratio_min: 0.50
   mask_ratio_max: 0.95

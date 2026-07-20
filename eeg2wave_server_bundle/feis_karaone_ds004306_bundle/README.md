@@ -105,6 +105,26 @@ bash app/run_combined_0715_v1.sh train-eeg
 bash app/run_combined_0715_v1.sh validate
 ```
 
+音频阶段现在是“监督音频初始化 → 三数据集音频微调”，不是随机初始化：
+`train-audio` 会检查
+`../karaone_overt_recon_bundle/artifacts/outputs_karaone_0715/karaone_0715_audio_codec_s15/checkpoints/best.pt`；
+如果不存在，会先自动运行 KaraOne 0715 `prepare` 和 `audio`，再将其 EnCodec
+代码生成器/条件编码器权重迁移到 30-label combined 模型并继续微调。KaraOne
+的 11 个 label head 行会复制到 combined 的 KaraOne label slice，其余 FEIS 和
+ds004306 行保留为新初始化并在 combined 音频监督上训练。初始化 checkpoint 的
+SHA256 和迁移报告会写入 combined audio checkpoint；微调默认使用比 scratch 更
+小的 `audio_model.finetune_lr=1e-4`；resume 时必须再次提供同一初始化 checkpoint。
+
+如需显式指定已训练好的 KaraOne 音频 checkpoint：
+
+```bash
+KARAONE_AUDIO_CHECKPOINT=/absolute/path/to/karaone_0715_audio_codec_s15/checkpoints/best.pt \
+bash app/run_combined_0715_v1.sh train-audio
+```
+
+`--allow-scratch-audio` 仅用于轻量诊断 smoke；它会明确标记为
+`scratch_diagnostic`，不应作为最终 label-to-audio 结果。
+
 如果希望一次性执行上述流程，并在最后为 FEIS、KaraOne、ds004306 都生成
 validation synthesis，可以直接运行：
 

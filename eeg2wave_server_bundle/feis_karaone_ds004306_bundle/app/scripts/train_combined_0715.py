@@ -56,6 +56,8 @@ from src.combined_0715.model import (  # noqa: E402
 
 
 DATASETS = ("feis", "karaone", "ds004306")
+KARAONE_LABELS = ("/diy/", "/iy/", "/m/", "/n/", "/piy/", "/tiy/", "/uw/", "gnaw", "knew", "pat", "pot")
+KARAONE_GLOBAL_OFFSET = 16
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +67,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache", required=True)
     parser.add_argument("--device", default=None)
     parser.add_argument("--audio-checkpoint", default=None)
+    parser.add_argument(
+        "--audio-init-checkpoint",
+        default=None,
+        help=(
+            "Supervised KaraOne audio checkpoint used to initialize the combined audio model. "
+            "Required for non-scratch audio training; 11-label KaraOne heads are expanded into the combined 30-label space."
+        ),
+    )
+    parser.add_argument(
+        "--allow-scratch-audio",
+        action="store_true",
+        help="Explicitly allow random-init audio training (diagnostic only; not the recommended research pipeline).",
+    )
     parser.add_argument("--eeg-checkpoint", default=None)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--epochs", type=int, default=None)
@@ -162,6 +177,7 @@ def save_checkpoint(
     cfg_path: Path,
     lineage: dict[str, Any],
     dependencies: dict[str, str] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
@@ -175,6 +191,7 @@ def save_checkpoint(
         "phase": phase,
         "lineage": lineage,
         "dependencies": dependencies or {},
+        "metadata": metadata or {},
         "config_sha256": config_hash(cfg_path),
         "torch_rng_state": torch.get_rng_state(),
         "numpy_rng_state": np.random.get_state(),
@@ -222,6 +239,120 @@ def make_loader(dataset, batch_size: int, cfg: dict[str, Any], *, balanced: bool
     return DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=int(cfg["run"]["num_workers"]))
 
 
+def initialize_audio_model(
+    model: AudioCodeAutoencoder,
+    architecture: AudioCodeModelConfig,
+    checkpoint_path: Path,
+    device: torch.device,
+) -> dict[str, Any]:
+    """Initialize the combined audio model from a supervised KaraOne audio checkpoint.
+
+    KaraOne has 11 labels while the combined model has 30 global labels. All
+    codec/transformer weights are transferred exactly; the KaraOne label rows
+    are copied into the combined KaraOne slice and the FEIS/ds004306 rows keep
+    their fresh initialization. This is initialization for fine-tuning, not a
+    resume path, so the source checkpoint need not carry combined lineage.
+    """
+
+    payload = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    if not isinstance(payload, dict) or payload.get("phase") != "audio":
+        raise ValueError(f"Audio initialization checkpoint must be an audio checkpoint: {checkpoint_path}")
+    source_config_raw = payload.get("model_config")
+    source_state = payload.get("state_dict")
+    if not isinstance(source_config_raw, dict) or not isinstance(source_state, dict):
+        raise ValueError(f"Audio initialization checkpoint is missing model_config/state_dict: {checkpoint_path}")
+    try:
+        source_config = AudioCodeModelConfig(**source_config_raw)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"Invalid audio initialization model_config in {checkpoint_path}: {error}") from error
+
+    shared_fields = (
+        "codebooks",
+        "code_steps",
+        "vocab_size",
+        "d_model",
+        "condition_steps",
+        "encoder_layers",
+        "decoder_layers",
+        "heads",
+        "dropout",
+    )
+    mismatches = {
+        field: {"source": getattr(source_config, field), "target": getattr(architecture, field)}
+        for field in shared_fields
+        if getattr(source_config, field) != getattr(architecture, field)
+    }
+    if mismatches:
+        raise ValueError(f"Audio initialization architecture mismatch: {json.dumps(mismatches, sort_keys=True)}")
+    if source_config.num_labels not in {len(KARAONE_LABELS), architecture.num_labels}:
+        raise ValueError(
+            f"Unsupported source label count {source_config.num_labels}; expected {len(KARAONE_LABELS)} or {architecture.num_labels}"
+        )
+
+    target_state = model.state_dict()
+    copied: list[str] = []
+    expanded: list[str] = []
+    missing: list[str] = []
+    unexpected: list[str] = []
+
+    with torch.no_grad():
+        for key, target in target_state.items():
+            if key not in source_state:
+                missing.append(key)
+                continue
+            source = source_state[key]
+            if not torch.is_tensor(source):
+                raise ValueError(f"Non-tensor state entry in {checkpoint_path}: {key}")
+            if tuple(source.shape) == tuple(target.shape):
+                target.copy_(source.to(dtype=target.dtype, device=target.device))
+                copied.append(key)
+                continue
+            label_expansion = {
+                "encoder.label_head.1.weight": ("rows",),
+                "encoder.label_head.1.bias": ("rows",),
+                "decoder.label_embedding": ("rows",),
+            }
+            if key in label_expansion and source_config.num_labels == len(KARAONE_LABELS):
+                expected_source_shape = (len(KARAONE_LABELS),) + tuple(target.shape[1:])
+                if tuple(source.shape) != expected_source_shape or target.shape[0] != architecture.num_labels:
+                    raise ValueError(f"Unexpected label-head shape for {key}: source={tuple(source.shape)}, target={tuple(target.shape)}")
+                target[KARAONE_GLOBAL_OFFSET : KARAONE_GLOBAL_OFFSET + len(KARAONE_LABELS)].copy_(
+                    source.to(dtype=target.dtype, device=target.device)
+                )
+                expanded.append(key)
+                continue
+            raise ValueError(f"Incompatible state entry {key}: source={tuple(source.shape)}, target={tuple(target.shape)}")
+
+    for key in source_state:
+        if key not in target_state:
+            unexpected.append(key)
+    non_label_missing = [key for key in missing if not key.startswith("encoder.label_head") and key != "decoder.label_embedding"]
+    if non_label_missing or unexpected:
+        raise ValueError(
+            "Audio initialization state is not compatible: "
+            f"missing_non_label={non_label_missing[:8]}, unexpected={unexpected[:8]}"
+        )
+    model.load_state_dict(target_state, strict=True)
+    source_numel = sum(int(value.numel()) for value in source_state.values() if torch.is_tensor(value))
+    copied_numel = sum(int(target_state[key].numel()) for key in copied)
+    return {
+        "mode": "karaone_supervised_finetune_init",
+        "source_checkpoint": str(checkpoint_path.resolve()),
+        "source_checkpoint_sha256": file_sha256(checkpoint_path),
+        "source_phase": payload.get("phase"),
+        "source_epoch": payload.get("epoch"),
+        "source_num_labels": int(source_config.num_labels),
+        "target_num_labels": int(architecture.num_labels),
+        "karaone_label_offset": KARAONE_GLOBAL_OFFSET,
+        "copied_keys": len(copied),
+        "expanded_label_keys": expanded,
+        "missing_label_keys": [key for key in missing if key.startswith("encoder.label_head") or key == "decoder.label_embedding"],
+        "source_tensor_numel": source_numel,
+        "copied_tensor_numel": copied_numel,
+        "non_label_transfer_fraction": float(copied_numel / max(source_numel, 1)),
+    }
+
+
 def move_batch(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
     return {key: value.to(device) if torch.is_tensor(value) else value for key, value in batch.items()}
 
@@ -261,7 +392,48 @@ def train_audio(args, cfg, cfg_path, context, bank, device, lineage) -> Path:
     settings = cfg["audio_model"]
     architecture = audio_cfg(cfg, bank)
     model = AudioCodeAutoencoder(architecture).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=float(settings["lr"]), weight_decay=float(settings["weight_decay"]))
+    if args.audio_init_checkpoint:
+        init_path = Path(args.audio_init_checkpoint).expanduser().resolve()
+        if not init_path.is_file():
+            raise FileNotFoundError(
+                f"Missing supervised audio initialization checkpoint: {init_path}. "
+                "Run KaraOne 0715 prepare+audio first."
+            )
+        initialization = initialize_audio_model(model, architecture, init_path, device)
+        initialization_sha256 = str(initialization["source_checkpoint_sha256"])
+        dependencies = {
+            "audio_init_checkpoint_sha256": initialization_sha256,
+            "audio_init_mode": "karaone_supervised_finetune_init",
+        }
+        print(
+            "[combined audio] initialized from supervised KaraOne audio checkpoint: "
+            + json.dumps(initialization, sort_keys=True),
+            flush=True,
+        )
+    elif args.allow_scratch_audio:
+        initialization = {
+            "mode": "scratch_diagnostic",
+            "source_checkpoint": None,
+            "source_checkpoint_sha256": "scratch",
+            "warning": "This is not the recommended label-grounded fine-tuning path.",
+        }
+        dependencies = {
+            "audio_init_checkpoint_sha256": "scratch",
+            "audio_init_mode": "scratch_diagnostic",
+        }
+        print("[combined audio] WARNING: random-init diagnostic audio training was explicitly enabled", flush=True)
+    else:
+        raise PermissionError(
+            "Combined audio training requires --audio-init-checkpoint pointing to a supervised KaraOne 0715 "
+            "audio checkpoint. Use --allow-scratch-audio only for a diagnostic smoke run."
+        )
+    learning_rate = float(settings.get("finetune_lr", settings["lr"])) if initialization["mode"] == "karaone_supervised_finetune_init" else float(settings["lr"])
+    initialization["combined_learning_rate"] = learning_rate
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=float(settings["weight_decay"]))
+    if args.resume and not args.audio_init_checkpoint:
+        raise PermissionError(
+            "Resuming a fine-tuned audio checkpoint requires the same --audio-init-checkpoint so its SHA256 can be verified."
+        )
     start, history, best = resume(
         args.resume,
         model,
@@ -269,6 +441,7 @@ def train_audio(args, cfg, cfg_path, context, bank, device, lineage) -> Path:
         device,
         expected_phase="audio",
         expected_lineage=lineage,
+        expected_dependencies=dependencies,
     )
     train = AudioCodeDataset(bank, bank_indices_for_split(context, bank, "train"), context)
     validation = AudioCodeDataset(bank, bank_indices_for_split(context, bank, "validation"), context)
@@ -277,6 +450,10 @@ def train_audio(args, cfg, cfg_path, context, bank, device, lineage) -> Path:
     weights = torch.tensor(settings["codebook_weights"], device=device, dtype=torch.float32)
     directory = output_root(cfg) / "audio"
     best_path, last_path = directory / "checkpoints/best.pt", directory / "checkpoints/last.pt"
+    (directory / "metrics").mkdir(parents=True, exist_ok=True)
+    (directory / "metrics/initialization_report.json").write_text(
+        json.dumps(initialization, indent=2) + "\n", encoding="utf-8"
+    )
     epochs = int(args.epochs or settings["epochs"])
     for epoch in range(start + 1, epochs + 1):
         model.train()
@@ -313,6 +490,8 @@ def train_audio(args, cfg, cfg_path, context, bank, device, lineage) -> Path:
                 phase="audio",
                 cfg_path=cfg_path,
                 lineage=lineage,
+                dependencies=dependencies,
+                metadata={"audio_initialization": initialization},
             )
         save_checkpoint(
             last_path,
@@ -325,6 +504,8 @@ def train_audio(args, cfg, cfg_path, context, bank, device, lineage) -> Path:
             phase="audio",
             cfg_path=cfg_path,
             lineage=lineage,
+            dependencies=dependencies,
+            metadata={"audio_initialization": initialization},
         )
         (directory / "metrics").mkdir(parents=True, exist_ok=True)
         (directory / "metrics/latest.json").write_text(json.dumps(row, indent=2) + "\n", encoding="utf-8")
@@ -345,6 +526,8 @@ def train_audio(args, cfg, cfg_path, context, bank, device, lineage) -> Path:
         "selection_epoch": int(best_payload["epoch"]) if isinstance(best_payload, dict) else None,
         "requirements": "KaraOne>=0.50 and FEIS>=0.60; label-assisted and q0/q1 gates require audit script",
         "lineage": lineage,
+        "audio_initialization": initialization,
+        "audio_init_checkpoint_sha256": initialization["source_checkpoint_sha256"],
         "audio_checkpoint_sha256": file_sha256(best_path) if best_path.is_file() else None,
     }
     (directory / "metrics/validation_gate.json").write_text(json.dumps(gate, indent=2) + "\n", encoding="utf-8")
