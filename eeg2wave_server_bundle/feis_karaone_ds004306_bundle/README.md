@@ -105,6 +105,26 @@ bash app/run_combined_0715_v1.sh train-eeg
 bash app/run_combined_0715_v1.sh validate
 ```
 
+如果希望一次性执行上述流程，并在最后为 FEIS、KaraOne、ds004306 都生成
+validation synthesis，可以直接运行：
+
+```bash
+bash run_combined_0715_full.sh
+```
+
+该 wrapper 会显示阶段级总进度条；cache、audit、训练和 synthesis 阶段还会
+显示各自的 tqdm 进度。默认不会重复覆盖 KaraOne EEG 输出。如需先重建
+KaraOne valid-length 预处理：
+
+```bash
+REBUILD_KARAONE=1 bash run_combined_0715_full.sh
+```
+
+常用选项包括 `RUN_SYNTHESIS=0`（只运行到 validation）、
+`SYNTHESIS_LIMIT=12`（每个数据集只生成 12 条 validation 样本）和
+`COMBINED_DEVICE=mps|cuda|cpu`。locked test 不由该 wrapper 自动执行，必须
+先人工审查 validation gate。
+
 The cache command now writes `combined-0715-cache-v2`, including source audio
 paths, valid sample counts and exact EnCodec scale metadata.  A legacy cache
 must be rebuilt with `--rebuild`.  Checkpoints use the v2 checkpoint/lineage
