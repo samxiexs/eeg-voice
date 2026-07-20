@@ -122,8 +122,9 @@ REBUILD_KARAONE=1 bash run_combined_0715_full.sh
 
 常用选项包括 `RUN_SYNTHESIS=0`（只运行到 validation）、
 `SYNTHESIS_LIMIT=12`（每个数据集只生成 12 条 validation 样本）和
-`COMBINED_DEVICE=mps|cuda|cpu`。locked test 不由该 wrapper 自动执行，必须
-先人工审查 validation gate。
+`COMBINED_DEVICE=mps|cuda|cpu`。如果脚本中途失败、且 cache v2 已经生成，
+可以用 `REBUILD_CACHE=0` 从 cache audit 阶段继续。locked test 不由该
+wrapper 自动执行，必须先人工审查 validation gate。
 
 The cache command now writes `combined-0715-cache-v2`, including source audio
 paths, valid sample counts and exact EnCodec scale metadata.  A legacy cache

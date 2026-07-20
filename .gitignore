@@ -216,3 +216,24 @@ eeg2wave_demo_bundle/outputs/**
 !outputs/
 !outputs/*.md
 !outputs/*.json
+
+# Combined FEIS/KaraOne/ds004306 bundle: version code, configs and docs only.
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/.gitignore
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/README.md
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/run_preprocess.sh
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/scripts/
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/scripts/**/
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/scripts/**/*.py
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/scripts/**/*.sh
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/app/
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/app/**/
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/app/**/*.py
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/app/**/*.sh
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/app/**/*.yaml
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/app/**/*.yml
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/app/**/*.md
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/app/**/*.txt
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/reports/
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/reports/**/*.md
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/reports/**/*.json
