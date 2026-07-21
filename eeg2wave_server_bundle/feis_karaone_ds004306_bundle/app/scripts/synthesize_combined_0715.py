@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import yaml
 from scipy.io import wavfile
+from tqdm.auto import tqdm
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -145,6 +146,34 @@ def deterministic_label_derangement(rows: Iterable[dict[str, str]], seed: int) -
     if np.any(permutation < 0):
         raise AssertionError("Internal derangement error: not every trial received a shuffled source")
     return permutation
+
+
+def stratified_evaluation_indices(
+    rows: Iterable[dict[str, str]], limit: int | None, *, seed: int
+) -> list[int]:
+    """Select a deterministic label-balanced subset instead of the first N rows."""
+
+    materialized = tuple(rows)
+    if limit is None or int(limit) < 0 or int(limit) >= len(materialized):
+        return list(range(len(materialized)))
+    if int(limit) < 1:
+        raise ValueError("Synthesis requires at least one selected trial; use --limit >= 1")
+    groups: dict[str, list[int]] = defaultdict(list)
+    for index, row in enumerate(materialized):
+        groups[str(row["label"])].append(index)
+    rng = np.random.default_rng(int(seed))
+    for label in sorted(groups):
+        rng.shuffle(groups[label])
+    selected: list[int] = []
+    while len(selected) < int(limit):
+        progressed = False
+        for label in sorted(groups):
+            if groups[label] and len(selected) < int(limit):
+                selected.append(groups[label].pop())
+                progressed = True
+        if not progressed:
+            break
+    return selected
 
 
 def dataset_label_prior(context: Any, dataset: str, *, num_labels: int = 30) -> torch.Tensor:
@@ -431,9 +460,9 @@ def main() -> None:
         context, bank, args.dataset, args.split, eeg_len=int(cfg["data"]["eeg_len"])
     )
     shuffle_indices = deterministic_label_derangement(dataset.rows, seed)
-    limit = len(dataset) if args.limit is None or int(args.limit) < 0 else min(len(dataset), int(args.limit))
-    if limit < 1:
-        raise ValueError("Synthesis requires at least one selected trial; use --limit >= 1")
+    selected_indices = stratified_evaluation_indices(dataset.rows, args.limit, seed=seed)
+    if not selected_indices:
+        raise ValueError("Synthesis selection is empty")
     prior = dataset_label_prior(context, args.dataset).to(device)
 
     codec_cfg = cfg["codec"]
@@ -459,7 +488,13 @@ def main() -> None:
     files: list[dict[str, Any]] = []
 
     with torch.no_grad():
-        for index in range(limit):
+        iterator = tqdm(
+            selected_indices,
+            desc=f"[combined synthesis] {args.dataset}/{args.split}",
+            unit="sample",
+            dynamic_ncols=True,
+        )
+        for output_index, index in enumerate(iterator):
             row = dataset.rows[index]
             sample = dataset[index]
             shuffled_index = int(shuffle_indices[index])
@@ -531,7 +566,7 @@ def main() -> None:
             decoded = {name: match_length(value, target_length) for name, value in decoded.items()}
 
             sample_key = str(row.get("sample_key") or f"{row['subject_recording_id']}:{row['trial_index']}")
-            stem = f"{index:04d}_{safe_stem(sample_key)}"
+            stem = f"{output_index:04d}_{safe_stem(sample_key)}"
             paths = {name: folders[name] / f"{stem}.wav" for name in OUTPUT_KINDS}
             write_wav(paths["reference"], rms_normalize(reference), codec.codec_sample_rate)
             for name, value in decoded.items():
@@ -588,7 +623,7 @@ def main() -> None:
             "q1_accuracy": summarise(metrics["q1_accuracy"]),
         }
     manifest: dict[str, Any] = {
-        "version": "combined-0715-synthesis-v2",
+        "version": "combined-0715-synthesis-v3",
         "phase": "synthesis_controls",
         "dataset": args.dataset,
         "split": args.split,
@@ -604,6 +639,8 @@ def main() -> None:
         "eeg_checkpoint": str(eeg_path),
         "eeg_checkpoint_sha256": eeg_sha,
         "eeg_checkpoint_epoch": int(eeg_payload["epoch"]),
+        "eeg_training_recipe": (eeg_payload.get("metadata") or {}).get("training_recipe_version"),
+        "eeg_loss_recipe": (eeg_payload.get("metadata") or {}).get("loss_recipe"),
         "lineage": lineage,
         "audio_roundtrip_gate": {
             "path": str(roundtrip_gate_path),
@@ -629,6 +666,18 @@ def main() -> None:
         "shuffled_eeg_policy": "deterministic same-dataset same-label derangement without self-loops",
         "waveform_metrics_use_valid_audio_only": True,
         "log_spectrogram_metrics_rms_normalized": True,
+        "metric_definitions": {
+            "waveform_correlation": "Strict zero-lag sample-wise Pearson correlation; phase sensitive.",
+            "lag_aligned_waveform_correlation_abs": "Absolute waveform correlation after at most 100 ms deterministic lag alignment.",
+            "envelope_correlation": "Pearson correlation of 25-ms frame-RMS envelopes with a 10-ms hop.",
+            "lag_aligned_envelope_correlation": "25-ms frame-RMS envelope correlation after at most 100 ms lag alignment.",
+            "envelope_overlap": "Intersection-over-union of peak-normalized nonnegative 25-ms RMS envelopes.",
+            "activity_iou": "Intersection-over-union of frames above 10 percent of each envelope peak.",
+            "structure_score": "0.45*positive envelope correlation + 0.30*envelope overlap + 0.25*activity IoU.",
+            "multiscale_log_spectrogram_mae_db": "Mean unit-RMS log-spectrogram MAE over 20, 50 and 100-ms windows.",
+            "control_interpretation": "Absolute structure similarity and EEG-specific improvement over controls must be reported separately.",
+        },
+        "selection_policy": "all rows when limit<0; otherwise deterministic label-balanced round-robin",
         "test_accessed": args.split == "test",
         "aggregate_metrics": summary,
         "files": files,

@@ -222,6 +222,7 @@ eeg2wave_demo_bundle/outputs/**
 !eeg2wave_server_bundle/feis_karaone_ds004306_bundle/.gitignore
 !eeg2wave_server_bundle/feis_karaone_ds004306_bundle/README.md
 !eeg2wave_server_bundle/feis_karaone_ds004306_bundle/run_preprocess.sh
+!eeg2wave_server_bundle/feis_karaone_ds004306_bundle/run_combined_0715_full.sh
 !eeg2wave_server_bundle/feis_karaone_ds004306_bundle/scripts/
 !eeg2wave_server_bundle/feis_karaone_ds004306_bundle/scripts/**/
 !eeg2wave_server_bundle/feis_karaone_ds004306_bundle/scripts/**/*.py

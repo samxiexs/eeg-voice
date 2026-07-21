@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any, Iterable, Mapping, Protocol
 
 import numpy as np
-from scipy.signal import stft
+from scipy.signal import correlate, correlation_lags, stft
 
 
 CACHE_SCHEMA_VERSION = "combined-0715-cache-v2"
@@ -31,7 +31,43 @@ REQUIRED_CACHE_FIELDS = frozenset(
         "codec_bandwidth",
     }
 )
-METRIC_NAMES = ("waveform_correlation", "si_sdr_db", "log_spectrogram_mae_db")
+METRIC_NAMES = (
+    # Fine waveform fidelity.  These deliberately remain strict and are not
+    # used as the sole criterion for coarse morphology reconstruction.
+    "waveform_correlation",
+    "lag_aligned_waveform_correlation_abs",
+    "waveform_best_lag_ms",
+    "si_sdr_db",
+    # Coarse temporal morphology: what is visually preserved in a waveform
+    # plot after the carrier/phase detail has been compressed.
+    "envelope_correlation",
+    "lag_aligned_envelope_correlation",
+    "envelope_best_lag_ms",
+    "envelope_overlap",
+    "activity_iou",
+    "onset_error_ms",
+    "offset_error_ms",
+    "short_time_rms_correlation_20ms",
+    "short_time_rms_correlation_50ms",
+    "short_time_rms_correlation_100ms",
+    "short_time_rms_correlation_mean",
+    "structure_score",
+    # Spectral fidelity at one legacy and three morphology-relevant scales.
+    "log_spectrogram_mae_db",
+    "multiscale_log_spectrogram_mae_db",
+)
+
+METRIC_DIRECTIONS = {
+    name: ("lower" if name in {
+        "waveform_best_lag_ms",
+        "envelope_best_lag_ms",
+        "onset_error_ms",
+        "offset_error_ms",
+        "log_spectrogram_mae_db",
+        "multiscale_log_spectrogram_mae_db",
+    } else "higher")
+    for name in METRIC_NAMES
+}
 
 
 class _Context(Protocol):
@@ -227,6 +263,123 @@ def _unit_rms(audio: np.ndarray) -> np.ndarray:
     return value / max(rms, 1e-8)
 
 
+def _safe_correlation(first: np.ndarray, second: np.ndarray) -> float:
+    first = np.asarray(first, dtype=np.float64).reshape(-1)
+    second = np.asarray(second, dtype=np.float64).reshape(-1)
+    n = min(len(first), len(second))
+    if n < 2:
+        return 0.0
+    first = first[:n]
+    second = second[:n]
+    first_centered = first - first.mean()
+    second_centered = second - second.mean()
+    denominator = float(np.linalg.norm(first_centered) * np.linalg.norm(second_centered))
+    if denominator <= 1e-12:
+        return 1.0 if np.allclose(first, second, atol=1e-10, rtol=1e-7) else 0.0
+    return float(np.clip((first_centered @ second_centered) / denominator, -1.0, 1.0))
+
+
+def short_time_rms(audio: np.ndarray, sample_rate: int, *, window_ms: float, hop_ms: float = 10.0) -> np.ndarray:
+    """Return a finite frame-RMS envelope, including short/silent signals."""
+
+    value = np.asarray(audio, dtype=np.float64).reshape(-1)
+    window = max(1, int(round(float(window_ms) * int(sample_rate) / 1000.0)))
+    hop = max(1, int(round(float(hop_ms) * int(sample_rate) / 1000.0)))
+    if len(value) < window:
+        value = np.pad(value, (0, window - len(value)))
+    starts = np.arange(0, max(len(value) - window + 1, 1), hop, dtype=np.int64)
+    if starts[-1] != len(value) - window:
+        starts = np.append(starts, len(value) - window)
+    cumulative = np.concatenate(([0.0], np.cumsum(np.square(value), dtype=np.float64)))
+    frame_energy = (cumulative[starts + window] - cumulative[starts]) / float(window)
+    return np.sqrt(np.maximum(frame_energy, 0.0) + 1e-12).astype(np.float64)
+
+
+def _best_lag_correlation(
+    reference: np.ndarray,
+    candidate: np.ndarray,
+    *,
+    max_lag_samples: int,
+    use_absolute: bool,
+) -> tuple[float, int]:
+    reference = np.asarray(reference, dtype=np.float64).reshape(-1)
+    candidate = np.asarray(candidate, dtype=np.float64).reshape(-1)
+    n = min(len(reference), len(candidate))
+    reference = reference[:n] - reference[:n].mean()
+    candidate = candidate[:n] - candidate[:n].mean()
+    if n < 2 or np.linalg.norm(reference) <= 1e-12 or np.linalg.norm(candidate) <= 1e-12:
+        return (_safe_correlation(reference, candidate), 0)
+    cross = correlate(candidate, reference, mode="full", method="fft")
+    lags = correlation_lags(len(candidate), len(reference), mode="full")
+    selected = np.abs(lags) <= max(0, int(max_lag_samples))
+    scores = np.abs(cross[selected]) if use_absolute else cross[selected]
+    lag = int(lags[selected][int(np.argmax(scores))])
+    if lag >= 0:
+        aligned_reference = reference[: n - lag]
+        aligned_candidate = candidate[lag:]
+    else:
+        aligned_reference = reference[-lag:]
+        aligned_candidate = candidate[: n + lag]
+    correlation = _safe_correlation(aligned_reference, aligned_candidate)
+    return (abs(correlation) if use_absolute else correlation, lag)
+
+
+def _normalized_overlap(first: np.ndarray, second: np.ndarray) -> float:
+    first = np.maximum(np.asarray(first, dtype=np.float64), 0.0)
+    second = np.maximum(np.asarray(second, dtype=np.float64), 0.0)
+    first_peak = float(first.max(initial=0.0))
+    second_peak = float(second.max(initial=0.0))
+    if first_peak <= 1e-10 and second_peak <= 1e-10:
+        return 1.0
+    if first_peak <= 1e-10 or second_peak <= 1e-10:
+        return 0.0
+    first = first / first_peak
+    second = second / second_peak
+    denominator = float(np.maximum(first, second).sum())
+    return float(np.minimum(first, second).sum() / max(denominator, 1e-12))
+
+
+def _activity_metrics(reference: np.ndarray, candidate: np.ndarray, hop_ms: float) -> tuple[float, float, float]:
+    def active(value: np.ndarray) -> np.ndarray:
+        value = np.asarray(value, dtype=np.float64)
+        peak = float(value.max(initial=0.0))
+        return value >= max(peak * 0.10, 1e-8) if peak > 1e-8 else np.zeros(len(value), dtype=bool)
+
+    ref_active = active(reference)
+    candidate_active = active(candidate)
+    union = ref_active | candidate_active
+    activity_iou = float((ref_active & candidate_active).sum() / union.sum()) if union.any() else 1.0
+    duration_ms = max(len(reference), len(candidate)) * float(hop_ms)
+
+    def bounds(mask: np.ndarray) -> tuple[int, int] | None:
+        indices = np.flatnonzero(mask)
+        return (int(indices[0]), int(indices[-1])) if len(indices) else None
+
+    ref_bounds = bounds(ref_active)
+    candidate_bounds = bounds(candidate_active)
+    if ref_bounds is None and candidate_bounds is None:
+        return activity_iou, 0.0, 0.0
+    if ref_bounds is None or candidate_bounds is None:
+        return activity_iou, duration_ms, duration_ms
+    return (
+        activity_iou,
+        abs(candidate_bounds[0] - ref_bounds[0]) * float(hop_ms),
+        abs(candidate_bounds[1] - ref_bounds[1]) * float(hop_ms),
+    )
+
+
+def _log_spectrogram_mae(reference: np.ndarray, candidate: np.ndarray, sample_rate: int, window_ms: float) -> float:
+    n = min(len(reference), len(candidate))
+    nperseg = min(n, max(16, int(round(float(window_ms) * int(sample_rate) / 1000.0))))
+    noverlap = min(nperseg - 1, int(round(0.75 * nperseg)))
+    _, _, ref_spec = stft(reference[:n], fs=int(sample_rate), nperseg=nperseg, noverlap=noverlap, boundary=None)
+    _, _, candidate_spec = stft(candidate[:n], fs=int(sample_rate), nperseg=nperseg, noverlap=noverlap, boundary=None)
+    frames = min(ref_spec.shape[1], candidate_spec.shape[1])
+    ref_db = 20.0 * np.log10(np.maximum(np.abs(ref_spec[:, :frames]), 1e-4))
+    candidate_db = 20.0 * np.log10(np.maximum(np.abs(candidate_spec[:, :frames]), 1e-4))
+    return float(np.mean(np.abs(ref_db - candidate_db)))
+
+
 def waveform_metrics(
     reference: np.ndarray,
     candidate: np.ndarray,
@@ -234,7 +387,7 @@ def waveform_metrics(
     *,
     valid_samples: int | None = None,
 ) -> dict[str, float]:
-    """Compute correlation, SI-SDR and RMS-normalized spectral MAE."""
+    """Compute strict fidelity plus phase-robust temporal morphology metrics."""
 
     n = min(len(np.asarray(reference).reshape(-1)), len(np.asarray(candidate).reshape(-1)))
     if valid_samples is not None:
@@ -248,9 +401,12 @@ def waveform_metrics(
 
     ref_centered = reference - reference.mean()
     candidate_centered = candidate - candidate.mean()
-    correlation = float(
-        (ref_centered @ candidate_centered)
-        / (np.linalg.norm(ref_centered) * np.linalg.norm(candidate_centered) + 1e-12)
+    correlation = _safe_correlation(ref_centered, candidate_centered)
+    lag_correlation, waveform_lag = _best_lag_correlation(
+        reference,
+        candidate,
+        max_lag_samples=int(round(0.100 * int(sample_rate))),
+        use_absolute=True,
     )
     projection = float((candidate @ reference) / (reference @ reference + 1e-12))
     target = projection * reference
@@ -259,19 +415,70 @@ def waveform_metrics(
 
     ref_normalized = _unit_rms(reference)
     candidate_normalized = _unit_rms(candidate)
-    nperseg = min(512, n)
-    noverlap = min(384, max(nperseg - 1, 0))
-    _, _, ref_spec = stft(ref_normalized, fs=int(sample_rate), nperseg=nperseg, noverlap=noverlap, boundary=None)
-    _, _, candidate_spec = stft(candidate_normalized, fs=int(sample_rate), nperseg=nperseg, noverlap=noverlap, boundary=None)
-    frames = min(ref_spec.shape[1], candidate_spec.shape[1])
-    # A fixed -80 dB floor after unit-RMS normalization prevents inaudible
-    # codec noise in near-zero bins from dominating the spectrogram metric.
-    ref_db = 20.0 * np.log10(np.maximum(np.abs(ref_spec[:, :frames]), 1e-4))
-    candidate_db = 20.0 * np.log10(np.maximum(np.abs(candidate_spec[:, :frames]), 1e-4))
+    # Preserve the original 512-sample definition for checkpoint/report
+    # comparability; the new multi-scale metric is explicitly time based.
+    legacy_spectral_mae = _log_spectrogram_mae(
+        ref_normalized,
+        candidate_normalized,
+        sample_rate,
+        512.0 * 1000.0 / float(sample_rate),
+    )
+    multiscale_spectral_mae = float(
+        np.mean(
+            [
+                _log_spectrogram_mae(ref_normalized, candidate_normalized, sample_rate, window_ms)
+                for window_ms in (20.0, 50.0, 100.0)
+            ]
+        )
+    )
+
+    envelopes = {
+        window_ms: (
+            short_time_rms(reference, sample_rate, window_ms=window_ms),
+            short_time_rms(candidate, sample_rate, window_ms=window_ms),
+        )
+        for window_ms in (20.0, 25.0, 50.0, 100.0)
+    }
+    envelope_reference, envelope_candidate = envelopes[25.0]
+    envelope_correlation = _safe_correlation(envelope_reference, envelope_candidate)
+    lag_envelope_correlation, envelope_lag_frames = _best_lag_correlation(
+        envelope_reference,
+        envelope_candidate,
+        max_lag_samples=10,  # 10 frames x 10-ms hop = +/-100 ms
+        use_absolute=False,
+    )
+    rms_correlations = {
+        window_ms: _safe_correlation(*envelopes[window_ms])
+        for window_ms in (20.0, 50.0, 100.0)
+    }
+    envelope_overlap = _normalized_overlap(envelope_reference, envelope_candidate)
+    activity_iou, onset_error_ms, offset_error_ms = _activity_metrics(
+        envelope_reference, envelope_candidate, 10.0
+    )
+    structure_score = float(
+        0.45 * np.clip(envelope_correlation, 0.0, 1.0)
+        + 0.30 * envelope_overlap
+        + 0.25 * activity_iou
+    )
     return {
         "waveform_correlation": correlation,
+        "lag_aligned_waveform_correlation_abs": float(lag_correlation),
+        "waveform_best_lag_ms": float(abs(waveform_lag) * 1000.0 / int(sample_rate)),
         "si_sdr_db": si_sdr,
-        "log_spectrogram_mae_db": float(np.mean(np.abs(ref_db - candidate_db))),
+        "envelope_correlation": envelope_correlation,
+        "lag_aligned_envelope_correlation": float(lag_envelope_correlation),
+        "envelope_best_lag_ms": float(abs(envelope_lag_frames) * 10.0),
+        "envelope_overlap": envelope_overlap,
+        "activity_iou": activity_iou,
+        "onset_error_ms": onset_error_ms,
+        "offset_error_ms": offset_error_ms,
+        "short_time_rms_correlation_20ms": rms_correlations[20.0],
+        "short_time_rms_correlation_50ms": rms_correlations[50.0],
+        "short_time_rms_correlation_100ms": rms_correlations[100.0],
+        "short_time_rms_correlation_mean": float(np.mean(list(rms_correlations.values()))),
+        "structure_score": structure_score,
+        "log_spectrogram_mae_db": legacy_spectral_mae,
+        "multiscale_log_spectrogram_mae_db": multiscale_spectral_mae,
     }
 
 
@@ -293,5 +500,7 @@ def summarise_metric_records(records: Iterable[Mapping[str, Any]]) -> dict[str, 
             "median": float(np.median(values)),
             "p05": float(np.percentile(values, 5)),
             "min": float(np.min(values)),
+            "p95": float(np.percentile(values, 95)),
+            "max": float(np.max(values)),
         }
     return summary

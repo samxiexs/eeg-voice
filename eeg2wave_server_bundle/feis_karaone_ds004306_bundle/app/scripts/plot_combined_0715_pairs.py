@@ -12,7 +12,9 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from scipy.ndimage import uniform_filter1d  # noqa: E402
 from scipy.io import wavfile  # noqa: E402
+from tqdm.auto import tqdm  # noqa: E402
 
 
 OUTPUT_MODES = (
@@ -56,6 +58,22 @@ def downsample(values: np.ndarray, points: int) -> np.ndarray:
     return np.interp(target, positions, values).astype(np.float32)
 
 
+def display_envelope(values: np.ndarray, sample_rate: int, window_ms: float = 25.0) -> np.ndarray:
+    """Return a same-length running-RMS envelope for visual morphology checks."""
+
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    window = max(1, int(round(float(window_ms) * int(sample_rate) / 1000.0)))
+    energy = uniform_filter1d(np.square(values), size=window, mode="constant", cval=0.0)
+    return np.sqrt(np.maximum(energy, 0.0) + 1e-12).astype(np.float32)
+
+
+def display_time_axis(original_samples: int, plotted_samples: int, sample_rate: int) -> np.ndarray:
+    """Preserve the original duration after point-count reduction."""
+
+    duration = max(int(original_samples) - 1, 0) / float(sample_rate)
+    return np.linspace(0.0, duration, int(plotted_samples), dtype=np.float64)
+
+
 def safe_name(value: str) -> str:
     return "".join(character if character.isalnum() or character in "._-" else "_" for character in str(value))
 
@@ -71,29 +89,38 @@ def plot_pair(
     metrics: dict[str, dict[str, float]],
     max_points: int,
 ) -> None:
-    reference_rate, reference = read_wave(reference_path)
+    reference_rate, reference_full = read_wave(reference_path)
     if reference_rate != sample_rate:
         sample_rate = reference_rate
-    reference = downsample(reference, max_points)
-    time_axis = np.arange(len(reference), dtype=np.float64) / float(sample_rate)
+    reference_envelope = downsample(display_envelope(reference_full, sample_rate), max_points)
+    reference = downsample(reference_full, max_points)
+    time_axis = display_time_axis(len(reference_full), len(reference), sample_rate)
     rows = 1 + len(mode_paths)
     fig, axes = plt.subplots(rows, 1, figsize=(15.0, max(4.0, rows * 2.0)), sharex=True, squeeze=False)
     axes = axes[:, 0]
     axes[0].plot(time_axis, reference, color="#1f2937", linewidth=0.75)
+    axes[0].plot(time_axis, reference_envelope, color="#6b7280", linewidth=1.0, linestyle="--", label="25-ms RMS envelope")
     axes[0].set_title(f"reference | label={label} | sample={sample_key}", loc="left", fontsize=10)
     axes[0].set_ylabel("ref")
     axes[0].grid(alpha=0.2)
     for axis, (mode, path) in zip(axes[1:], mode_paths.items(), strict=True):
-        candidate_rate, candidate = read_wave(path)
-        candidate = downsample(candidate, max_points)
+        candidate_rate, candidate_full = read_wave(path)
+        candidate = downsample(candidate_full, max_points)
+        candidate_envelope = downsample(display_envelope(candidate_full, candidate_rate), max_points)
+        candidate_time = display_time_axis(len(candidate_full), len(candidate), candidate_rate)
         length = min(len(reference), len(candidate))
         axis.plot(time_axis[:length], reference[:length], color="#9ca3af", linewidth=0.6, alpha=0.85, label="reference")
-        axis.plot(time_axis[:length], candidate[:length], color="#2563eb", linewidth=0.7, label=mode)
+        axis.plot(candidate_time[:length], candidate[:length], color="#2563eb", linewidth=0.7, label=mode)
+        axis.plot(time_axis[:length], reference_envelope[:length], color="#6b7280", linewidth=0.9, linestyle="--", alpha=0.9, label="reference envelope")
+        axis.plot(candidate_time[:length], candidate_envelope[:length], color="#dc2626", linewidth=0.9, linestyle="--", alpha=0.9, label=f"{mode} envelope")
         values = metrics.get(mode, {})
         annotation = (
-            f"corr={values.get('waveform_correlation', float('nan')):.3f}; "
-            f"SI-SDR={values.get('si_sdr_db', float('nan')):.2f} dB; "
-            f"spec-MAE={values.get('log_spectrogram_mae_db', float('nan')):.2f} dB"
+            f"env-r={values.get('envelope_correlation', float('nan')):.3f}; "
+            f"env-overlap={values.get('envelope_overlap', float('nan')):.3f}; "
+            f"activity-IoU={values.get('activity_iou', float('nan')):.3f}; "
+            f"structure={values.get('structure_score', float('nan')):.3f}; "
+            f"raw-r={values.get('waveform_correlation', float('nan')):.3f}; "
+            f"SI-SDR={values.get('si_sdr_db', float('nan')):.2f} dB"
         )
         axis.set_title(f"{mode} | {annotation}", loc="left", fontsize=9)
         axis.set_ylabel(mode[:8])
@@ -102,7 +129,10 @@ def plot_pair(
     handles, labels = axes[-1].get_legend_handles_labels()
     if handles:
         axes[-1].legend(handles, labels, loc="upper right", fontsize=8)
-    fig.suptitle("Combined 0715 reference vs reconstruction pairs", fontsize=12)
+    fig.suptitle(
+        "Combined 0715 reference vs reconstruction pairs | WAVs RMS-normalized for display | dashed=25-ms RMS envelope",
+        fontsize=12,
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.98))
     destination.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(destination, dpi=150)
@@ -146,10 +176,25 @@ def main() -> None:
                     "waveform_correlation",
                     "si_sdr_db",
                     "log_spectrogram_mae_db",
+                    "lag_aligned_waveform_correlation_abs",
+                    "envelope_correlation",
+                    "lag_aligned_envelope_correlation",
+                    "envelope_overlap",
+                    "activity_iou",
+                    "onset_error_ms",
+                    "offset_error_ms",
+                    "short_time_rms_correlation_mean",
+                    "structure_score",
+                    "multiscale_log_spectrogram_mae_db",
                 ),
             )
             writer.writeheader()
-            for item in rows:
+            for item in tqdm(
+                rows,
+                desc=f"[combined plots] {dataset}/{split}",
+                unit="figure",
+                dynamic_ncols=True,
+            ):
                 files = item.get("files", {})
                 reference_path = destination / str(files.get("reference", ""))
                 available = {
@@ -190,6 +235,16 @@ def main() -> None:
                             "waveform_correlation": values.get("waveform_correlation"),
                             "si_sdr_db": values.get("si_sdr_db"),
                             "log_spectrogram_mae_db": values.get("log_spectrogram_mae_db"),
+                            "lag_aligned_waveform_correlation_abs": values.get("lag_aligned_waveform_correlation_abs"),
+                            "envelope_correlation": values.get("envelope_correlation"),
+                            "lag_aligned_envelope_correlation": values.get("lag_aligned_envelope_correlation"),
+                            "envelope_overlap": values.get("envelope_overlap"),
+                            "activity_iou": values.get("activity_iou"),
+                            "onset_error_ms": values.get("onset_error_ms"),
+                            "offset_error_ms": values.get("offset_error_ms"),
+                            "short_time_rms_correlation_mean": values.get("short_time_rms_correlation_mean"),
+                            "structure_score": values.get("structure_score"),
+                            "multiscale_log_spectrogram_mae_db": values.get("multiscale_log_spectrogram_mae_db"),
                         }
                     )
         summary = {
@@ -199,7 +254,7 @@ def main() -> None:
             "pair_manifest": str(pair_manifest),
             "plots_written": dataset_plots,
             "pairs_written": dataset_pairs,
-            "plot_definition": "reference waveform overlaid with every reconstruction mode; metrics from synthesis manifest",
+            "plot_definition": "RMS-normalized waveforms plus 25-ms RMS envelopes over the true audio duration; metrics from synthesis manifest",
         }
         (pair_root / "comparison_summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(summary, ensure_ascii=False), flush=True)

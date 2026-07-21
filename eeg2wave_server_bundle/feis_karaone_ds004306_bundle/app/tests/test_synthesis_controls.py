@@ -78,6 +78,50 @@ def test_waveform_metrics_are_exact_for_identical_signal() -> None:
     assert metrics["waveform_correlation"] == pytest.approx(1.0, abs=1e-7)
     assert metrics["si_sdr_db"] > 100.0
     assert metrics["log_spectrogram_mae_db"] == pytest.approx(0.0, abs=1e-7)
+    assert metrics["envelope_correlation"] == pytest.approx(1.0, abs=1e-7)
+    assert metrics["envelope_overlap"] == pytest.approx(1.0, abs=1e-7)
+    assert metrics["activity_iou"] == pytest.approx(1.0, abs=1e-7)
+    assert metrics["structure_score"] == pytest.approx(1.0, abs=1e-7)
+
+
+def test_phase_changed_carrier_can_have_low_raw_but_high_envelope_similarity() -> None:
+    sample_rate = 16000
+    time = np.arange(sample_rate, dtype=np.float64) / sample_rate
+    amplitude = np.exp(-0.5 * ((time - 0.5) / 0.12) ** 2)
+    reference = amplitude * np.sin(2.0 * np.pi * 220.0 * time)
+    candidate = amplitude * np.sin(2.0 * np.pi * 220.0 * time + np.pi / 2.0)
+    metrics = MODULE.waveform_metrics(reference, candidate, sample_rate)
+    assert abs(metrics["waveform_correlation"]) < 0.05
+    assert metrics["envelope_correlation"] > 0.99
+    assert metrics["structure_score"] > 0.95
+
+
+def test_envelope_lag_metric_recovers_a_50_ms_shift() -> None:
+    sample_rate = 16000
+    reference = np.zeros(sample_rate, dtype=np.float64)
+    candidate = np.zeros_like(reference)
+    reference[4000:8000] = np.hanning(4000)
+    shift = int(round(0.050 * sample_rate))
+    candidate[4000 + shift : 8000 + shift] = np.hanning(4000)
+    metrics = MODULE.waveform_metrics(reference, candidate, sample_rate)
+    assert metrics["lag_aligned_envelope_correlation"] > 0.99
+    assert metrics["envelope_best_lag_ms"] == pytest.approx(50.0, abs=10.0)
+    assert metrics["onset_error_ms"] == pytest.approx(50.0, abs=10.0)
+
+
+def test_morphology_metrics_remain_finite_for_silence() -> None:
+    metrics = MODULE.waveform_metrics(np.zeros(2048), np.zeros(2048), 16000)
+    assert all(np.isfinite(value) for value in metrics.values())
+
+
+def test_limited_synthesis_selection_is_label_balanced_and_deterministic() -> None:
+    records = rows(["a"] * 10 + ["b"] * 10 + ["c"] * 10)
+    first = MODULE.stratified_evaluation_indices(records, 6, seed=15)
+    second = MODULE.stratified_evaluation_indices(records, 6, seed=15)
+    assert first == second
+    assert [records[index]["label"] for index in first].count("a") == 2
+    assert [records[index]["label"] for index in first].count("b") == 2
+    assert [records[index]["label"] for index in first].count("c") == 2
 
 
 def test_gate_policy_forbids_test_bypass_before_reading_gate(tmp_path: Path) -> None:

@@ -22,7 +22,13 @@ from src.combined_0715.lineage import (
     validate_checkpoint_payload,
     validate_gate_binding,
 )
-from src.combined_0715.losses import multi_positive_contrastive_loss
+from src.combined_0715.losses import (
+    envelope_correlation_loss,
+    multi_scale_envelope_correlation_loss,
+    multi_positive_contrastive_loss,
+    same_label_morphology_ranking_loss,
+    soft_activity_dice_loss,
+)
 
 
 def test_hierarchical_multi_positive_loss_is_finite_and_active() -> None:
@@ -113,6 +119,66 @@ def test_contrastive_masks_distinguish_neutral_soft_positive_and_negative() -> N
         identifiers,
     )
     assert matched["total"] < mismatched["total"]
+
+
+def test_structure_losses_reward_matching_envelopes_and_have_finite_gradients() -> None:
+    target = torch.tensor(
+        [[0.0, 0.1, 0.8, 1.0, 0.7, 0.1, 0.0], [0.0, 0.0, 0.2, 0.9, 1.0, 0.2, 0.0]],
+        dtype=torch.float32,
+    )
+    good = (target * 0.9 + 0.02).requires_grad_(True)
+    bad = torch.flip(target, dims=[1]).requires_grad_(True)
+    mask = torch.ones_like(target)
+    good_correlation = envelope_correlation_loss(good, target, mask)
+    bad_correlation = envelope_correlation_loss(bad, target, mask)
+    good_dice = soft_activity_dice_loss(good, target, mask)
+    bad_dice = soft_activity_dice_loss(bad, target, mask)
+    good_multi = multi_scale_envelope_correlation_loss(good, target, mask)
+    bad_multi = multi_scale_envelope_correlation_loss(bad, target, mask)
+    assert good_correlation["total"] < bad_correlation["total"]
+    assert good_dice["total"] < bad_dice["total"]
+    assert good_multi["total"] < bad_multi["total"]
+    (good_correlation["total"] + good_dice["total"] + good_multi["total"]).backward()
+    assert good.grad is not None and torch.isfinite(good.grad).all()
+
+
+def test_same_label_morphology_ranking_uses_only_different_audio_pairs() -> None:
+    target = torch.tensor(
+        [
+            [0.0, 0.1, 1.0, 0.1, 0.0],
+            [0.0, 0.8, 0.2, 0.0, 0.0],
+            [0.0, 0.0, 0.2, 0.8, 0.0],
+            [0.0, 0.0, 0.1, 1.0, 0.1],
+        ],
+        dtype=torch.float32,
+    )
+    prediction = target.clone().requires_grad_(True)
+    result = same_label_morphology_ranking_loss(
+        prediction,
+        target,
+        torch.ones_like(target),
+        torch.tensor([0, 0, 1, 1]),
+        torch.tensor([10, 11, 20, 21]),
+        margin=0.03,
+    )
+    assert float(result["active_fraction"]) == pytest.approx(1.0)
+    assert result["correct_correlation"] > result["shuffled_correlation"]
+    assert torch.isfinite(result["total"])
+    result["total"].backward()
+    assert prediction.grad is not None and torch.isfinite(prediction.grad).all()
+
+
+def test_same_label_morphology_ranking_is_neutral_without_valid_pairs() -> None:
+    prediction = torch.randn(3, 8, requires_grad=True)
+    result = same_label_morphology_ranking_loss(
+        prediction,
+        torch.randn(3, 8),
+        torch.ones(3, 8),
+        torch.tensor([0, 1, 2]),
+        torch.tensor([10, 11, 12]),
+    )
+    assert float(result["active_fraction"]) == 0.0
+    assert float(result["total"]) == 0.0
 
 
 def _tiny_lineage(tmp_path):
