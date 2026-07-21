@@ -239,6 +239,49 @@ def make_loader(dataset, batch_size: int, cfg: dict[str, Any], *, balanced: bool
     return DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=int(cfg["run"]["num_workers"]))
 
 
+def make_audio_loader(dataset: AudioCodeDataset, batch_size: int, cfg: dict[str, Any], *, balanced: bool) -> DataLoader:
+    """Load audio examples with explicit dataset/label-balanced sampling.
+
+    The cache contains 1616 unique KaraOne audio files but only 288 FEIS files
+    and 3 ds004306 category files. Plain shuffle therefore makes the shared
+    audio model optimize almost entirely for KaraOne. The weighted sampler
+    keeps the requested dataset proportions while making labels within each
+    dataset equally likely.
+    """
+
+    if not balanced:
+        return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=int(cfg["run"]["num_workers"]))
+    settings = cfg["audio_model"]
+    target_dataset_weights = {
+        "feis": 0.35,
+        "karaone": 0.55,
+        "ds004306": 0.10,
+        **{str(key): float(value) for key, value in settings.get("dataset_sampling_weights", {}).items()},
+    }
+    groups: list[tuple[str, int]] = [
+        (str(dataset.bank.datasets[int(index)]), int(label))
+        for index, label in zip(dataset.indices_array.tolist(), dataset.labels.tolist())
+    ]
+    counts: dict[tuple[str, int], int] = {}
+    for group in groups:
+        counts[group] = counts.get(group, 0) + 1
+    label_counts = {
+        dataset_name: max(1, len({label for name, label in groups if name == dataset_name}))
+        for dataset_name, _ in groups
+    }
+    weights = torch.tensor(
+        [
+            target_dataset_weights.get(dataset_name, 1.0)
+            / label_counts[dataset_name]
+            / max(counts[(dataset_name, label)], 1)
+            for dataset_name, label in groups
+        ],
+        dtype=torch.double,
+    )
+    sampler = WeightedRandomSampler(weights, num_samples=len(dataset), replacement=True)
+    return DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=int(cfg["run"]["num_workers"]))
+
+
 def initialize_audio_model(
     model: AudioCodeAutoencoder,
     architecture: AudioCodeModelConfig,
@@ -445,8 +488,8 @@ def train_audio(args, cfg, cfg_path, context, bank, device, lineage) -> Path:
     )
     train = AudioCodeDataset(bank, bank_indices_for_split(context, bank, "train"), context)
     validation = AudioCodeDataset(bank, bank_indices_for_split(context, bank, "validation"), context)
-    train_loader = DataLoader(train, batch_size=int(settings["batch_size"]), shuffle=True, num_workers=int(cfg["run"]["num_workers"]))
-    val_loader = DataLoader(validation, batch_size=int(settings["batch_size"]), shuffle=False, num_workers=int(cfg["run"]["num_workers"]))
+    train_loader = make_audio_loader(train, int(settings["batch_size"]), cfg, balanced=True)
+    val_loader = make_audio_loader(validation, int(settings["batch_size"]), cfg, balanced=False)
     weights = torch.tensor(settings["codebook_weights"], device=device, dtype=torch.float32)
     directory = output_root(cfg) / "audio"
     best_path, last_path = directory / "checkpoints/best.pt", directory / "checkpoints/last.pt"
@@ -609,12 +652,26 @@ def eeg_loss(output, audio_target, batch, dataset, settings, epoch, total_epochs
 
 def load_audio_model(path: Path, bank: AudioCodeBank, device: torch.device, lineage: dict[str, Any]) -> tuple[AudioCodeAutoencoder, dict[str, Any]]:
     payload = torch.load(path, map_location=device, weights_only=False)
+    saved_dependencies = payload.get("dependencies") or {}
+    if not isinstance(saved_dependencies, dict):
+        raise ValueError(f"Audio checkpoint dependencies must be an object: {path}")
+    # Audio checkpoints are consumed by later phases. At this boundary we
+    # validate the dependency record against itself; resume() is the boundary
+    # that compares it with the caller's expected initialization/input SHA.
     validate_checkpoint_payload(
         payload,
         expected_phase="audio",
         expected_lineage=lineage,
+        expected_dependencies={str(key): str(value) for key, value in saved_dependencies.items()},
         source=f"audio checkpoint {path}",
     )
+    if "audio_init_checkpoint_sha256" in saved_dependencies:
+        metadata = payload.get("metadata") or {}
+        initialization = metadata.get("audio_initialization") if isinstance(metadata, dict) else None
+        if not isinstance(initialization, dict) or initialization.get("source_checkpoint_sha256") != saved_dependencies.get("audio_init_checkpoint_sha256"):
+            raise ValueError(
+                f"Audio checkpoint initialization metadata does not match dependencies: {path}"
+            )
     model = AudioCodeAutoencoder(AudioCodeModelConfig(**payload["model_config"])).to(device)
     model.load_state_dict(payload["state_dict"], strict=True)
     return model, payload

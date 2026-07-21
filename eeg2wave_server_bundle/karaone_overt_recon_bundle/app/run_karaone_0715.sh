@@ -13,6 +13,7 @@ seed="15"
 limit="${LIMIT:-}"
 audio_epochs="${AUDIO_EPOCHS:-}"
 eeg_epochs="${EEG_EPOCHS:-}"
+force_audio_retrain="${FORCE_AUDIO_RETRAIN:-0}"
 
 cache="../artifacts/karaone_0715/karaone_0715_encodec_codes_s${seed}.npz"
 output_root="../artifacts/outputs_karaone_0715"
@@ -72,9 +73,11 @@ run_audio() {
   local command=("$python_bin" scripts/train_karaone_0715.py --phase audio --config "$config")
   if [[ "$device" != "auto" ]]; then command+=(--device "$device"); fi
   if [[ -n "$audio_epochs" ]]; then command+=(--audio-epochs "$audio_epochs"); fi
-  if [[ -f "${audio_run}/checkpoints/last.pt" ]]; then
+  if [[ -f "${audio_run}/checkpoints/last.pt" && "${force_audio_retrain}" != "1" ]]; then
     echo "[0715] resuming audio model: ${audio_run}/checkpoints/last.pt"
     command+=(--resume "${audio_run}/checkpoints/last.pt")
+  elif [[ "${force_audio_retrain}" == "1" ]]; then
+    echo "[0715] forcing a fresh supervised audio run (ignoring existing checkpoint)"
   fi
   "${command[@]}"
 }

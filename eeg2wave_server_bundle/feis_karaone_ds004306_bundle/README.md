@@ -125,6 +125,21 @@ bash app/run_combined_0715_v1.sh train-audio
 `--allow-scratch-audio` 仅用于轻量诊断 smoke；它会明确标记为
 `scratch_diagnostic`，不应作为最终 label-to-audio 结果。
 
+当前 wrapper 默认将 `ALLOW_FAILED_GATE=1` 传给 combined EEG/validation
+流程，因此音频 gate 未通过时会继续生成 exploratory EEG checkpoint；gate
+仍然写为 `passed=false`，不会解锁 locked test。若要恢复严格阻断：
+
+```bash
+ALLOW_FAILED_GATE=0 bash run_combined_0715_full.sh
+```
+
+本轮音频优化包括按 dataset/label 加权采样和将 combined `lambda_label`
+从 `0.25` 提高到 `1.0`。若还要用新配置重新训练 KaraOne 音频初始化模型：
+
+```bash
+RETRAIN_KARAONE_AUDIO=1 ALLOW_FAILED_GATE=1 bash run_combined_0715_full.sh
+```
+
 如果希望一次性执行上述流程，并在最后为 FEIS、KaraOne、ds004306 都生成
 validation synthesis，可以直接运行：
 
