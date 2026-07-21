@@ -258,13 +258,21 @@ def load_models(
     audio_sha = file_sha256(audio_path)
     eeg_sha = file_sha256(eeg_path)
     audio_payload = torch.load(audio_path, map_location=device, weights_only=False)
+    audio_dependencies = audio_payload.get("dependencies") or {}
+    if not isinstance(audio_dependencies, dict):
+        raise ValueError(f"Audio checkpoint dependencies must be an object: {audio_path}")
     validate_checkpoint_payload(
         audio_payload,
         expected_phase="audio",
         expected_lineage=lineage,
-        expected_dependencies={},
+        expected_dependencies={str(key): str(value) for key, value in audio_dependencies.items()},
         source=str(audio_path),
     )
+    if "audio_init_checkpoint_sha256" in audio_dependencies:
+        metadata = audio_payload.get("metadata") or {}
+        initialization = metadata.get("audio_initialization") if isinstance(metadata, dict) else None
+        if not isinstance(initialization, dict) or initialization.get("source_checkpoint_sha256") != audio_dependencies.get("audio_init_checkpoint_sha256"):
+            raise ValueError(f"Audio checkpoint initialization metadata does not match dependencies: {audio_path}")
     eeg_payload = torch.load(eeg_path, map_location=device, weights_only=False)
     validate_checkpoint_payload(
         eeg_payload,

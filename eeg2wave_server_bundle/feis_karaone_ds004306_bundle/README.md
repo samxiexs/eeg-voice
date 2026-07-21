@@ -147,6 +147,20 @@ validation synthesis，可以直接运行：
 bash run_combined_0715_full.sh
 ```
 
+如果 combined audio checkpoint 已经训练完成、只想继续 EEG→重建→对比图，使用
+`RUN_AUDIO=0` 复用它：
+
+```bash
+RUN_AUDIO=0 EEG_EPOCHS=40 SYNTHESIS_LIMIT=-1 PLOT_COMPARISONS=1 \
+ALLOW_FAILED_GATE=1 bash run_combined_0715_full.sh
+```
+
+`run_combined_0715_full.sh` 当前默认使用 combined EEG `40` epochs，并在
+全量 validation synthesis 后自动生成 reference-vs-reconstruction pair 图。
+WAV 输出位于 `artifacts/combined_0715_v1/samples/<dataset>/validation/`，
+对比图和 pair CSV 位于对应的 `comparison_pairs/` 子目录。可用
+`SYNTHESIS_LIMIT=12` 做快速初始检查，或用 `PLOT_COMPARISONS=0` 跳过绘图。
+
 该 wrapper 会显示阶段级总进度条；cache、audit、训练和 synthesis 阶段还会
 显示各自的 tqdm 进度。默认不会重复覆盖 KaraOne EEG 输出。如需先重建
 KaraOne valid-length 预处理：
