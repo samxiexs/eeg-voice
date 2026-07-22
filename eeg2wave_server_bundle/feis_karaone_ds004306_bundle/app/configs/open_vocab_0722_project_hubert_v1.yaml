@@ -24,6 +24,8 @@ paths:
   leakage_audit: ../../artifacts/open_vocab_0722_project_hubert_v1/audits/data_leakage_audit.json
   encodec_model: ../../../karaone_overt_recon_bundle/models/encodec_24khz
   audio_checkpoint: ../../artifacts/open_vocab_0722_project_hubert_v1/audio/checkpoints/best.pt
+  audio_oracle_gate: ../../artifacts/open_vocab_0722_project_hubert_v1/audio/metrics/audio_condition_oracle_gate.json
+  audio_freeze_manifest: ../../artifacts/open_vocab_0722_project_hubert_v1/audio/frozen_checkpoint.json
   eeg_pretrain_checkpoint: ../../artifacts/open_vocab_0722_project_hubert_v1/eeg_pretrain/checkpoints/best.pt
   eeg_checkpoint: ../../artifacts/open_vocab_0722_project_hubert_v1/eeg/checkpoints/selected.pt
   validation_report: ../../artifacts/open_vocab_0722_project_hubert_v1/evaluation/validation_report.json
@@ -69,14 +71,37 @@ audio_model:
   dropout: 0.10
   xlsr_dimension: 768
   batch_size: 12
-  epochs: 60
+  # Project-only runs first create a fresh 0715-style bootstrap inside this
+  # experiment.  Twelve low-LR epochs then adapt its non-label tensors to the
+  # frozen HuBERT condition space.
+  epochs: 12
   lr: 0.0003
+  shared_init_lr: 0.0001
   weight_decay: 0.0001
-  mask_ratio_min: 0.50
+  mask_ratio_min: 0.65
   mask_ratio_max: 0.95
-  full_mask_probability: 0.25
-  condition_dropout: 0.15
+  full_mask_probability: 0.50
+  condition_dropout: 0.10
   codebook_weights: [1.0, 1.0, 0.75, 0.60, 0.45, 0.35, 0.25, 0.20]
+
+audio_bootstrap:
+  required: true
+  source_family: combined_0715_fresh_scratch
+  default_epochs: 20
+  output_subdir: bootstrap_0715
+  exclude_parameter_tokens: [label, dataset, subject, text_projector]
+
+audio_oracle_gate:
+  required_before_paired_eeg: true
+  validation_only: true
+  batch_size: 8
+  write_examples_per_dataset: 4
+  minimum_median_lag_envelope_correlation: 0.20
+  minimum_median_modulation_correlation: 0.15
+  maximum_median_log_mel_mae_db: 12.0
+  minimum_median_q0_accuracy: 0.03
+  minimum_median_envelope_gain_over_shuffled: 0.02
+  minimum_median_log_mel_gain_db_over_shuffled: 0.10
 
 eeg_model:
   patch_size: 64
@@ -95,6 +120,7 @@ eeg_model:
   batch_size: 6
   pretrain_epochs: 20
   paired_epochs: 40
+  freeze_audio_decoder: true
   decoder_frozen_epochs: 20
   decoder_unfreeze_blocks: 2
   decoder_unfreeze_lr_scale: 0.10

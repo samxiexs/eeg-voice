@@ -24,6 +24,7 @@ APP = Path(__file__).resolve().parents[1]
 if str(APP) not in sys.path: sys.path.insert(0, str(APP))
 
 from src.open_vocab_0722.data import AudioCodeBank, DATASETS, OpenVoiceEEGDataset, TeacherBank, collate_openvoice, common_montage_view, load_context, resolve_config_path  # noqa: E402
+from src.open_vocab_0722.audio_gate import require_frozen_audio_checkpoint  # noqa: E402
 from src.open_vocab_0722.lineage import build_lineage, file_sha256, validate_checkpoint  # noqa: E402
 from src.open_vocab_0722.model import LabelFreeAudioConfig, LabelFreeAudioModel, OpenVoiceEEGConfig, OpenVoiceEEGEncoder  # noqa: E402
 
@@ -42,6 +43,7 @@ def move(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
 def load_models(context: Any, lineage: dict[str, Any], device: torch.device) -> tuple[LabelFreeAudioModel, OpenVoiceEEGEncoder, dict[str, Any]]:
     cfg = context.config; audio_cfg, eeg_cfg = configs(cfg, len(context.subject_to_index))
     audio_path = resolve_config_path(context.config_path, cfg["paths"]["audio_checkpoint"])
+    require_frozen_audio_checkpoint(context.config_path, cfg, lineage, audio_path)
     eeg_path = resolve_config_path(context.config_path, cfg["paths"]["eeg_checkpoint"])
     audio_payload = torch.load(audio_path, map_location="cpu", weights_only=False)
     validate_checkpoint(audio_payload, phase="audio", lineage=lineage, source=str(audio_path))

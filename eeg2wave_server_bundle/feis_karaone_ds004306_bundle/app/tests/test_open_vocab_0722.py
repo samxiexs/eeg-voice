@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import inspect
+import json
 
 import numpy as np
 import pytest
 import torch
 
 from src.open_vocab_0722.data import collate_openvoice
+from src.open_vocab_0722.audio_gate import (
+    AUDIO_FREEZE_SCHEMA,
+    AUDIO_ORACLE_GATE_SCHEMA,
+    require_frozen_audio_checkpoint,
+)
+from src.open_vocab_0722.lineage import file_sha256
 from src.open_vocab_0722.losses import (
     exact_pair_contrastive_loss,
     loss_eligibility,
@@ -143,3 +150,35 @@ def test_identical_waveform_metrics() -> None:
     assert metrics["lag_envelope_correlation"] == pytest.approx(1.0, abs=1e-6)
     assert metrics["log_mel_mae_db"] == pytest.approx(0.0, abs=1e-6)
     assert metrics["multi_resolution_stft_distance"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_audio_freeze_binds_gate_and_checkpoint(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("version: test\n", encoding="utf-8")
+    checkpoint = tmp_path / "audio.pt"
+    checkpoint.write_bytes(b"audio-v1")
+    gate_path = tmp_path / "gate.json"
+    freeze_path = tmp_path / "freeze.json"
+    lineage: dict[str, object] = {}
+    gate = {
+        "schema_version": AUDIO_ORACLE_GATE_SCHEMA,
+        "passed": True,
+        "audio_checkpoint_sha256": file_sha256(checkpoint),
+        "lineage": lineage,
+    }
+    gate_path.write_text(json.dumps(gate), encoding="utf-8")
+    freeze = {
+        "schema_version": AUDIO_FREEZE_SCHEMA,
+        "audio_checkpoint_sha256": file_sha256(checkpoint),
+        "audio_oracle_gate_sha256": file_sha256(gate_path),
+        "lineage": lineage,
+    }
+    freeze_path.write_text(json.dumps(freeze), encoding="utf-8")
+    cfg = {
+        "audio_oracle_gate": {"required_before_paired_eeg": True},
+        "paths": {"audio_oracle_gate": "gate.json", "audio_freeze_manifest": "freeze.json"},
+    }
+    assert require_frozen_audio_checkpoint(config_path, cfg, lineage, checkpoint) == freeze
+    checkpoint.write_bytes(b"audio-v2")
+    with pytest.raises(PermissionError, match="binding mismatch"):
+        require_frozen_audio_checkpoint(config_path, cfg, lineage, checkpoint)

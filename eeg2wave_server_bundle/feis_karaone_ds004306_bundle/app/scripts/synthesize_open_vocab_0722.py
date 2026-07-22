@@ -27,6 +27,7 @@ if str(KARA_APP) not in sys.path:
     sys.path.insert(0, str(KARA_APP))
 
 from src.combined_0715.audio_eval import decode_cached_sample  # noqa: E402
+from src.open_vocab_0722.audio_gate import require_frozen_audio_checkpoint  # noqa: E402
 from src.open_vocab_0722.data import AudioCodeBank, OpenVoiceEEGDataset, TeacherBank, collate_openvoice, load_context, normalize_label, resolve_config_path  # noqa: E402
 from src.open_vocab_0722.audio_io import read_wav, write_wav  # noqa: E402
 from src.open_vocab_0722.lineage import build_lineage, file_sha256, preauthorize_test, preauthorize_test_metadata, validate_checkpoint  # noqa: E402
@@ -177,6 +178,7 @@ def main() -> None:
         preauthorize_test_metadata(gate_path, config_path=config_path, audio_checkpoint=audio_path, eeg_checkpoint=eeg_path)
     context = load_context(config_path)
     lineage = build_lineage(context, require_optional_caches=not args.project_audio_only)
+    require_frozen_audio_checkpoint(config_path, context.config, lineage, audio_path)
     if args.split == "test":
         preauthorize_test(gate_path, lineage=lineage, audio_checkpoint=audio_path, eeg_checkpoint=eeg_path)
     device = torch.device(args.device) if args.device else device_default()

@@ -24,6 +24,7 @@ KARA_APP = APP.parents[1] / "karaone_overt_recon_bundle/app"
 if str(KARA_APP) not in sys.path: sys.path.insert(0, str(KARA_APP))
 
 from src.open_vocab_0722.data import AudioCodeBank, OpenVoiceEEGDataset, TeacherBank, collate_openvoice, load_context, resolve_config_path  # noqa: E402
+from src.open_vocab_0722.audio_gate import require_frozen_audio_checkpoint  # noqa: E402
 from src.open_vocab_0722.audio_io import read_wav  # noqa: E402
 from src.open_vocab_0722.lineage import build_lineage, file_sha256, validate_checkpoint  # noqa: E402
 from src.open_vocab_0722.metrics import reconstruction_metrics  # noqa: E402
@@ -74,6 +75,7 @@ def main() -> None:
     device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     audio_config, eeg_config = model_configs(cfg, len(context.subject_to_index))
     audio_path = resolve_config_path(context.config_path, cfg["paths"]["audio_checkpoint"])
+    require_frozen_audio_checkpoint(context.config_path, cfg, lineage, audio_path)
     audio_payload = torch.load(audio_path, map_location="cpu", weights_only=False)
     validate_checkpoint(audio_payload, phase="audio", lineage=lineage, source=str(audio_path))
     base_audio = LabelFreeAudioModel(audio_config).to(device); base_audio.load_state_dict(audio_payload["model_state"]); base_audio.eval()

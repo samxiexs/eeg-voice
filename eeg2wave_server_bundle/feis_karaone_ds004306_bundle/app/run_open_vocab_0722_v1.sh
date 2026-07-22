@@ -68,6 +68,11 @@ case "${1:-}" in
     [[ "${PROJECT_ONLY}" == "1" ]] && args+=(--project-only)
     exec "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/build_open_vocab_teacher_cache.py" "${args[@]}" "${@:2}"
     ;;
+  audit-audio-oracle)
+    args=(--config "${CONFIG}" "${DEVICE_ARGS[@]}")
+    [[ "${PROJECT_ONLY}" == "1" ]] && args+=(--project-audio-only)
+    exec "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/audit_open_vocab_0722_audio_oracle.py" "${args[@]}" "${@:2}"
+    ;;
   train-audio|pretrain-eeg|train-eeg|validate|test)
     phase="${1}"
     args=(--config "${CONFIG}" --generalization "${GENERALIZATION}" "${HOLDOUT_ARGS[@]}" "${DEVICE_ARGS[@]}")
@@ -127,49 +132,11 @@ case "${1:-}" in
     exec "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/compare_open_vocab_0722_dense_moe.py" "${@:2}"
     ;;
   all)
-    total=13
-    bar 0 "${total}" "prepare + leakage audit"
-    "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/prepare_open_vocab_0722.py" --config "${CONFIG}"
-    bar 1 "${total}" "public speech manifest"
-    if [[ "${PROJECT_ONLY}" != "1" && ! -f "${OUTPUT_ROOT}/manifests/public_audio_manifest.csv" ]]; then
-      : "${LIBRITTS_ROOT:?Set LIBRITTS_ROOT}"
-      : "${AISHELL_ROOT:?Set AISHELL_ROOT}"
-      "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/build_open_vocab_public_manifest.py" --config "${CONFIG}" --english-root "${LIBRITTS_ROOT}" --chinese-root "${AISHELL_ROOT}"
-    fi
-    bar 2 "${total}" "frozen EnCodec public cache"
-    if [[ "${PROJECT_ONLY}" != "1" ]]; then "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/build_open_vocab_public_cache.py" --config "${CONFIG}" "${DEVICE_ARGS[@]}"; fi
-    bar 3 "${total}" "frozen XLS-R/XLM-R teacher cache"
-    teacher_args=(--config "${CONFIG}" "${DEVICE_ARGS[@]}"); [[ "${PROJECT_ONLY}" == "1" ]] && teacher_args+=(--project-only)
-    "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/build_open_vocab_teacher_cache.py" "${teacher_args[@]}"
-    bar 4 "${total}" "label-free audio prior"
-    "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/train_open_vocab_0722.py" --config "${CONFIG}" --phase audio "${PROJECT_ONLY_ARGS[@]}" "${SHARED_INIT_ARGS[@]}" "${DEVICE_ARGS[@]}"
-    bar 5 "${total}" "EEG self-supervised pretraining"
-    "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/train_open_vocab_0722.py" --config "${CONFIG}" --phase eeg-pretrain --generalization "${GENERALIZATION}" "${HOLDOUT_ARGS[@]}" "${PROJECT_ONLY_ARGS[@]}" "${DEVICE_ARGS[@]}"
-    bar 6 "${total}" "paired EEG-audio training"
-    "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/train_open_vocab_0722.py" --config "${CONFIG}" --phase eeg --generalization "${GENERALIZATION}" "${HOLDOUT_ARGS[@]}" "${PROJECT_ONLY_ARGS[@]}" "${DEVICE_ARGS[@]}"
-    bar 7 "${total}" "decoded validation checkpoint selection"
-    "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/select_open_vocab_0722_checkpoint.py" --config "${CONFIG}" --generalization "${GENERALIZATION}" "${HOLDOUT_ARGS[@]}" "${PROJECT_ONLY_ARGS[@]}" "${DEVICE_ARGS[@]}"
-    bar 8 "${total}" "ten-mode validation synthesis"
-    for dataset in karaone feis ds004306; do run_synthesis "${dataset}" validation; done
-    bar 9 "${total}" "montage/router/model audit"
-    "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/audit_open_vocab_0722_model.py" --config "${CONFIG}" "${PROJECT_ONLY_ARGS[@]}" "${DEVICE_ARGS[@]}"
-    bar 10 "${total}" "formal validation gate"
-    manifest="${OUTPUT_ROOT}/synthesis/${GENERALIZATION}/${HOLDOUT_LABEL:-all}/karaone/validation/synthesis_manifest.json"
-    gate_args=(--config "${CONFIG}" --synthesis-manifest "${manifest}" --generalization "${GENERALIZATION}")
-    gate_args+=("${PROJECT_ONLY_ARGS[@]}")
-    [[ -n "${DENSE_BASELINE_REPORT:-}" ]] && gate_args+=(--dense-baseline-report "${DENSE_BASELINE_REPORT}")
-    [[ -n "${SEED_SUMMARY:-}" ]] && gate_args+=(--seed-summary "${SEED_SUMMARY}")
-    "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/gate_open_vocab_0722.py" "${gate_args[@]}"
-    bar 11 "${total}" "comparison plots"
-    for dataset in karaone feis ds004306; do
-      "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/plot_open_vocab_0722_pairs.py" --manifest "${OUTPUT_ROOT}/synthesis/${GENERALIZATION}/${HOLDOUT_LABEL:-all}/${dataset}/validation/synthesis_manifest.json"
-    done
-    bar 12 "${total}" "embedding evaluation"
-    "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/train_open_vocab_0722.py" --config "${CONFIG}" --phase evaluate --split validation --generalization "${GENERALIZATION}" "${HOLDOUT_ARGS[@]}" "${PROJECT_ONLY_ARGS[@]}" "${DEVICE_ARGS[@]}"
-    bar 13 "${total}" "complete; locked test was not accessed"
+    export USE_PUBLIC_AUDIO="$([[ "${PROJECT_ONLY}" == "1" ]] && printf 0 || printf 1)"
+    exec bash "${BUNDLE_DIR}/run_open_vocab_0722_full.sh" "${@:2}"
     ;;
   *)
-    echo "usage: $0 {prepare|public-manifest|public-cache|teachers|train-audio|pretrain-eeg|train-eeg|select-eeg|validate|test|synthesize|audit-model|gate|plot|track-b|ablation-config|seed-config|aggregate-seeds|compare-dense-moe|all} [options]" >&2
+    echo "usage: $0 {prepare|public-manifest|public-cache|teachers|train-audio|audit-audio-oracle|pretrain-eeg|train-eeg|select-eeg|validate|test|synthesize|audit-model|gate|plot|track-b|ablation-config|seed-config|aggregate-seeds|compare-dense-moe|all} [options]" >&2
     exit 2
     ;;
 esac

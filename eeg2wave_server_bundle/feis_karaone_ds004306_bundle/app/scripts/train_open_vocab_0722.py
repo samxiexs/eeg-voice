@@ -35,6 +35,7 @@ from src.open_vocab_0722.data import (  # noqa: E402
     resolve_config_path,
     stochastic_channel_view,
 )
+from src.open_vocab_0722.audio_gate import require_frozen_audio_checkpoint  # noqa: E402
 from src.open_vocab_0722.lineage import (  # noqa: E402
     build_lineage,
     checkpoint_payload,
@@ -170,26 +171,47 @@ def train_audio(args: argparse.Namespace, context: Any, teachers: TeacherBank, l
     validation_loader = DataLoader(validation_set, batch_size=int(value["batch_size"]), shuffle=False)
     model = LabelFreeAudioModel(audio_config(cfg)).to(device)
     initialization: dict[str, Any] = {"mode": "scratch_label_free"}
+    bootstrap_required = bool((cfg.get("audio_bootstrap") or {}).get("required", False))
+    if bootstrap_required and not args.shared_init_checkpoint:
+        raise PermissionError(
+            "This project-only recipe requires a freshly trained 0715-style bootstrap checkpoint. "
+            "Run the full wrapper or pass --shared-init-checkpoint explicitly."
+        )
     if args.shared_init_checkpoint and not args.resume:
         legacy = torch.load(args.shared_init_checkpoint, map_location="cpu", weights_only=False)
         source = legacy.get("model_state") or legacy.get("model_state_dict") or legacy.get("state_dict") or legacy.get("audio_model")
         if not isinstance(source, dict):
             raise ValueError("Legacy initialization checkpoint has no recognizable model state")
         current = model.state_dict(); copied = []
+        forbidden = tuple(
+            str(token).lower()
+            for token in (cfg.get("audio_bootstrap") or {}).get(
+                "exclude_parameter_tokens", ["label", "dataset", "subject", "text_projector"]
+            )
+        )
         for key, value_state in source.items():
             clean = str(key).removeprefix("module.")
-            forbidden = ("label", "dataset", "subject", "text_projector")
             if any(token in clean.lower() for token in forbidden):
                 continue
             if clean in current and current[clean].shape == value_state.shape:
                 current[clean] = value_state; copied.append(clean)
         model.load_state_dict(current)
+        if bootstrap_required and not copied:
+            raise ValueError("Fresh bootstrap checkpoint supplied no compatible non-label tensors")
         report_path = resolve_config_path(context.config_path, cfg["paths"]["output_root"]) / "audio/shared_initialization.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps({"source": str(args.shared_init_checkpoint.resolve()), "source_sha256": file_sha256(args.shared_init_checkpoint), "copied_keys": copied, "excluded_label_dataset_subject_weights": True}, indent=2) + "\n", encoding="utf-8")
-        initialization = {"mode": "shared_nonlabel_weight_extraction", "source_sha256": file_sha256(args.shared_init_checkpoint), "copied_tensor_count": len(copied)}
+        initialization = {
+            "mode": "shared_nonlabel_weight_extraction",
+            "source_checkpoint": str(args.shared_init_checkpoint.resolve()),
+            "source_sha256": file_sha256(args.shared_init_checkpoint),
+            "copied_tensor_count": len(copied),
+            "excluded_parameter_tokens": list((cfg.get("audio_bootstrap") or {}).get("exclude_parameter_tokens", ["label", "dataset", "subject", "text_projector"])),
+        }
         print(f"[0722 audio] copied {len(copied)} label-independent tensors from {args.shared_init_checkpoint}")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=float(value["lr"]), weight_decay=float(value["weight_decay"]))
+    learning_rate = float(value.get("shared_init_lr", value["lr"])) if args.shared_init_checkpoint else float(value["lr"])
+    initialization["learning_rate"] = learning_rate
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=float(value["weight_decay"]))
     start = 0
     if args.resume:
         payload = torch.load(args.resume, map_location="cpu", weights_only=False)
@@ -343,6 +365,7 @@ def train_eeg(args: argparse.Namespace, context: Any, teachers: TeacherBank, lin
     dependencies: dict[str, str] = {}
     if not pretrain:
         audio_path = resolve_config_path(context.config_path, cfg["paths"]["audio_checkpoint"])
+        require_frozen_audio_checkpoint(context.config_path, cfg, lineage, audio_path)
         audio = load_audio_checkpoint(audio_path, cfg, lineage, device)
         audio.eval()
         for parameter in audio.parameters():
@@ -366,6 +389,7 @@ def train_eeg(args: argparse.Namespace, context: Any, teachers: TeacherBank, lin
     start, best, patience = 0, -math.inf, 0
     baseline_score: float | None = None
     decoder_unfrozen = False
+    freeze_audio_decoder = bool(value.get("freeze_audio_decoder", False))
     router_bad_streak = [0] * int(value["specialists"])
     metrics_path = resolve_config_path(context.config_path, cfg["paths"]["output_root"]) / phase / "metrics/train.jsonl"
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -374,6 +398,8 @@ def train_eeg(args: argparse.Namespace, context: Any, teachers: TeacherBank, lin
         validate_checkpoint(payload, phase=phase, lineage=lineage, dependencies=dependencies, source=str(args.resume))
         eeg.load_state_dict(payload["model_state"])
         if audio is not None and payload.get("audio_decoder_state") is not None:
+            if freeze_audio_decoder:
+                raise ValueError("Resume checkpoint modified the audio decoder, but this recipe requires it to remain frozen")
             audio.decoder.load_state_dict(payload["audio_decoder_state"])
             decoder_unfrozen = bool(payload.get("decoder_unfrozen", False))
             if decoder_unfrozen:
@@ -390,6 +416,7 @@ def train_eeg(args: argparse.Namespace, context: Any, teachers: TeacherBank, lin
         if (
             not pretrain
             and audio is not None
+            and not freeze_audio_decoder
             and not decoder_unfrozen
             and epoch >= int(value["decoder_frozen_epochs"])
             and baseline_score is not None
@@ -511,6 +538,7 @@ def evaluate(args: argparse.Namespace, context: Any, teachers: TeacherBank, line
     cfg = context.config
     audio_path = resolve_config_path(context.config_path, cfg["paths"]["audio_checkpoint"])
     eeg_path = resolve_config_path(context.config_path, cfg["paths"]["eeg_checkpoint"])
+    require_frozen_audio_checkpoint(context.config_path, cfg, lineage, audio_path)
     if args.split == "test":
         if not args.allow_final_test:
             raise PermissionError("Locked test requires --allow-final-test")
