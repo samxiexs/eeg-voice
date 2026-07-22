@@ -1,0 +1,154 @@
+version: openvoice-eeg-0722-v1
+
+data:
+  track: track_a_common14
+  eeg_output_root: ../../eeg_output
+  audio_output_root: ../../eeg_output
+  eeg_samples: 1280
+  eeg_sample_rate: 256
+  subject_split_file: split/combined_0715_v1_split.yaml
+  label_holdout_file: split/open_vocab_0722_label_folds.yaml
+  montage_registry: ../../eeg_output/open_vocab_0722/montage_registry_track_a.json
+  pairing_policy_version: openvoice-pairing-v1
+  # Track B writes a separate manifest/registry and never overwrites Track A.
+  track_b_output_root: ../../eeg_output/open_vocab_0722_track_b
+  track_b_montage_registry: ../../eeg_output/open_vocab_0722_track_b/montage_registry.json
+
+paths:
+  output_root: ../../artifacts/open_vocab_0722_v1
+  project_audio_cache: ../../artifacts/combined_0715_v1/cache/combined_0715_encodec_codes.npz
+  teacher_cache: ../../artifacts/open_vocab_0722_v1/cache/openvoice_teacher_cache
+  public_audio_manifest: ../../artifacts/open_vocab_0722_v1/manifests/public_audio_manifest.csv
+  public_audio_cache: ../../artifacts/open_vocab_0722_v1/cache/public_audio_encodec_codes.npz
+  leakage_audit: ../../artifacts/open_vocab_0722_v1/audits/data_leakage_audit.json
+  encodec_model: ../../../karaone_overt_recon_bundle/models/encodec_24khz
+  audio_checkpoint: ../../artifacts/open_vocab_0722_v1/audio/checkpoints/best.pt
+  eeg_pretrain_checkpoint: ../../artifacts/open_vocab_0722_v1/eeg_pretrain/checkpoints/best.pt
+  eeg_checkpoint: ../../artifacts/open_vocab_0722_v1/eeg/checkpoints/selected.pt
+  validation_report: ../../artifacts/open_vocab_0722_v1/evaluation/validation_report.json
+  validation_gate: ../../artifacts/open_vocab_0722_v1/evaluation/validation_gate.json
+
+teachers:
+  xlsr_model: facebook/wav2vec2-xls-r-300m
+  text_model: xlm-roberta-base
+  audio_token_steps: 50
+  text_dimension: 768
+  use_transcripts_for_generator: false
+
+public_audio:
+  enabled: true
+  english_hours: 50
+  chinese_hours: 50
+  seed: 15
+  speaker_disjoint_validation: true
+  use_transcripts: false
+  corpora:
+    english: LibriTTS-clean
+    chinese: AISHELL-1
+
+codec:
+  sample_rate: 16000
+  duration_sec: 2.0
+  bandwidth: 6.0
+  codebooks: 8
+  code_steps: 150
+  vocab_size: 1024
+
+audio_model:
+  d_model: 192
+  condition_steps: 50
+  encoder_layers: 3
+  decoder_layers: 4
+  heads: 6
+  dropout: 0.10
+  xlsr_dimension: 1024
+  batch_size: 12
+  epochs: 60
+  lr: 0.0003
+  weight_decay: 0.0001
+  mask_ratio_min: 0.50
+  mask_ratio_max: 0.95
+  full_mask_probability: 0.25
+  condition_dropout: 0.15
+  codebook_weights: [1.0, 1.0, 0.75, 0.60, 0.45, 0.35, 0.25, 0.20]
+
+eeg_model:
+  patch_size: 64
+  patch_hop: 32
+  d_model: 192
+  condition_steps: 50
+  heads: 6
+  latent_layers: 3
+  dropout: 0.15
+  specialists: 4
+  specialist_bottleneck: 48
+  soft_routing_epochs: 5
+  top_k_specialists: 2
+  expert_dropout: 0.10
+  adapter_moe_enabled: true
+  batch_size: 6
+  pretrain_epochs: 20
+  paired_epochs: 40
+  decoder_frozen_epochs: 20
+  decoder_unfreeze_blocks: 2
+  decoder_unfreeze_lr_scale: 0.10
+  early_stopping_patience: 8
+  candidate_interval_epochs: 5
+  lr: 0.0002
+  weight_decay: 0.001
+  patch_mask_ratio: 0.30
+  adversary_max: 0.15
+  channel_drop_probabilities: [0.10, 0.25, 0.50]
+  coordinate_noise_std: 0.005
+  signal_noise_std: 0.01
+  continuous_region_drop_fraction: 0.15
+  bad_channel_probability: 0.05
+  time_mask_fraction: 0.08
+  expert_dying_threshold: 0.05
+  expert_collapse_threshold: 0.60
+  expert_bad_epochs: 3
+
+loss:
+  code: 1.0
+  clip_global: 1.0
+  clip_local: 0.5
+  structure: 0.25
+  same_label_semantic: 0.15
+  text: 0.05
+  channel_consistency: 0.20
+  domain_adversarial: 0.05
+  moe: 0.01
+  eeg_masked_pretraining: 1.0
+  feis_global_clip_weight: 0.25
+  same_label_weak_positive: 0.15
+  contrastive_temperature: 0.08
+  codebook_weights: [1.0, 1.0, 0.75, 0.60, 0.45, 0.35, 0.25, 0.20]
+
+evaluation:
+  seeds: [15, 31, 47]
+  maskgit_steps: 12
+  synthesis_temperature: 0.0
+  max_envelope_lag_ms: 250
+  bootstrap_samples: 1000
+  composite_weights:
+    envelope_correlation: 0.35
+    modulation_correlation: 0.25
+    log_mel_mae: 0.20
+    retrieval_r5: 0.20
+  g1:
+    minimum_envelope_gain: 0.05
+    minimum_log_mel_gain_db: 0.5
+    minimum_retrieval_chance_multiple: 2.0
+    bootstrap_lower_bound: 0.0
+  moe:
+    minimum_dense_gain: 0.02
+    maximum_missing_channel_drop_fraction: 0.15
+    minimum_full_common_condition_cosine: 0.80
+    maximum_common14_dataset_balanced_accuracy: 0.383
+
+run:
+  seed: 15
+  num_workers: 0
+  grad_clip: 1.0
+  precision: fp32
+  device: auto

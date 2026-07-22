@@ -1,0 +1,11 @@
+version: openvoice-0722-label-folds-v1
+normalization: lowercase_strip_slashes_whitespace
+primary_karaone_words: [gnaw, knew, pat, pot]
+secondary_karaone_labels: [n, m, uw, iy, piy, tiy, diy]
+cross_dataset_linkage:
+  # Any normalized FEIS label matching a held-out KaraOne label is excluded
+  # from paired training automatically.  The entries below document aliases.
+  gnaw: [gnaw]
+  knew: [knew]
+  pat: [pat]
+  pot: [pot]

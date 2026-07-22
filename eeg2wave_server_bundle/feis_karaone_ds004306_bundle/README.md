@@ -1,5 +1,26 @@
 # FEIS + KARA ONE + ds004306 preprocessing bundle
 
+## OpenVoice-EEG 0722 V1（新版本）
+
+开放词汇、label-free EEG→语音版本已隔离实现于
+`app/src/open_vocab_0722/`，输出固定写到 `artifacts/open_vocab_0722_v1/`。
+主推理 API 只有 `generate(eeg, channel_xyz, channel_mask, time_mask)`；label、dataset、
+subject 和真实音频均不能进入主生成路径。完整方法、证据边界、gate 和运行顺序见
+[`reports/open_vocab_eeg_to_speech_moe_0722_plan.md`](reports/open_vocab_eeg_to_speech_moe_0722_plan.md)。
+
+有进度条的一键 Track A G1 运行：
+
+```bash
+LIBRITTS_ROOT=/absolute/path/to/LibriTTS \
+AISHELL_ROOT=/absolute/path/to/AISHELL-1 \
+DEVICE=mps bash app/run_open_vocab_0722_v1.sh all
+```
+
+`PROJECT_ONLY=1` 仅用于小规模 smoke，不构成开放词汇实验。Track B 通过
+`bash app/run_open_vocab_0722_v1.sh track-b` 单独生成，不覆盖14通道数据。旧0715/0721
+checkpoint 与0722 schema不兼容。`data/`、`eeg_output/`、`artifacts/`、checkpoint、WAV、
+teacher/cache 均继续由本 bundle 的 `.gitignore` 排除。
+
 This bundle creates a unified imagined-speech EEG dataset without modifying
 anything under `data/`.
 
