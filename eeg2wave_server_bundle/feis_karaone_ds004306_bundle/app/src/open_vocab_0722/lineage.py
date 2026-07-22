@@ -139,7 +139,7 @@ def build_lineage(context: Any, *, require_optional_caches: bool = False) -> dic
         "pairing_policy_version": str(cfg["data"]["pairing_policy_version"]),
         "encodec_version": str(cfg["paths"]["encodec_model"]),
         "xlsr_version": str(cfg["teachers"]["xlsr_model"]),
-        "text_encoder_version": str(cfg["teachers"]["text_model"]),
+        "text_encoder_version": str(cfg["teachers"].get("text_model") or "disabled"),
         "audio_recipe_sha256": object_sha256({
             "codec": cfg["codec"], "audio_model": cfg["audio_model"], "teachers": cfg["teachers"],
             "public_audio": cfg["public_audio"], "subject_split_version": str(context.split.get("version", "unknown")),

@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# The optional argument lists below are intentionally empty in the default
+# G1/project-only run. Bash 3.2 (the macOS system shell) treats an empty array
+# expansion as an unbound variable under `set -u`, so retain fail-fast command
+# handling without nounset for this CLI forwarding wrapper.
+set -eo pipefail
 
 BUNDLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-/opt/anaconda3/bin/python}"
-CONFIG="${CONFIG:-${BUNDLE_DIR}/app/configs/open_vocab_0722_v1.yaml}"
+PROJECT_ONLY="${PROJECT_ONLY:-0}"
+if [[ -z "${CONFIG:-}" ]]; then
+  if [[ "${PROJECT_ONLY}" == "1" ]]; then
+    CONFIG="${BUNDLE_DIR}/app/configs/open_vocab_0722_project_hubert_v1.yaml"
+  else
+    CONFIG="${BUNDLE_DIR}/app/configs/open_vocab_0722_v1.yaml"
+  fi
+fi
 DEVICE_ARGS=()
 [[ -n "${DEVICE:-}" ]] && DEVICE_ARGS=(--device "${DEVICE}")
 GENERALIZATION="${GENERALIZATION:-g1}"
 HOLDOUT_ARGS=()
 [[ -n "${HOLDOUT_LABEL:-}" ]] && HOLDOUT_ARGS=(--holdout-label "${HOLDOUT_LABEL}")
-PROJECT_ONLY="${PROJECT_ONLY:-0}"
 PROJECT_ONLY_ARGS=()
 [[ "${PROJECT_ONLY}" == "1" ]] && PROJECT_ONLY_ARGS=(--project-audio-only)
 SHARED_INIT_ARGS=()
@@ -17,7 +27,13 @@ SHARED_INIT_ARGS=()
 COMPUTE_XLSR="${COMPUTE_XLSR:-1}"
 XLSR_ARGS=()
 [[ "${COMPUTE_XLSR}" == "1" ]] && XLSR_ARGS=(--compute-xlsr)
-OUTPUT_ROOT="${OUTPUT_ROOT:-${BUNDLE_DIR}/artifacts/open_vocab_0722_v1}"
+if [[ -z "${OUTPUT_ROOT:-}" ]]; then
+  if [[ "${PROJECT_ONLY}" == "1" ]]; then
+    OUTPUT_ROOT="${BUNDLE_DIR}/artifacts/open_vocab_0722_project_hubert_v1"
+  else
+    OUTPUT_ROOT="${BUNDLE_DIR}/artifacts/open_vocab_0722_v1"
+  fi
+fi
 
 bar() {
   local current="$1" total="$2" label="$3" width=32 filled empty

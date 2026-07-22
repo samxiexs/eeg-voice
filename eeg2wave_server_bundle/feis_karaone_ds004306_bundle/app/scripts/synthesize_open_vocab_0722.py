@@ -218,7 +218,13 @@ def main() -> None:
         if row["pairing_confidence"] == "karaone_same_trial_overt":
             retrieval_eeg.append(main_output["acoustic_global"].detach().cpu())
             retrieval_audio.append(audio_features["acoustic_global"].detach().cpu())
-        text_condition = eeg.project_text(batch["text_embedding"]).unsqueeze(1).expand(-1, audio.cfg.condition_steps, -1)
+        text_auxiliary_enabled = bool(context.config["teachers"].get("text_auxiliary_enabled", True) and context.config["teachers"].get("text_model"))
+        if text_auxiliary_enabled:
+            text_condition = eeg.project_text(batch["text_embedding"]).unsqueeze(1).expand(-1, audio.cfg.condition_steps, -1)
+        else:
+            # Preserve the control directory/manifest contract without
+            # pretending that an unavailable text teacher supplies semantics.
+            text_condition = torch.zeros_like(main_output["condition"])
         conditions = {
             "audio_condition_oracle": audio_oracle, "eeg_conditioned": main_output["condition"],
             "shuffled_eeg_same_label": same_output["condition"], "shuffled_eeg_any": any_output["condition"],
@@ -283,7 +289,7 @@ def main() -> None:
         "lineage": lineage, "inference_inputs": ["eeg", "channel_xyz", "channel_mask", "time_mask"],
         "main_generation_uses_label": False, "main_generation_uses_dataset_id": False, "main_generation_uses_subject_id": False,
         "project_audio_only_exploratory": bool(args.project_audio_only),
-        "text_only_is_ablation": True, "dataset_prior_is_ablation": True,
+        "text_only_is_ablation": True, "text_only_available": bool(context.config["teachers"].get("text_auxiliary_enabled", True) and context.config["teachers"].get("text_model")), "dataset_prior_is_ablation": True,
         "reference_audio_used_only_for_oracles_and_evaluation": True,
         "ds004306_trial_level_claim_allowed": False if args.dataset == "ds004306" else None,
         "xlsr_content_computed": bool(args.compute_xlsr), "phoneme_word_metrics_available": False,

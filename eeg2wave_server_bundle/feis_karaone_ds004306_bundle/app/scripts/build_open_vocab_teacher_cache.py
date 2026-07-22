@@ -47,6 +47,21 @@ def load_audio(path: Path, target_rate: int, start: int = 0, frames: int = -1) -
     return resample(audio, int(rate), int(target_rate))
 
 
+def pool_acoustic_tokens(hidden: torch.Tensor, token_steps: int) -> torch.Tensor:
+    """Pool variable-length frozen teacher frames to a fixed token sequence.
+
+    Metal does not implement adaptive average pooling when its input length is
+    not divisible by the requested output length. The teacher is frozen and
+    called under inference_mode, so a small CPU-only pooling fallback preserves
+    exactly the same PyTorch operation without affecting gradients or model
+    semantics. The expensive HuBERT/XLS-R forward pass remains on MPS.
+    """
+    frames = hidden.transpose(1, 2)
+    if hidden.device.type == "mps" and frames.shape[-1] % int(token_steps) != 0:
+        return F.adaptive_avg_pool1d(frames.cpu(), int(token_steps)).to(hidden.device).transpose(1, 2)
+    return F.adaptive_avg_pool1d(frames, int(token_steps)).transpose(1, 2)
+
+
 def project_records(context: object, bank: AudioCodeBank) -> list[dict[str, object]]:
     by_key = {row["audio_key"]: row for row in context.rows}
     records = []
@@ -138,13 +153,13 @@ def main() -> None:
         shard_number += 1
 
     with torch.inference_mode():
-        for start in tqdm(range(0, len(records), args.batch_size), desc="[0722 teacher] XLS-R", unit="batch"):
+        for start in tqdm(range(0, len(records), args.batch_size), desc="[0722 teacher] acoustic tokens", unit="batch"):
             chunk = records[start : start + args.batch_size]
             waveforms = [load_audio(Path(str(row["path"])), sample_rate, int(row["start"]), int(row["frames"])) for row in chunk]
             encoded = processor(waveforms, sampling_rate=sample_rate, return_tensors="pt", padding=True)
             encoded = {key: value.to(device) for key, value in encoded.items()}
             hidden = xlsr(**encoded).last_hidden_state
-            pooled = F.adaptive_avg_pool1d(hidden.transpose(1, 2), token_steps).transpose(1, 2)
+            pooled = pool_acoustic_tokens(hidden, token_steps)
             values = pooled.float().cpu().numpy()
             for row, value in zip(chunk, values):
                 if len(all_tokens) >= args.shard_size:
@@ -154,22 +169,28 @@ def main() -> None:
                 all_tokens.append(value)
     flush()
 
-    text_name = str(cfg["teachers"]["text_model"])
-    tokenizer = AutoTokenizer.from_pretrained(text_name)
-    text_model = AutoModel.from_pretrained(text_name).to(device).eval()
-    for parameter in text_model.parameters():
-        parameter.requires_grad_(False)
-    labels = sorted({normalize_label(row["label"]) for row in context.rows})
-    prompts = [f"language=en; spoken sound={label}" for label in labels]
+    text_name = cfg["teachers"].get("text_model")
+    text_enabled = bool(cfg["teachers"].get("text_auxiliary_enabled", True) and text_name)
+    text_file: str | None = None
     embeddings: list[np.ndarray] = []
-    with torch.inference_mode():
-        for start in tqdm(range(0, len(prompts), 32), desc="[0722 teacher] XLM-R", unit="batch"):
-            encoded = tokenizer(prompts[start : start + 32], padding=True, truncation=True, return_tensors="pt")
-            encoded = {key: value.to(device) for key, value in encoded.items()}
-            embeddings.extend(text_model(**encoded).last_hidden_state[:, 0].float().cpu().numpy())
-    np.savez_compressed(output / "text.npz", keys=np.asarray(labels), embeddings=np.asarray(embeddings, dtype=np.float16))
+    if text_enabled:
+        tokenizer = AutoTokenizer.from_pretrained(str(text_name))
+        text_model = AutoModel.from_pretrained(str(text_name)).to(device).eval()
+        for parameter in text_model.parameters():
+            parameter.requires_grad_(False)
+        labels = sorted({normalize_label(row["label"]) for row in context.rows})
+        prompts = [f"language=en; spoken sound={label}" for label in labels]
+        with torch.inference_mode():
+            for start in tqdm(range(0, len(prompts), 32), desc="[0722 teacher] text tokens", unit="batch"):
+                encoded = tokenizer(prompts[start : start + 32], padding=True, truncation=True, return_tensors="pt")
+                encoded = {key: value.to(device) for key, value in encoded.items()}
+                embeddings.extend(text_model(**encoded).last_hidden_state[:, 0].float().cpu().numpy())
+        text_file = "text.npz"
+        np.savez_compressed(output / text_file, keys=np.asarray(labels), embeddings=np.asarray(embeddings, dtype=np.float16))
     audio_dimension = int(next(iter(np.load(output / "audio_00000.npz", allow_pickle=False)["tokens"])).shape[-1])
-    cache_files = sorted(output.glob("audio_*.npz")) + [output / "text.npz"]
+    cache_files = sorted(output.glob("audio_*.npz"))
+    if text_file is not None:
+        cache_files.append(output / text_file)
     file_digests = {path.name: file_sha256(path) for path in tqdm(cache_files, desc="[0722 teacher] shard hashes", unit="file")}
     aggregate = hashlib.sha256()
     for name, digest in sorted(file_digests.items()):
@@ -177,14 +198,15 @@ def main() -> None:
     index = {
         "schema_version": TeacherBank.SCHEMA_VERSION,
         "xlsr_model": xlsr_name,
-        "text_model": text_name,
+        "text_model": str(text_name) if text_enabled else "disabled",
         "audio_dimension": audio_dimension,
-        "text_dimension": int(np.asarray(embeddings).shape[-1]),
+        "text_dimension": int(np.asarray(embeddings).shape[-1]) if embeddings else 0,
         "audio_token_steps": token_steps,
         "audio_index": audio_index,
         "audio_fit": {str(row["key"]): bool(row["fit"]) for row in records},
         "audio_source": {str(row["key"]): str(row["source"]) for row in records},
-        "text_file": "text.npz",
+        "text_file": text_file,
+        "text_auxiliary_enabled": text_enabled,
         "project_only": bool(args.project_only),
         "transcripts_used_for_generator": False,
         "project_cache_sha256": file_sha256(project_cache),
@@ -193,7 +215,7 @@ def main() -> None:
         "content_sha256": aggregate.hexdigest(),
     }
     (output / "index.json").write_text(json.dumps(index, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"output": str(output), "audio_items": len(records), "text_labels": len(labels), "shards": shard_number, "device": str(device)}, indent=2))
+    print(json.dumps({"output": str(output), "audio_items": len(records), "text_labels": len(embeddings), "text_auxiliary_enabled": text_enabled, "shards": shard_number, "device": str(device)}, indent=2))
 
 
 if __name__ == "__main__":

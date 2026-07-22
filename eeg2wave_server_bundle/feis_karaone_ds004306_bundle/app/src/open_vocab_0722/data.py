@@ -361,12 +361,14 @@ class TeacherBank:
             if raw_index.get("schema_version") != self.SCHEMA_VERSION:
                 raise ValueError(f"Unsupported teacher cache: {raw_index.get('schema_version')}")
             self.audio_dimension = int(raw_index["audio_dimension"])
-            self.text_dimension = int(raw_index["text_dimension"])
+            self.text_dimension = int(raw_index.get("text_dimension", 0))
             self.audio_tokens = _ShardedTeacherTokens(self.path, raw_index["audio_index"])
-            with np.load(self.path / raw_index["text_file"], allow_pickle=False) as text_raw:
-                keys = np.asarray(text_raw["keys"]).astype(str)
-                values = np.asarray(text_raw["embeddings"], dtype=np.float32)
-            self.text_embeddings = {key: values[index] for index, key in enumerate(keys)}
+            text_file = raw_index.get("text_file")
+            if text_file:
+                with np.load(self.path / str(text_file), allow_pickle=False) as text_raw:
+                    keys = np.asarray(text_raw["keys"]).astype(str)
+                    values = np.asarray(text_raw["embeddings"], dtype=np.float32)
+                self.text_embeddings = {key: values[index] for index, key in enumerate(keys)}
             return
         with np.load(self.path, allow_pickle=False) as raw:
             version = str(np.asarray(raw["schema_version"]).reshape(-1)[0])
