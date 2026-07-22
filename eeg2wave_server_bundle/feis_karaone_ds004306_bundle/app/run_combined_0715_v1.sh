@@ -43,6 +43,9 @@ case "${1:-}" in
   audit-reconstruction)
     exec "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/audit_combined_0715_reconstruction.py" "${@:2}"
     ;;
+  select-checkpoint)
+    exec "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/select_combined_0721_checkpoint.py" "${@:2}"
+    ;;
   train-audio)
     ensure_audio_initialization
     exec "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/train_combined_0715.py" --phase audio --config "${CONFIG}" --cache "${CACHE}" --audio-init-checkpoint "${KARAONE_AUDIO_CHECKPOINT}" "${@:2}"
@@ -59,7 +62,7 @@ case "${1:-}" in
     exec "${PYTHON_BIN}" "${BUNDLE_DIR}/app/scripts/train_combined_0715.py" --phase evaluate --split test --config "${CONFIG}" --cache "${CACHE}" "${@:2}"
     ;;
   *)
-    echo "usage: $0 {probe|cache|audit-audio|audit-reconstruction|train-audio|train-eeg|validate|test} [options]" >&2
+    echo "usage: $0 {probe|cache|audit-audio|audit-reconstruction|select-checkpoint|train-audio|train-eeg|validate|test} [options]" >&2
     exit 2
     ;;
 esac

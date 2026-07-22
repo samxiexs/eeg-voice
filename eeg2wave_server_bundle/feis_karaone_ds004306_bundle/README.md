@@ -193,10 +193,37 @@ multi-scale log-spectrogram MAE。对比图中的虚线是 25-ms RMS envelope，
 退出；locked test 仍要求 top-level gate 真正通过。报告位于
 `artifacts/0721v1/eeg/metrics/reconstruction_validation_report.json`。
 
-EEG 训练阶段的 `best.pt` 也改为按 KaraOne validation 的 envelope correlation、
-label balanced accuracy 与 onset/duration error 联合选择，不再用最低 training
-loss 选择 checkpoint。该改动没有修改 combined YAML，因此现有 audio checkpoint
-的 lineage 仍可直接复用。
+EEG 训练阶段的 `best.pt` 是按 KaraOne validation condition/envelope head、label
+balanced accuracy 与 onset/duration error 得到的**代理最优**，它不是实际 EnCodec
+解码音频的最终最优点。训练现在还会在 epoch 1、每 5 epoch 和最后一个 epoch 将
+轻量候选保存到 `eeg/checkpoints/candidates/`。正式重建必须在 KaraOne validation
+上实际解码候选，并用 EEG-conditioned 相对 shuffled/zero/dataset-only 的增益选出
+`selected.pt`。该改动没有修改 combined YAML，因此现有 audio checkpoint 的
+lineage 仍可直接复用。
+
+已有 `0721v1` 无需重训，也无需重新微调音频。下面的一键脚本会实际解码并比较
+当前第 4 epoch 的 `best.pt` 与第 40 epoch 的 `last.pt`，选择结果写为
+`artifacts/0721v1/eeg/checkpoints/selected.pt`，随后用同一个 selected checkpoint
+完成三数据集 validation WAV、六种对照、结构审计和对比图：
+
+```bash
+cd /Users/samxie/Research/EEG-Voice/ref_github/speech_decoding/eeg2wave_server_bundle/feis_karaone_ds004306_bundle
+COMBINED_DEVICE=mps bash app/run_0721_select_and_reconstruct.sh
+```
+
+候选选择默认使用完整 KaraOne validation（`SELECTION_LIMIT=-1`），最终也生成完整
+validation（`SYNTHESIS_LIMIT=-1`），过程中保留阶段进度条和逐样本 tqdm。若只想先
+验证脚本，可显式使用至少 12 条样本：
+
+```bash
+SELECTION_LIMIT=12 SYNTHESIS_LIMIT=12 PLOT_LIMIT=12 COMBINED_DEVICE=mps \
+bash app/run_0721_select_and_reconstruct.sh
+```
+
+选择报告位于 `artifacts/0721v1/eeg/metrics/checkpoint_selection.json`；最终 WAV 位于
+`artifacts/0721v1/selected_samples/<dataset>/validation/`。即使所有候选都未通过
+EEG-specific gate，脚本仍会选择分数最高者用于 exploratory 输出，但报告中的
+`passed` 保持 `false`，不会错误解锁 locked test。
 
 ### 0721v1 EEG loss recipe
 

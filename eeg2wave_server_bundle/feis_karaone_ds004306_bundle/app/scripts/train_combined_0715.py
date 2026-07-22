@@ -93,6 +93,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--resume", default=None)
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument(
+        "--save-every",
+        type=int,
+        default=5,
+        help=(
+            "EEG phase only: save an inference candidate at epoch 1, every N epochs, and the final epoch. "
+            "Use 0 to disable periodic candidates. Candidates are intended for decoded-validation selection."
+        ),
+    )
     parser.add_argument("--max-steps", type=int, default=None, help="Limit optimizer steps per epoch for smoke tests.")
     parser.add_argument("--split", choices=("train", "validation", "test"), default="validation")
     parser.add_argument("--allow-final-test", action="store_true")
@@ -190,12 +199,12 @@ def save_checkpoint(
     lineage: dict[str, Any],
     dependencies: dict[str, str] | None = None,
     metadata: dict[str, Any] | None = None,
+    include_training_state: bool = True,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
+    payload = {
         "checkpoint_schema_version": CHECKPOINT_SCHEMA_VERSION,
         "state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
         "model_config": model_config,
         "epoch": int(epoch),
         "history": history,
@@ -205,10 +214,15 @@ def save_checkpoint(
         "dependencies": dependencies or {},
         "metadata": metadata or {},
         "config_sha256": config_hash(cfg_path),
-        "torch_rng_state": torch.get_rng_state(),
-        "numpy_rng_state": np.random.get_state(),
-        "python_rng_state": random.getstate(),
-    }, path)
+    }
+    if include_training_state:
+        payload.update({
+            "optimizer_state_dict": optimizer.state_dict(),
+            "torch_rng_state": torch.get_rng_state(),
+            "numpy_rng_state": np.random.get_state(),
+            "python_rng_state": random.getstate(),
+        })
+    torch.save(payload, path)
 
 
 def resume(
@@ -1028,13 +1042,20 @@ def train_eeg(args, cfg, cfg_path, context, bank, device, lineage) -> Path:
         "envelope_correlation_kernel_steps": list(ENVELOPE_CORRELATION_KERNELS),
         "dataset_sliced_label_distillation": True,
         "output_root": str(directory.parent.resolve()),
-        "selection_score_definition": (
+        "proxy_selection_score_definition": (
             "karaone median 1/5/9-step envelope correlation + 0.25*label BA "
             "- 0.10*onset MAE - 0.10*duration MAE"
+        ),
+        "final_reconstruction_selection": (
+            "Run select_combined_0721_checkpoint.py on decoded KaraOne validation synthesis; "
+            "best.pt is proxy-best only."
         ),
     }
     print(json.dumps({"training_recipe": checkpoint_metadata}, ensure_ascii=False), flush=True)
     epochs = int(args.epochs or settings["epochs"])
+    save_every = int(args.save_every)
+    if save_every < 0:
+        raise ValueError("--save-every must be non-negative")
     for epoch in range(start + 1, epochs + 1):
         model.train()
         iterators = {dataset: iter(loader) for dataset, loader in loaders.items()}
@@ -1117,6 +1138,34 @@ def train_eeg(args, cfg, cfg_path, context, bank, device, lineage) -> Path:
             dependencies=dependencies,
             metadata=checkpoint_metadata,
         )
+        save_candidate = save_every > 0 and (
+            epoch == 1 or epoch % save_every == 0 or epoch == epochs
+        )
+        if save_candidate:
+            candidate_path = directory / "checkpoints" / "candidates" / f"epoch_{epoch:03d}.pt"
+            candidate_metadata = {
+                **checkpoint_metadata,
+                "candidate_checkpoint": True,
+                "candidate_epoch": int(epoch),
+                "proxy_selection_score": float(score),
+                "decoded_validation_selected": False,
+            }
+            save_checkpoint(
+                candidate_path,
+                model,
+                optimizer,
+                model_config=asdict(architecture),
+                epoch=epoch,
+                history=history,
+                best_score=best,
+                phase="eeg",
+                cfg_path=cfg_path,
+                lineage=lineage,
+                dependencies=dependencies,
+                metadata=candidate_metadata,
+                include_training_state=False,
+            )
+            print(f"[combined EEG] saved decoded-validation candidate: {candidate_path}", flush=True)
         print(json.dumps(row), flush=True)
     gate = {
         "passed": False,
