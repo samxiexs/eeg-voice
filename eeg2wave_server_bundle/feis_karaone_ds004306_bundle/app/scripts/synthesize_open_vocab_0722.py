@@ -196,8 +196,8 @@ def main() -> None:
     prior = dataset_prior_condition(context, args.dataset, teachers, audio, device)
     xlsr_processor = xlsr_model = None
     if args.compute_xlsr:
-        from transformers import AutoModel, AutoProcessor
-        xlsr_processor = AutoProcessor.from_pretrained(context.config["teachers"]["xlsr_model"])
+        from transformers import AutoFeatureExtractor, AutoModel
+        xlsr_processor = AutoFeatureExtractor.from_pretrained(context.config["teachers"]["xlsr_model"])
         xlsr_model = AutoModel.from_pretrained(context.config["teachers"]["xlsr_model"]).to(device).eval()
     records, aggregate = [], defaultdict(list)
     retrieval_eeg: list[torch.Tensor] = []

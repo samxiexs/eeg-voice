@@ -15,7 +15,7 @@ import torch.nn.functional as F
 import yaml
 from scipy.signal import resample_poly
 from tqdm import tqdm
-from transformers import AutoModel, AutoProcessor, AutoTokenizer
+from transformers import AutoFeatureExtractor, AutoModel, AutoTokenizer
 
 
 APP = Path(__file__).resolve().parents[1]
@@ -113,7 +113,11 @@ def main() -> None:
         raise ValueError("Teacher audio keys must be unique across project/public sources")
     device = torch.device(args.device) if args.device else default_device()
     xlsr_name = str(cfg["teachers"]["xlsr_model"])
-    processor = AutoProcessor.from_pretrained(xlsr_name)
+    # XLS-R base checkpoints are representation models, not CTC/ASR models.
+    # AutoProcessor may therefore try to construct a Wav2Vec2 tokenizer even
+    # though the checkpoint intentionally has no vocab.json.  We only need the
+    # waveform normalization/padding component for hidden-state extraction.
+    processor = AutoFeatureExtractor.from_pretrained(xlsr_name)
     xlsr = AutoModel.from_pretrained(xlsr_name).to(device).eval()
     for parameter in xlsr.parameters():
         parameter.requires_grad_(False)
