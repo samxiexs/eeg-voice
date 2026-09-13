@@ -50,5 +50,12 @@ class TestEvaluationContracts(unittest.TestCase):
         result=evaluate.leave_one_out_subject_probe(embeddings,["s1","s1","s2","s2"])
         self.assertEqual(result["accuracy"],1.0); self.assertEqual(result["chance"],0.5)
 
+    def test_trial_diversity_separates_within_and_between_content(self):
+        values=torch.tensor([[[0.,0.]],[[0.1,0.]],[[2.,0.]],[[2.1,0.]]])
+        result=evaluate.pairwise_diversity(values,["a","a","b","b"])
+        self.assertEqual(result["pairs"],6)
+        self.assertGreater(result["between_content_distance"],result["within_content_distance"])
+        self.assertGreater(result["between_over_within"],1.0)
+
 
 if __name__=="__main__": unittest.main()

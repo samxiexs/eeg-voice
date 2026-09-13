@@ -223,6 +223,8 @@ class JointManifestDataset(Dataset):
                 if bool(self.targets.attrs.get("hubert_included", False)):
                     if "hubert_local" not in group or group["hubert_local"].shape != (96, 768):
                         raise RuntimeError(f"speech target {audio_id} has an invalid HuBERT contract")
+                    if "hubert_global" not in group or group["hubert_global"].shape != (768,):
+                        raise RuntimeError(f"speech target {audio_id} has an invalid HuBERT global contract")
                 if "native_mel_contract" in self.targets.attrs:
                     if "native_speecht5_mel" not in group or "native_audio_mask" not in group:
                         raise RuntimeError(f"speech target {audio_id} is missing native SpeechT5 mel")
@@ -248,6 +250,12 @@ class JointManifestDataset(Dataset):
         unknown_labels = sorted(set(labels) - set(self.phoneme_vocabulary))
         if unknown_labels:
             raise RuntimeError(f"phoneme vocabulary is missing labels: {unknown_labels}")
+        # This is a training-only diagnostic target.  It is never exposed to
+        # the EEG model as an input and held-out subjects simply receive an
+        # index that was not observed by the adversarial head during fitting.
+        self.subject_vocabulary = {
+            value: index for index, value in enumerate(sorted({str(value) for value in self.frame.subject}))
+        }
 
     def __len__(self) -> int:
         return len(self.frame)
@@ -295,6 +303,7 @@ class JointManifestDataset(Dataset):
         content_mask = np.zeros(161, dtype=bool)
         hubert = np.zeros((96, 768), dtype=np.float32)
         hubert_mask = np.zeros(96, dtype=bool)
+        hubert_global = np.zeros(768, dtype=np.float32)
         acoustic = np.zeros((80, 161), dtype=np.float32)
         rms = np.zeros(161, dtype=np.float32)
         activity = np.zeros(161, dtype=bool)
@@ -308,6 +317,10 @@ class JointManifestDataset(Dataset):
             if "hubert_local" in target:
                 hubert = target["hubert_local"][:].astype("float32")
                 hubert_mask[:] = True
+            if "hubert_global" in target:
+                hubert_global = target["hubert_global"][:].astype("float32")
+                if hubert_global.shape != (768,) or not np.isfinite(hubert_global).all():
+                    raise RuntimeError(f"speech target {audio_id} has an invalid HuBERT global contract")
             acoustic = F.interpolate(torch.from_numpy(target["log_mel"][:].astype("float32")).unsqueeze(0), size=161,
                                      mode="linear", align_corners=False).squeeze(0).numpy()
             rms = F.interpolate(torch.from_numpy(target["rms"][:].astype("float32"))[None, None], size=161,
@@ -326,6 +339,7 @@ class JointManifestDataset(Dataset):
         return {
             "trial_id": str(row.trial_id), "dataset": str(row.dataset), "dataset_id": DATASET_IDS[str(row.dataset)],
             "subject": str(row.subject), "task": str(row.task), "condition": str(row.condition),
+            "subject_index": torch.tensor(self.subject_vocabulary[str(row.subject)], dtype=torch.long),
             "linguistic_content_id": str(row.linguistic_content_id), "pairing_level": pairing,
             "supervision_type": str(row.supervision_type), "audio_id": audio_id,
             "tms_applied": str(row.get("tms_applied", "false")).lower() in {"true", "1", "yes"},
@@ -335,7 +349,8 @@ class JointManifestDataset(Dataset):
             "model_time_mask": torch.from_numpy(model_time_mask),
             "tms_output_mask": torch.from_numpy(shard["tms_output_mask"][shard_row].astype(bool)),
             "content_mfcc": torch.from_numpy(content), "content_mask": torch.from_numpy(content_mask),
-            "hubert_local": torch.from_numpy(hubert), "hubert_mask": torch.from_numpy(hubert_mask),
+            "hubert_local": torch.from_numpy(hubert), "hubert_global": torch.from_numpy(hubert_global),
+            "hubert_mask": torch.from_numpy(hubert_mask),
             "acoustic_log_mel": torch.from_numpy(acoustic), "acoustic_rms": torch.from_numpy(rms),
             "acoustic_activity": torch.from_numpy(activity),
             "native_speecht5_mel": torch.from_numpy(native_mel),
@@ -374,8 +389,8 @@ def homogeneous_collate(records: list[dict[str, Any]]) -> dict[str, Any]:
     datasets = {record["dataset"] for record in records}
     if len(datasets) != 1:
         raise ValueError("a batch must contain exactly one dataset")
-    tensor_keys = ("dataset_id", "eeg", "channel_xyz", "channel_mask", "time_mask", "model_time_mask", "tms_output_mask",
-                   "content_mfcc", "content_mask", "hubert_local", "hubert_mask", "pairing_weight", "phoneme_index",
+    tensor_keys = ("dataset_id", "subject_index", "eeg", "channel_xyz", "channel_mask", "time_mask", "model_time_mask", "tms_output_mask",
+                   "content_mfcc", "content_mask", "hubert_local", "hubert_global", "hubert_mask", "pairing_weight", "phoneme_index",
                    "acoustic_log_mel", "acoustic_rms", "acoustic_activity", "acoustic_supervision", "tms_applied",
                    "audio_duration_frames")
     batch = {key: torch.stack([torch.as_tensor(record[key]) for record in records]) for key in tensor_keys}

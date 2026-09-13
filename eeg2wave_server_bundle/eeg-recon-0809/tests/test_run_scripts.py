@@ -31,7 +31,8 @@ class TestRunScripts(unittest.TestCase):
     def test_all_shell_entry_points_are_executable_and_parse(self):
         scripts = sorted((ROOT / "app").glob("run_joint_*.sh"))
         scripts += [ROOT / "app/run_ds004940_large_scale_v1.sh",
-                    ROOT / "app/run_ds004940_large_scale_audio_comparisons.sh"]
+                    ROOT / "app/run_ds004940_large_scale_audio_comparisons.sh",
+                    ROOT / "app/run_ds004940_trial_diverse_v3.sh"]
         self.assertGreaterEqual(len(scripts), 8)
         for script in scripts:
             self.assertTrue(os.access(script, os.X_OK), script)
@@ -106,6 +107,16 @@ class TestRunScripts(unittest.TestCase):
             "selection_metric": "mfcc_retrieval_mrr", "interval_epochs": 2, "minimum_epochs": 20,
             "patience_validations": 8, "minimum_delta": 0.0001,
         })
+
+    def test_trial_diverse_v3_isolated_and_requires_m0_before_m1(self):
+        runner = (ROOT / "app/run_ds004940_trial_diverse_v3.sh").read_text()
+        config = yaml.safe_load((ROOT / "configs/ds004940_trial_diverse_v3.yaml").read_text())
+        self.assertIn("require_v3_m0_gate", runner)
+        self.assertIn("--eeg-checkpoint", runner)
+        self.assertIn("--sampling-mode random", runner)
+        self.assertEqual(config["model"]["teacher_dimension"], 64)
+        self.assertTrue(config["model"]["duration_standardized"])
+        self.assertEqual(config["stage2"]["datasets"], ["ds004940"])
 
     def test_epoch_horizon_and_validation_selection_contract(self):
         maximum, epochs = train.epoch_horizon(

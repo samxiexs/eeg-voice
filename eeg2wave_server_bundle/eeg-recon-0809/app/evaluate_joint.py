@@ -174,6 +174,25 @@ def stratified_error(errors: list[float], metadata: dict[str, list[str]]) -> dic
     return result
 
 
+def pairwise_diversity(values: torch.Tensor, labels: list[str]) -> dict[str, float | int]:
+    """Report content-sensitive diversity without treating random audio as EEG evidence."""
+    if len(values) < 2:
+        return {"pairs": 0, "mean_cosine": float("nan"), "within_content_distance": float("nan"),
+                "between_content_distance": float("nan"), "between_over_within": float("nan")}
+    flat = values.flatten(1).float()
+    normalized = torch.nn.functional.normalize(flat, dim=-1, eps=1e-6)
+    cosine = normalized @ normalized.T
+    distance = torch.cdist(flat, flat, p=2) / max(flat.shape[1] ** 0.5, 1.0)
+    upper = torch.triu(torch.ones(len(values), len(values), dtype=torch.bool), diagonal=1)
+    same = torch.tensor([[left == right for right in labels] for left in labels], dtype=torch.bool)
+    within = distance[upper & same]; between = distance[upper & ~same]
+    within_value = float(within.mean()) if len(within) else float("nan")
+    between_value = float(between.mean()) if len(between) else float("nan")
+    return {"pairs": int(upper.sum()), "mean_cosine": float(cosine[upper].mean()),
+            "within_content_distance": within_value, "between_content_distance": between_value,
+            "between_over_within": float(between_value / max(within_value, 1e-8)) if np.isfinite(within_value) else float("nan")}
+
+
 def wrong_trial_order(labels: list[str], subjects: list[str], device: torch.device) -> torch.Tensor:
     """Deterministically select another-content EEG trial for every target."""
     if len(labels) < 2 or len(set(labels)) < 2:
@@ -327,11 +346,22 @@ def main() -> int:
         if not templates:
             raise RuntimeError("zero-centered checkpoint is missing its train-fold template")
         model.set_target_templates(templates["mfcc_mean"], templates["mfcc_scale"], templates.get("hubert_mean"))
+        if bool(payload["model_config"].get("duration_standardized", False)):
+            duration_keys = ("duration_log_mean", "duration_log_scale", "duration_min_frames", "duration_max_frames")
+            if not all(key in templates for key in duration_keys):
+                raise RuntimeError("v3 checkpoint is missing train-fold duration statistics")
+            model.set_duration_statistics(*(templates[key] for key in duration_keys))
+    if int(payload["model_config"].get("teacher_dimension", 0)) > 0:
+        teacher = payload.get("speech_teacher")
+        if not teacher:
+            raise RuntimeError("v3 checkpoint is missing frozen speech teacher")
+        model.set_speech_teacher(teacher["mean"], teacher["components"], teacher["scale"],
+                                 teacher["bank"], teacher["labels"])
     model.eval()
     label_only_metrics = (evaluate_label_only(model, manifest, split, args.role, targets, normalizer, cfg, vocabulary, target_device)
                           if args.dataset == "ds006104" else {"status": "not_applicable", "pairs": 0})
     predictions=[]; target_values=[]; subjects=[]; contents=[]; audio_ids=[]; tasks=[]; conditions=[]; tms_conditions=[]
-    target_mels=[]; target_rms=[]; target_activities=[]; exact_flags=[]
+    target_mels=[]; target_rms=[]; target_activities=[]; exact_flags=[]; predicted_durations=[]; target_durations=[]
     eeg_globals=[]; hubert_eeg_local=[]; hubert_audio_local=[]; hubert_eeg_global=[]; hubert_audio_global=[]; hubert_labels=[]
     configured_controls = tuple(control for control in cfg.get("controls", ("zero", "time_shuffle", "channel_shuffle"))
                                 if control in {"zero", "time_shuffle", "time_block_shuffle", "channel_shuffle", "wrong_trial"})
@@ -354,12 +384,20 @@ def main() -> int:
                 target_mels.append(tensor["acoustic_log_mel"][eligible].cpu()); target_rms.append(tensor["acoustic_rms"][eligible].cpu())
                 target_activities.append(tensor["acoustic_activity"][eligible].cpu()); exact_flags.append(tensor["acoustic_supervision"][eligible].cpu())
                 eeg_globals.append(state.global_embedding[eligible].cpu())
+                if state.predicted_duration is not None:
+                    predicted_durations.append(state.predicted_duration[eligible].cpu())
+                    target_durations.append(tensor["audio_duration_frames"][eligible].float().cpu())
                 hubert_eligible = eligible & tensor["hubert_mask"].any(1)
                 if hubert_eligible.any():
                     audio_local = model.centered_audio(tensor["hubert_local"][hubert_eligible])
                     hubert_eeg_local.append(state.local[hubert_eligible].cpu()); hubert_audio_local.append(audio_local.cpu())
                     hubert_eeg_global.append(state.global_embedding[hubert_eligible].cpu())
-                    hubert_audio_global.append(torch.nn.functional.normalize(audio_local.mean(1), dim=-1).cpu())
+                    if model.teacher_dimension > 0 and "hubert_global" in tensor:
+                        hubert_audio_global.append(torch.nn.functional.normalize(
+                            model.teacher_target(tensor["hubert_global"][hubert_eligible]), dim=-1,
+                        ).cpu())
+                    else:
+                        hubert_audio_global.append(torch.nn.functional.normalize(audio_local.mean(1), dim=-1).cpu())
                     hubert_indices = hubert_eligible.nonzero(as_tuple=False).flatten().tolist()
                     hubert_labels.extend(batch["linguistic_content_id"][i] for i in hubert_indices)
                 correct = (state.mfcc[eligible] - tensor["content_mfcc"][eligible]).abs().mean((1,2))
@@ -420,6 +458,23 @@ def main() -> int:
         target_residual = torch.cat(target_residual_values).flatten(1)
         residual_variance_ratio = float(predicted_residual.var(0, unbiased=False).mean() /
                                         target_residual.var(0, unbiased=False).mean().clamp_min(1e-8))
+    duration_metrics = {"pairs": 0, "mae_frames": float("nan"), "pearson": float("nan"),
+                        "predicted_std": float("nan"), "target_std": float("nan"),
+                        "std_retention": float("nan"), "unique_predicted_frames": 0}
+    if predicted_durations:
+        predicted_duration = torch.cat(predicted_durations).float()
+        target_duration = torch.cat(target_durations).float()
+        centered_left = predicted_duration - predicted_duration.mean()
+        centered_right = target_duration - target_duration.mean()
+        pearson = (centered_left @ centered_right) / (centered_left.norm() * centered_right.norm()).clamp_min(1e-8)
+        predicted_std = predicted_duration.std(unbiased=False)
+        target_std = target_duration.std(unbiased=False)
+        duration_metrics = {"pairs": int(len(predicted_duration)),
+                            "mae_frames": float((predicted_duration - target_duration).abs().mean()),
+                            "pearson": float(pearson), "predicted_std": float(predicted_std),
+                            "target_std": float(target_std),
+                            "std_retention": float(predicted_std / target_std.clamp_min(1e-8)),
+                            "unique_predicted_frames": int(predicted_duration.round().unique().numel())}
     hubert_metrics = {"pairs": 0, "local_cosine": float("nan"), "global_retrieval": {
         "r1": float("nan"), "mrr": float("nan"), "chance_r1": float("nan"), "unique_contents": 0,
     }}
@@ -431,6 +486,7 @@ def main() -> int:
                           "global_retrieval": content_retrieval(eeg_global, audio_global, hubert_labels)}
     leakage = leave_one_out_subject_probe(torch.cat(eeg_globals) if eeg_globals else torch.empty(0, 1), subjects)
     strata = stratified_error(control_errors["correct"], {"task": tasks, "condition": conditions, "tms": tms_conditions})
+    diversity = pairwise_diversity(prediction, contents) if len(prediction) else pairwise_diversity(torch.empty(0, 1), [])
     if args.renderer_checkpoint:
         reconstruction = acoustic_reconstruction(
             args.renderer_checkpoint, prediction, torch.cat(target_mels), torch.cat(target_rms),
@@ -447,6 +503,12 @@ def main() -> int:
         checks[baseline_name] = baseline_passed
         for control in gate["correct_must_beat"]:
             checks[f"correct_beats_{control}"] = control_means["correct"] < control_means[control]
+        if "hubert_global_retrieval_r1_min" in gate:
+            checks["hubert_global_retrieval"] = hubert_metrics["global_retrieval"]["r1"] >= float(gate["hubert_global_retrieval_r1_min"])
+        if "duration_pearson_min" in gate:
+            checks["duration_correlation"] = duration_metrics["pearson"] >= float(gate["duration_pearson_min"])
+        if "residual_variance_retention_min" in gate:
+            checks["residual_variance_retained"] = residual_variance_ratio >= float(gate["residual_variance_retention_min"])
     elif payload.get("stage") == "generalization" and len(prediction) and bool(payload["model_config"].get("zero_centered", False)):
         threshold = float(cfg["gates"]["generalization"].get("paired_control_ci_low_min", 0.0))
         for control in configured_controls:
@@ -461,6 +523,8 @@ def main() -> int:
             "controls":control_means,
             "subject_control_error_gain": subject_control_gains,
             "residual_variance_ratio": residual_variance_ratio,
+            "duration": duration_metrics,
+            "trial_diversity": diversity,
             "zero_template_max_abs_error": max(zero_template_errors) if zero_template_errors else float("nan"),
             "subject_mfcc_l1":{key:float(np.mean(value)) for key,value in subject_values.items()},
             "subject_control_mfcc_l1": {

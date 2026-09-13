@@ -15,7 +15,8 @@ sys.path.insert(0, str(ROOT / "app/src"))
 from eeg2speech.data import (AlternatingBatchIterator, ContentGroupedBatchSampler,
                              JointManifestDataset, homogeneous_collate, pilot_indices)
 from eeg2speech.diffusion import ConditionalMelDiffusion, denormalize_mel, normalize_mel
-from eeg2speech.losses import counterfactual_eeg, joint_content_loss, masked_mfcc_loss, soft_dtw_token_loss
+from eeg2speech.losses import (counterfactual_eeg, joint_content_loss, masked_mfcc_loss,
+                               residual_distribution_loss, soft_dtw_token_loss)
 from eeg2speech.model import AudioMFCCRenderer, JointEEGContentModel
 
 
@@ -50,6 +51,63 @@ class TestJointPipeline(unittest.TestCase):
         output = model(torch.zeros_like(eeg), xyz, channels, mask, dataset_id)
         self.assertTrue(torch.equal(output.mfcc, template.unsqueeze(0).expand_as(output.mfcc)))
         self.assertTrue(torch.equal(output.residual_mfcc, torch.zeros_like(output.residual_mfcc)))
+
+    def test_v3_zero_contract_teacher_and_standardized_duration(self):
+        model = JointEEGContentModel(dimension=24, heads=4, layers=1, local_layers=1, dropout=0.0,
+                                     phoneme_classes=8, zero_centered=True, teacher_dimension=4,
+                                     duration_standardized=True, subject_adversary_classes=5)
+        template = torch.randn(39, 161)
+        model.set_target_templates(template, torch.ones_like(template), torch.zeros(768))
+        model.set_duration_statistics(torch.tensor(5.0), torch.tensor(0.2), torch.tensor(100.0), torch.tensor(300.0))
+        model.set_speech_teacher(torch.zeros(768), torch.randn(768, 4), torch.ones(4),
+                                 torch.randn(2, 4), ["a", "b"])
+        eeg, xyz, channels, mask, dataset_id = self._inputs(8, 1178, 0)
+        output = model(torch.zeros_like(eeg), xyz, channels, mask, dataset_id)
+        self.assertTrue(torch.equal(output.residual_z, torch.zeros_like(output.residual_z)))
+        self.assertTrue(torch.equal(output.mfcc, template.unsqueeze(0).expand_as(output.mfcc)))
+        self.assertTrue(torch.allclose(output.predicted_duration, torch.full((2,), np.exp(5.0)), atol=1e-4))
+
+    def test_v3_frozen_teacher_bank_loss_has_finite_gradient(self):
+        model = JointEEGContentModel(dimension=24, heads=4, layers=1, local_layers=1, dropout=0.0,
+                                     phoneme_classes=8, zero_centered=True, teacher_dimension=4,
+                                     duration_standardized=True, subject_adversary_classes=5)
+        template = torch.zeros(39, 161)
+        model.set_target_templates(template, torch.ones_like(template), torch.zeros(768))
+        model.set_duration_statistics(torch.tensor(5.0), torch.tensor(0.2), torch.tensor(100.0), torch.tensor(300.0))
+        model.set_speech_teacher(torch.zeros(768), torch.randn(768, 4), torch.ones(4),
+                                 torch.randn(2, 4), ["a", "b"])
+        eeg, xyz, channels, mask, dataset_id = self._inputs(8, 256, 0, batch=2)
+        state = model(eeg, xyz, channels, mask, dataset_id)
+        batch = {
+            "content_mfcc": torch.randn(2, 39, 161), "content_mask": torch.ones(2, 161, dtype=torch.bool),
+            "pairing_weight": torch.ones(2), "hubert_local": torch.randn(2, 96, 768),
+            "hubert_global": torch.randn(2, 768), "hubert_mask": torch.ones(2, 96, dtype=torch.bool),
+            "phoneme_index": torch.full((2,), -1), "linguistic_content_id": ["a", "b"],
+            "audio_duration_frames": torch.tensor([120, 180]), "acoustic_activity": torch.ones(2, 161, dtype=torch.bool),
+            "subject_index": torch.tensor([0, 1]), "eeg": eeg, "channel_xyz": xyz, "channel_mask": channels,
+            "time_mask": mask, "model_time_mask": mask, "dataset_id": dataset_id, "subject": ["s0", "s1"],
+        }
+        weights = {"standardized_residual": True, "mfcc": 1.0, "delta": 0.2, "residual_cosine": 0.1,
+                   "variance_retention": 0.1, "residual_covariance": 0.01, "local_alignment": 0.1,
+                   "global_clip": 0.0, "teacher_huber": 0.1, "teacher_cosine": 0.1, "teacher_info_nce": 0.1,
+                   "phoneme_auxiliary": 0.0, "duration": 0.25, "activity": 0.0, "counterfactual_rank": 0.0,
+                   "latent_counterfactual_rank": 0.0, "subject_adversary": 0.01}
+        loss, metrics = joint_content_loss(state, batch, model, weights)
+        loss.backward()
+        self.assertTrue(torch.isfinite(loss)); self.assertTrue(np.isfinite(metrics["teacher_info_nce"]))
+        self.assertTrue(all(parameter.grad is None or torch.isfinite(parameter.grad).all() for parameter in model.parameters()))
+
+    def test_residual_distribution_loss_accepts_non_divisible_target_frames(self):
+        """The standard 161-frame content target must work on MPS as well."""
+        prediction = torch.randn(2, 39, 161, requires_grad=True)
+        target = torch.randn_like(prediction)
+        mask = torch.ones(2, 161, dtype=torch.bool)
+        mask[1, 149:] = False
+        variance, covariance = residual_distribution_loss(prediction, target, mask)
+        (variance + covariance).backward()
+        self.assertTrue(torch.isfinite(variance))
+        self.assertTrue(torch.isfinite(covariance))
+        self.assertTrue(torch.isfinite(prediction.grad).all())
 
     def test_content_grouped_sampler_uses_subset_positions_and_full_epoch(self):
         frame = pd.DataFrame([
@@ -194,6 +252,16 @@ class TestJointPipeline(unittest.TestCase):
         self.assertEqual(refined.shape, clean.shape)
         self.assertTrue(torch.isfinite(refined).all())
         self.assertTrue(torch.equal(refined[1, :, 11:], torch.zeros_like(refined[1, :, 11:])))
+
+    def test_eeg_conditioned_diffusion_requires_and_uses_context(self):
+        model = ConditionalMelDiffusion(hidden_dimension=24, layers=1, dropout=0.0, timesteps=12,
+                                        conditioning_dimension=4)
+        clean = torch.randn(2, 80, 12); condition = torch.randn_like(clean)
+        mask = torch.ones(2, 12, dtype=torch.bool); context = torch.randn(2, 4)
+        loss = model.denoising_loss(clean, condition, mask, context=context)
+        loss.backward(); self.assertTrue(torch.isfinite(loss))
+        with self.assertRaises(ValueError):
+            model.refine(condition, mask, steps=3)
 
     def test_diffusion_mel_normalization_roundtrip(self):
         value = torch.randn(2, 80, 13)

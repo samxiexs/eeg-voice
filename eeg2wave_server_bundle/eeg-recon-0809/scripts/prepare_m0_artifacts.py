@@ -182,14 +182,14 @@ def materialize(config: dict, pilot: dict, grids: dict[str, pd.DataFrame],
                 hubert_local_path: Path, rebuild: bool, artifact_set: str = "built") -> dict:
     if not hubert_local_path.exists():
         raise RuntimeError(f"local HuBERT model is missing: {hubert_local_path}")
-    if artifact_set not in {"built", "explore_m0"}:
-        raise ValueError("M0 artifact_set must be built or explore_m0")
+    if artifact_set != "built" and not artifact_set.startswith("explore_m0"):
+        raise ValueError("M0 artifact_set must be built or an isolated explore_m0* namespace")
     protocol = str(pilot["split"]["protocol"])
     fold = int(pilot["split"]["fold"])
-    target_name = "speech_targets" if artifact_set == "built" else "speech_targets_explore_m0"
+    target_name = "speech_targets" if artifact_set == "built" else f"speech_targets_{artifact_set}"
     normalizer_name = split_path_name = f"{protocol}_fold-{fold}"
     if artifact_set != "built":
-        normalizer_name = f"explore_m0_{split_path_name}"
+        normalizer_name = f"{artifact_set}_{split_path_name}"
 
     calls = []
     if "ds004940" in grids:
@@ -230,7 +230,7 @@ def materialize(config: dict, pilot: dict, grids: dict[str, pd.DataFrame],
 
     payload = {"status": "pass", "artifact_set": artifact_set, "target_name": target_name,
                "normalizer_name": normalizer_name, "selection": _selection_payload(grids)}
-    target = output_root(config) / "qc" / ("m0_artifacts.json" if artifact_set == "built" else "explore_m0_artifacts.json")
+    target = output_root(config) / "qc" / ("m0_artifacts.json" if artifact_set == "built" else f"{artifact_set}_artifacts.json")
     target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return payload
 
@@ -242,8 +242,8 @@ def main() -> int:
     parser.add_argument("--hubert-local-path", type=Path)
     parser.add_argument("--check-only", action="store_true", help="print the deterministic grids without writing artifacts")
     parser.add_argument("--rebuild", action="store_true", help="rewrite the selected M0 shards instead of resuming compatible files")
-    parser.add_argument("--artifact-set", choices=["built", "explore_m0"], default="built",
-                        help="explore_m0 is fully isolated from registered M0 artifacts")
+    parser.add_argument("--artifact-set", default="built",
+                        help="built or an isolated explore_m0* namespace")
     args = parser.parse_args()
     config, _ = load_config(args.data_config)
     pilot = yaml.safe_load(args.pilot_config.read_text())

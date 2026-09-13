@@ -43,3 +43,6 @@ __pycache__/
 *.pth
 *.ckpt
 *.safetensors
+
+# Project-local training environment.
+.venv-aligned-local/

@@ -1,8 +1,0 @@
-# v3 reuses the established application dependencies and adds ECAPA for the
-# audio-only speaker oracle and librosa for the fixed MFCC inversion
-# conformance gate. The default selective denoiser is deterministic and does
-# not add another unadapted pretrained model to the primary pipeline.
--r requirements.txt
-speechbrain==1.0.3
-torchaudio==2.8.0
-librosa==0.10.2.post1

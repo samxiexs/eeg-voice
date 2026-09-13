@@ -21,7 +21,7 @@ from eeg2speech.data import (JointManifestDataset, homogeneous_collate,
                              phoneme_vocabulary_from_manifest, pilot_indices)
 from eeg2speech.diffusion import (ConditionalMelDiffusion, denormalize_mel,
                                   normalize_mel)
-from eeg2speech.model import DurationConditionedNativeRenderer
+from eeg2speech.model import DurationConditionedNativeRenderer, JointEEGContentModel
 
 
 def device() -> torch.device:
@@ -76,9 +76,54 @@ def load_renderer(path: Path, target: torch.device) -> DurationConditionedNative
     return model
 
 
+def load_eeg_checkpoint(path: Path, target: torch.device) -> JointEEGContentModel:
+    """Load a frozen v3 EEG encoder for qualitative-only diffusion context."""
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    config = payload.get("model_config", {})
+    if int(config.get("teacher_dimension", 0)) <= 0:
+        raise RuntimeError("EEG-conditioned diffusion requires a v3 frozen-teacher checkpoint")
+    model = JointEEGContentModel(**config).to(target)
+    model.load_state_dict(payload["model"], strict=False)
+    templates = payload.get("target_templates")
+    if not templates:
+        raise RuntimeError("EEG-conditioned diffusion checkpoint lacks train-fold templates")
+    model.set_target_templates(templates["mfcc_mean"], templates["mfcc_scale"], templates.get("hubert_mean"))
+    if bool(config.get("duration_standardized", False)):
+        keys = ("duration_log_mean", "duration_log_scale", "duration_min_frames", "duration_max_frames")
+        if not all(key in templates for key in keys):
+            raise RuntimeError("EEG-conditioned diffusion checkpoint lacks duration statistics")
+        model.set_duration_statistics(*(templates[key] for key in keys))
+    teacher = payload.get("speech_teacher")
+    if not teacher:
+        raise RuntimeError("EEG-conditioned diffusion checkpoint lacks frozen speech teacher")
+    model.set_speech_teacher(teacher["mean"], teacher["components"], teacher["scale"], teacher["bank"], teacher["labels"])
+    model.eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    return model
+
+
+def eeg_conditioned_rows(eeg_model: JointEEGContentModel, renderer: DurationConditionedNativeRenderer,
+                         batch: dict) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Condition on EEG-predicted mel/duration and resample target to its support."""
+    model_mask = batch.get("model_time_mask", batch["time_mask"])
+    with torch.no_grad():
+        state = eeg_model(batch["eeg"], batch["channel_xyz"], batch["channel_mask"], model_mask, batch["dataset_id"])
+        frames = state.predicted_duration.round().long().clamp(1, 1000)
+        coarse, mask = renderer(state.mfcc, frames)
+        maximum = int(mask.sum(1).max())
+        rows = []
+        for index, count in enumerate(frames.tolist()):
+            source = batch["native_speecht5_mel"][index:index + 1, :, batch["native_audio_mask"][index]]
+            value = torch.nn.functional.interpolate(source, size=int(count), mode="linear", align_corners=False)
+            rows.append(torch.nn.functional.pad(value, (0, maximum - int(count))))
+    return coarse, torch.cat(rows, dim=0), mask, state.global_embedding.detach()
+
+
 def validate(diffusion: ConditionalMelDiffusion, renderer: DurationConditionedNativeRenderer,
              loader: DataLoader, mean: torch.Tensor, scale: torch.Tensor,
-             target: torch.device, sampling_steps: int) -> dict[str, float]:
+             target: torch.device, sampling_steps: int,
+             eeg_model: JointEEGContentModel | None = None) -> dict[str, float]:
     diffusion.eval()
     coarse_errors: list[float] = []
     refined_errors: list[float] = []
@@ -87,15 +132,20 @@ def validate(diffusion: ConditionalMelDiffusion, renderer: DurationConditionedNa
         for batch in loader:
             batch = {key: value.to(target) if torch.is_tensor(value) else value
                      for key, value in batch.items()}
-            coarse, mask = renderer(batch["content_mfcc"], batch["audio_duration_frames"])
-            if not torch.equal(mask, batch["native_audio_mask"]):
-                raise RuntimeError("diffusion validation duration/mask contract mismatch")
+            if eeg_model is None:
+                coarse, mask = renderer(batch["content_mfcc"], batch["audio_duration_frames"])
+                clean_target = batch["native_speecht5_mel"]
+                if not torch.equal(mask, batch["native_audio_mask"]):
+                    raise RuntimeError("diffusion validation duration/mask contract mismatch")
+                context = None
+            else:
+                coarse, clean_target, mask, context = eeg_conditioned_rows(eeg_model, renderer, batch)
             normalized_coarse = normalize_mel(coarse, mean, scale)
             noise = torch.randn(normalized_coarse.shape, generator=generator).to(target)
-            normalized_refined = diffusion.refine(normalized_coarse, mask, steps=sampling_steps, noise=noise)
+            normalized_refined = diffusion.refine(normalized_coarse, mask, steps=sampling_steps, noise=noise, context=context)
             refined = denormalize_mel(normalized_refined, mean, scale)
-            coarse_error = (coarse - batch["native_speecht5_mel"]).abs().mean(1)
-            refined_error = (refined - batch["native_speecht5_mel"]).abs().mean(1)
+            coarse_error = (coarse - clean_target).abs().mean(1)
+            refined_error = (refined - clean_target).abs().mean(1)
             for index in range(len(coarse)):
                 valid = mask[index]
                 coarse_errors.append(float(coarse_error[index, valid].mean()))
@@ -134,6 +184,8 @@ def main() -> int:
     parser.add_argument("--targets", type=Path, required=True)
     parser.add_argument("--normalizer", type=Path, required=True)
     parser.add_argument("--renderer", type=Path, required=True)
+    parser.add_argument("--eeg-checkpoint", type=Path,
+                        help="optional frozen v3 EEG checkpoint for qualitative EEG-conditioned diffusion")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--checkpoint-every", type=int, default=50)
@@ -143,8 +195,8 @@ def main() -> int:
     maximum_steps = int(args.max_steps or spec["train_steps"])
     if maximum_steps < 1 or args.checkpoint_every < 1:
         raise ValueError("max-steps and checkpoint-every must be positive")
-    required = (args.config, args.manifest, args.split, args.targets,
-                args.normalizer, args.renderer)
+    required = tuple(path for path in (args.config, args.manifest, args.split, args.targets,
+                                       args.normalizer, args.renderer, args.eeg_checkpoint) if path is not None)
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"diffusion inputs are missing: {missing}")
@@ -165,6 +217,7 @@ def main() -> int:
     mean = mean.to(target)
     scale = scale.to(target)
     renderer = load_renderer(args.renderer, target)
+    eeg_model = load_eeg_checkpoint(args.eeg_checkpoint, target) if args.eeg_checkpoint else None
     model_config = {
         "mel_bins": 80,
         "hidden_dimension": int(spec["hidden_dimension"]),
@@ -173,6 +226,7 @@ def main() -> int:
         "timesteps": int(spec["timesteps"]),
         "beta_start": float(spec["beta_start"]),
         "beta_end": float(spec["beta_end"]),
+        "conditioning_dimension": int(eeg_model.teacher_dimension) if eeg_model is not None else 0,
     }
     diffusion = ConditionalMelDiffusion(**model_config).to(target)
     optimizer = torch.optim.AdamW(diffusion.parameters(), lr=float(spec["learning_rate"]),
@@ -232,14 +286,19 @@ def main() -> int:
                 batch = next(iterator)
             batch = {key: value.to(target) if torch.is_tensor(value) else value
                      for key, value in batch.items()}
-            with torch.no_grad():
-                coarse, mask = renderer(batch["content_mfcc"], batch["audio_duration_frames"])
-            if not torch.equal(mask, batch["native_audio_mask"]):
-                raise RuntimeError("diffusion train duration/mask contract mismatch")
-            clean = normalize_mel(batch["native_speecht5_mel"], mean, scale)
+            if eeg_model is None:
+                with torch.no_grad():
+                    coarse, mask = renderer(batch["content_mfcc"], batch["audio_duration_frames"])
+                if not torch.equal(mask, batch["native_audio_mask"]):
+                    raise RuntimeError("diffusion train duration/mask contract mismatch")
+                clean_target = batch["native_speecht5_mel"]
+                context = None
+            else:
+                coarse, clean_target, mask, context = eeg_conditioned_rows(eeg_model, renderer, batch)
+            clean = normalize_mel(clean_target, mean, scale)
             condition = normalize_mel(coarse, mean, scale)
             optimizer.zero_grad(set_to_none=True)
-            loss = diffusion.denoising_loss(clean, condition, mask)
+            loss = diffusion.denoising_loss(clean, condition, mask, context=context)
             if not torch.isfinite(loss):
                 raise RuntimeError(f"nonfinite diffusion loss at step {step}")
             loss.backward()
@@ -259,7 +318,7 @@ def main() -> int:
         print(json.dumps({"status": "interrupted_resumable", "completed_steps": completed}))
         return 130
     metrics = validate(diffusion, renderer, validation_loader, mean, scale, target,
-                       int(spec["sampling_steps"]))
+                       int(spec["sampling_steps"]), eeg_model=eeg_model)
     gate = {
         "validation_mel_improvement": metrics["diffusion_mel_improvement"]
         >= float(spec["validation_mel_improvement_min"]),
@@ -267,7 +326,8 @@ def main() -> int:
     final = checkpoint_payload(diffusion, optimizer, completed, maximum_steps,
                                history, artifact_hashes, model_config, mean, scale)
     final.update({"validation": metrics, "gate": gate, "sampling_steps": int(spec["sampling_steps"]),
-                  "warning": "audio-only optional mel refiner; excluded from EEG efficacy metrics"})
+                  "conditioning": "frozen_eeg" if eeg_model is not None else "audio_only",
+                  "warning": "qualitative mel refiner; excluded from deterministic EEG efficacy metrics"})
     final.pop("optimizer", None)
     atomic_save(final, complete)
     (args.output / "metrics.json").write_text(json.dumps({"history": history, "validation": metrics,

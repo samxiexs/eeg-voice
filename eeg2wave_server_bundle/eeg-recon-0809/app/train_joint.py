@@ -221,6 +221,7 @@ def train_fold_templates(loader: DataLoader, target: torch.device) -> dict[str, 
     """
     mfcc_sum = mfcc_sq_sum = mfcc_count = None
     hubert_sum = hubert_count = None
+    durations: list[torch.Tensor] = []
     for batch in loader:
         batch = move(batch, target)
         eligible = batch["pairing_weight"] > 0
@@ -241,6 +242,8 @@ def train_fold_templates(loader: DataLoader, target: torch.device) -> dict[str, 
             current_hubert_count = local_mask.sum((0, 1))
             hubert_sum = current_hubert_sum if hubert_sum is None else hubert_sum + current_hubert_sum
             hubert_count = current_hubert_count if hubert_count is None else hubert_count + current_hubert_count
+        if "audio_duration_frames" in batch:
+            durations.append(batch["audio_duration_frames"][eligible].detach().float().cpu())
     if mfcc_sum is None:
         raise RuntimeError("cannot fit zero-centered template: training selection has no audio pairs")
     mean = mfcc_sum / mfcc_count.clamp_min(1)
@@ -248,7 +251,47 @@ def train_fold_templates(loader: DataLoader, target: torch.device) -> dict[str, 
     template = {"mfcc_mean": mean.detach(), "mfcc_scale": variance.sqrt().detach()}
     if hubert_sum is not None:
         template["hubert_mean"] = (hubert_sum / hubert_count.clamp_min(1)).detach()
+    if durations:
+        duration = torch.cat(durations).clamp_min(1).log()
+        template.update({
+            "duration_log_mean": duration.mean().detach(),
+            "duration_log_scale": duration.std(unbiased=False).clamp_min(1e-4).detach(),
+            "duration_min_frames": duration.exp().min().detach(),
+            "duration_max_frames": duration.exp().max().detach(),
+        })
     return template
+
+
+def fit_train_fold_speech_teacher(loader: DataLoader, dimension: int) -> dict[str, object]:
+    """Fit a frozen HuBERT whitening/PCA teacher from training content only."""
+    if dimension < 1:
+        raise ValueError("teacher dimension must be positive")
+    grouped: dict[str, list[torch.Tensor]] = {}
+    for batch in loader:
+        eligible = batch["pairing_weight"] > 0
+        if not eligible.any() or "hubert_global" not in batch:
+            continue
+        for index in eligible.nonzero(as_tuple=False).flatten().tolist():
+            label = str(batch["linguistic_content_id"][index])
+            grouped.setdefault(label, []).append(batch["hubert_global"][index].detach().float().cpu())
+    labels = sorted(grouped)
+    if len(labels) < 2:
+        raise RuntimeError("frozen speech teacher requires at least two training contents")
+    rows = torch.stack([torch.stack(grouped[label]).mean(0) for label in labels])
+    mean = rows.mean(0)
+    centered = rows - mean
+    # Components are fitted over *unique content means*, so subject repetition
+    # cannot dominate the audio teacher.  A 50-pair M0 has rank <= 9; pad the
+    # requested 64-D contract with zero columns for stable model interfaces.
+    _, _, vh = torch.linalg.svd(centered, full_matrices=False)
+    effective = min(int(dimension), int(vh.shape[0]), max(len(labels) - 1, 1))
+    components = torch.zeros(rows.shape[1], int(dimension), dtype=rows.dtype)
+    components[:, :effective] = vh[:effective].T
+    projected = centered @ components
+    scale = projected.std(0, unbiased=False).clamp_min(1e-4)
+    bank = projected / scale
+    return {"mean": mean, "components": components, "scale": scale, "bank": bank, "labels": labels,
+            "effective_dimension": effective}
 
 
 def retrieval_r1(prediction: torch.Tensor, target: torch.Tensor, eligible: torch.Tensor,
@@ -314,6 +357,8 @@ def validation_metrics(model, loader: DataLoader, target: torch.device,
                        control_names: tuple[str, ...] = ("zero", "time_shuffle", "channel_shuffle")) -> dict:
     """Evaluate the model-selection fold without touching the locked test fold."""
     predictions = []; teachers = []; labels: list[str] = []
+    global_predictions = []; global_teachers = []; durations = []; duration_targets = []
+    residual_predictions = []; residual_teachers = []
     controls: dict[str, list[float]] = {name: [] for name in ("correct", *control_names)}
     was_training = model.training
     model.eval()
@@ -329,6 +374,15 @@ def validation_metrics(model, loader: DataLoader, target: torch.device,
             predictions.append(prediction.cpu()); teachers.append(teacher.cpu())
             selected = eligible.nonzero(as_tuple=False).flatten().tolist()
             labels.extend(batch["linguistic_content_id"][index] for index in selected)
+            if model.teacher_dimension > 0 and "hubert_global" in batch:
+                global_predictions.append(state.global_embedding[eligible].cpu())
+                global_teachers.append(model.teacher_target(batch["hubert_global"][eligible]).cpu())
+            if state.predicted_duration is not None:
+                durations.append(state.predicted_duration[eligible].cpu())
+                duration_targets.append(batch["audio_duration_frames"][eligible].float().cpu())
+            if state.residual_mfcc is not None and state.baseline_mfcc is not None:
+                residual_predictions.append(state.residual_mfcc[eligible].cpu())
+                residual_teachers.append((teacher - state.baseline_mfcc[eligible]).cpu())
             controls["correct"].extend((prediction - teacher).abs().mean((1, 2)).cpu().tolist())
             for control in control_names:
                 if control == "wrong_trial":
@@ -345,9 +399,19 @@ def validation_metrics(model, loader: DataLoader, target: torch.device,
     if not predictions:
         raise RuntimeError("validation fold has no audio-supervised pairs")
     prediction, teacher = torch.cat(predictions), torch.cat(teachers)
-    return {"pairs": len(labels), "mfcc_l1": float((prediction - teacher).abs().mean()),
-            "retrieval": retrieval_metrics(prediction, teacher, labels),
-            "controls": {name: float(np.mean(values)) if values else float("nan") for name, values in controls.items()}}
+    result = {"pairs": len(labels), "mfcc_l1": float((prediction - teacher).abs().mean()),
+              "retrieval": retrieval_metrics(prediction, teacher, labels),
+              "controls": {name: float(np.mean(values)) if values else float("nan") for name, values in controls.items()}}
+    if global_predictions:
+        result["hubert_global_retrieval"] = retrieval_metrics(torch.cat(global_predictions), torch.cat(global_teachers), labels)
+    if durations:
+        left, right = torch.cat(durations), torch.cat(duration_targets)
+        result["duration_std_retention"] = float(left.std(unbiased=False) / right.std(unbiased=False).clamp_min(1e-8))
+    if residual_predictions:
+        left, right = torch.cat(residual_predictions).flatten(1), torch.cat(residual_teachers).flatten(1)
+        result["residual_variance_ratio"] = float(left.var(0, unbiased=False).mean() /
+                                                    right.var(0, unbiased=False).mean().clamp_min(1e-8))
+    return result
 
 
 def epoch_horizon(*, max_steps: int | None, max_epochs: int | None, training: dict,
@@ -369,31 +433,43 @@ def epoch_horizon(*, max_steps: int | None, max_epochs: int | None, training: di
     return int(epochs) * steps_per_epoch, int(epochs)
 
 
-def validation_improved(current: dict, best: dict | None, minimum_delta: float) -> bool:
+def validation_improved(current: dict, best: dict | None, minimum_delta: float,
+                        requirements: dict | None = None) -> bool:
     """Controls are a prerequisite; MRR selects only among control-valid models."""
-    value = float(current["retrieval"]["mrr"])
+    requirements = requirements or {}
+    selection = str(requirements.get("selection_metric", "mfcc_mrr"))
+    key = "hubert_global_retrieval" if selection == "hubert_global_mrr" else "retrieval"
+    value = float(current[key]["mrr"])
     if not np.isfinite(value):
         raise RuntimeError("validation retrieval MRR is nonfinite")
     # Preserve the public helper contract used by legacy configurations and
     # focused tests.  v2 always supplies control errors below.
     if "controls" not in current:
-        return best is None or value > float(best["retrieval"]["mrr"]) + float(minimum_delta)
+        return best is None or value > float(best[key]["mrr"]) + float(minimum_delta)
     errors = current["controls"]
     correct = float(errors["correct"])
     margin = min(float(value) - correct for name, value in errors.items()
                  if name != "correct" and np.isfinite(value))
     current_valid = margin > 0
+    if "minimum_residual_variance" in requirements:
+        current_valid = current_valid and float(current.get("residual_variance_ratio", 0.0)) >= float(requirements["minimum_residual_variance"])
+    if "minimum_duration_std_retention" in requirements:
+        current_valid = current_valid and float(current.get("duration_std_retention", 0.0)) >= float(requirements["minimum_duration_std_retention"])
     if best is None:
         return True
     best_errors = best["controls"]
     best_correct = float(best_errors["correct"])
-    best_margin = min(float(value) - best_correct for name, value in best_errors.items()
-                      if name != "correct" and np.isfinite(value))
+    best_margin = min(float(candidate) - best_correct for name, candidate in best_errors.items()
+                      if name != "correct" and np.isfinite(candidate))
     best_valid = best_margin > 0
+    if "minimum_residual_variance" in requirements:
+        best_valid = best_valid and float(best.get("residual_variance_ratio", 0.0)) >= float(requirements["minimum_residual_variance"])
+    if "minimum_duration_std_retention" in requirements:
+        best_valid = best_valid and float(best.get("duration_std_retention", 0.0)) >= float(requirements["minimum_duration_std_retention"])
     if current_valid != best_valid:
         return current_valid
     if current_valid:
-        return value > float(best["retrieval"]["mrr"]) + float(minimum_delta)
+        return value > float(best[key]["mrr"]) + float(minimum_delta)
     return margin > best_margin + float(minimum_delta)
 
 
@@ -467,12 +543,13 @@ def main() -> int:
     if args.stage == "generalization" and not args.explore and bool(cfg["training"].get("stage2_requires_all_m0_gates", True)):
         require_registered_m0_gates(ROOT, cfg)
     stage2 = cfg.get("stage2", {})
+    m0 = cfg.get("m0", {})
     split_protocol = cfg["split"]["protocol"] if args.stage == "overfit" else str(
         stage2.get("protocol", "stage2_joint_ood")
     )
     split_path = artifact_root / "splits" / f"{split_protocol}_fold-{cfg['split']['fold']}.csv"
     if args.stage == "overfit":
-        artifact_set = "explore_m0" if args.explore else "built"
+        artifact_set = str(m0.get("explore_artifact_set", "explore_m0") if args.explore else "built")
     else:
         artifact_set = str(stage2.get(
             "explore_artifact_set" if args.explore else "artifact_set",
@@ -480,7 +557,7 @@ def main() -> int:
         ))
     manifest_path = artifact_root / "manifests" / f"manifest_{artifact_set}.csv"
     if args.stage == "overfit":
-        target_name = "speech_targets_explore_m0" if args.explore else "speech_targets"
+        target_name = str(m0.get("explore_target_name", "speech_targets_explore_m0") if args.explore else "speech_targets")
     else:
         target_name = str(stage2.get(
             "explore_target_name" if args.explore else "target_name",
@@ -488,7 +565,7 @@ def main() -> int:
         ))
     target_path = artifact_root / "speech_targets" / f"{target_name}.h5"
     if args.stage == "overfit":
-        normalizer_name = f"explore_m0_{split_path.stem}" if args.explore else split_path.stem
+        normalizer_name = str(m0.get("explore_normalizer_name", f"explore_m0_{split_path.stem}") if args.explore else split_path.stem)
     else:
         normalizer_name = str(stage2.get(
             "explore_normalizer_name" if args.explore else "normalizer_name",
@@ -605,10 +682,22 @@ def main() -> int:
 
     model = JointEEGContentModel(**cfg["model"]).to(device())
     target_templates: dict[str, torch.Tensor] | None = None
+    speech_teacher: dict[str, object] | None = None
     if bool(cfg["model"].get("zero_centered", False)):
         target_templates = train_fold_templates(evaluation_loaders[names[0]], device())
         model.set_target_templates(target_templates["mfcc_mean"], target_templates["mfcc_scale"],
                                    target_templates.get("hubert_mean"))
+        if bool(cfg["model"].get("duration_standardized", False)):
+            required_duration = ("duration_log_mean", "duration_log_scale", "duration_min_frames", "duration_max_frames")
+            if not all(key in target_templates for key in required_duration):
+                raise RuntimeError("zero-centered v3 model is missing train-fold duration statistics")
+            model.set_duration_statistics(*(target_templates[key] for key in required_duration))
+    if int(cfg["model"].get("teacher_dimension", 0)) > 0:
+        speech_teacher = fit_train_fold_speech_teacher(
+            evaluation_loaders[names[0]], int(cfg["model"]["teacher_dimension"]),
+        )
+        model.set_speech_teacher(speech_teacher["mean"], speech_teacher["components"], speech_teacher["scale"],
+                                 speech_teacher["bank"], speech_teacher["labels"])
     dry_batches = {name: move(next(iter(loader)), device()) for name, loader in loaders.items()}
     first_batch = dry_batches[names[0]]
     state = model(first_batch["eeg"], first_batch["channel_xyz"], first_batch["channel_mask"], model_mask(first_batch), first_batch["dataset_id"])
@@ -684,6 +773,8 @@ def main() -> int:
             "phoneme_vocabulary": vocabulary, "artifact_hashes": artifact_hashes,
             "target_templates": ({key: value.detach().cpu() for key, value in target_templates.items()}
                                  if target_templates is not None else None),
+            "speech_teacher": ({key: (value.detach().cpu() if torch.is_tensor(value) else value)
+                                for key, value in speech_teacher.items()} if speech_teacher is not None else None),
             "resume_contract": current_contract, "steps_completed": completed_steps,
             "epochs_completed": completed_epochs, "checkpoint_kind": checkpoint_kind,
             "validation_selection": validation,
@@ -702,6 +793,8 @@ def main() -> int:
             "best_checkpoint_path": str(best_checkpoint_path) if best_checkpoint_path.exists() else "",
             "batch_schedule": schedule, "target_templates": ({key: value.detach().cpu() for key, value in target_templates.items()}
                                                                  if target_templates is not None else None),
+            "speech_teacher": ({key: (value.detach().cpu() if torch.is_tensor(value) else value)
+                                for key, value in speech_teacher.items()} if speech_teacher is not None else None),
             "interrupted": interrupted, "completed": completed,
             "python_random_state": random.getstate(), "numpy_random_state": np.random.get_state(),
             "torch_rng_state": torch.get_rng_state(),
@@ -733,6 +826,17 @@ def main() -> int:
                 raise RuntimeError("zero-centered resume checkpoint is missing train-fold templates")
             model.set_target_templates(saved_templates["mfcc_mean"], saved_templates["mfcc_scale"],
                                        saved_templates.get("hubert_mean"))
+            if bool(cfg["model"].get("duration_standardized", False)):
+                required_duration = ("duration_log_mean", "duration_log_scale", "duration_min_frames", "duration_max_frames")
+                if not all(key in saved_templates for key in required_duration):
+                    raise RuntimeError("v3 resume checkpoint is missing duration statistics")
+                model.set_duration_statistics(*(saved_templates[key] for key in required_duration))
+        if int(cfg["model"].get("teacher_dimension", 0)) > 0:
+            saved_teacher = previous.get("speech_teacher")
+            if not saved_teacher:
+                raise RuntimeError("v3 resume checkpoint is missing frozen speech teacher")
+            model.set_speech_teacher(saved_teacher["mean"], saved_teacher["components"], saved_teacher["scale"],
+                                     saved_teacher["bank"], saved_teacher["labels"])
         optimizer.load_state_dict(previous["optimizer"])
         optimizer_to(optimizer, device())
         if scheduler is not None:
@@ -819,7 +923,7 @@ def main() -> int:
                 validation.update({"step": completed_steps, "epoch": completed_epochs,
                                    "learning_rate": float(optimizer.param_groups[0]["lr"])})
                 improved = validation_improved(
-                    validation, best_validation, float(validation_spec.get("minimum_delta", 0.0)),
+                    validation, best_validation, float(validation_spec.get("minimum_delta", 0.0)), validation_spec,
                 )
                 validation["improved"] = improved
                 if improved:

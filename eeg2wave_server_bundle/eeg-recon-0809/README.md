@@ -1,5 +1,10 @@
 # eeg-recon-0809
 
+新增独立实验 **aligned_speech_v1**：保留真实时间的 EEG → HuBERT 序列 → 原生 mel → HiFi-GAN，
+包含公开语音预训练、已知被试的新句子分组、分阶段训练、反事实评估和匿名听音。
+运行说明见 [docs/aligned_speech_v1.md](docs/aligned_speech_v1.md)。旧版 MFCC 实验保留用于复现；
+新增代码的工程验证不等于已完成真实 EEG 训练或可懂度验证。
+
 EEG-to-audio reconstruction experiment bundle. 两个数据集统一放在
 `data/` 下；原始 EEG、WAV 和内部音频均保留在本地，不进入 Git。
 
