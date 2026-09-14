@@ -73,7 +73,15 @@ class AlignedTests(unittest.TestCase):
             sf = types.SimpleNamespace(read=lambda path, **kw: (wavfile.read(path)[1], wavfile.read(path)[0]))
             with patch.dict(sys.modules, {"soundfile": sf}):
                 runner.cache_targets(args, cfg)
-                runner.cache_targets(args, cfg)
+                # Report/training changes must not invalidate frozen audio features.
+                with patch.object(runner, "runtime_hash", return_value="changed-report-code"):
+                    runner.cache_targets(args, cfg)
+                with patch.object(runner, "feature_hash", return_value="changed-feature-extractor"):
+                    with self.assertRaisesRegex(RuntimeError, "feature_hash"):
+                        runner.cache_targets(args, cfg)
+                with patch.object(runner, "tree_hash", return_value="changed-teacher"):
+                    with self.assertRaisesRegex(RuntimeError, "teacher_sha256"):
+                        runner.cache_targets(args, cfg)
             with h5py.File(base / "targets.h5", "r") as h5:
                 self.assertEqual(h5["targets/example/teacher"].shape, (199, 12))
                 self.assertEqual(h5["targets/example/mel"].shape, (80, 251))
@@ -210,6 +218,19 @@ class AlignedTests(unittest.TestCase):
                 torch.testing.assert_close(value, trained["decoder"][name])
             eeg_args.initialize = str(base / "align/best_checkpoint.pt"); eeg_args.stage = "finetune"
             eeg_args.output = str(base / "finetune"); runner.train_eeg(eeg_args, cfg)
+            refine_args = argparse.Namespace(**vars(eeg_args))
+            refine_args.refine_finetune = True
+            refine_args.initialize = str(base / "finetune/last_checkpoint.pt")
+            refine_args.output = str(base / "refine")
+            runner.train_eeg(refine_args, cfg)
+            refined = runner.load_payload(base / "refine/last_checkpoint.pt")
+            self.assertEqual(refined["signature"]["initialize"], sha256(Path(refine_args.initialize)))
+            self.assertEqual(refined["decoder_origin_sha256"], trained["decoder_origin_sha256"])
+            for name, value in trained["decoder"].items():
+                torch.testing.assert_close(value, refined["decoder"][name])
+            refine_args.output = str(base / "finetune")
+            with self.assertRaisesRegex(ValueError, "new output directory"):
+                runner.train_eeg(refine_args, cfg)
             evaluation_args = argparse.Namespace(checkpoint=str(base / "finetune/last_checkpoint.pt"), role="train",
                 m0=True, selection=None, device="cpu", batch_size=2, output=str(base / "evaluation.json"))
             runner.evaluate(evaluation_args, cfg)
@@ -230,6 +251,14 @@ class AlignedTests(unittest.TestCase):
                 runner.export_audio(export_args, cfg)
             self.assertTrue((base / "export/blind/transcriptions.csv").exists())
             self.assertEqual(len(list((base / "export/bundles").glob("*/*.wav"))), 4 * 7)
+            cfg["objective_only"] = True
+            export_args.output = str(base / "objective_export")
+            with patch.object(runner, "SpeechT5HiFiGan", DummyVocoder), patch.object(runner, "tree_hash", return_value="test-vocoder"), \
+                 patch.object(runner, "official_reference_transcripts", return_value=(references, {"kind": "synthetic"})):
+                runner.export_audio(export_args, cfg)
+            self.assertFalse((base / "objective_export/blind").exists())
+            self.assertFalse((base / "objective_export/private_key.csv").exists())
+            self.assertEqual(len(pd.read_csv(base / "objective_export/reference_transcripts.csv")), 4)
 
     def test_listening_scores_cannot_fabricate_missing_responses(self):
         self.assertEqual(runner.word_accuracy("The cat sat.", "the cat sat"), 1.)
@@ -266,6 +295,56 @@ class AlignedTests(unittest.TestCase):
             b = runner.load_payload(resumed / "last_checkpoint.pt")
             for key in a["model"]:
                 torch.testing.assert_close(a["model"][key], b["model"][key], rtol=0, atol=0)
+
+    def test_improving_ineligible_training_does_not_stop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory); manifest, cache, norm = self.fixture(base)
+            cfg = {"artifact_root": str(base), "decoder": {"hidden": 12, "layers": 2},
+                   "encoder": {"dimension": 12, "heads": 3, "layers": 1,
+                               "local_layers": 1, "token_steps": 30},
+                   "minimum_epochs": 1, "patience": 1}
+            train = AlignedDataset(base, manifest, cache, "train", norm, m0=True)
+            decoder, spec = runner.make_decoder(cfg, train)
+            model = AlignedEEGModel(decoder, **cfg["encoder"])
+            args = argparse.Namespace(manifest=None, cache=None, initialize=None, stage="finetune", seed=31,
+                                      lr=.00001, batch_size=1, epochs=3, max_steps=0, checkpoint_every=50, m0=True)
+            reports = [{"native_mel_mae": value, "beats_template": False, "beats_wrong_trial": True}
+                       for value in [3., 2.9, 2.8]]
+            out = base / "training"; out.mkdir()
+            with patch.object(runner, "evaluate_model", side_effect=reports):
+                runner.train_loop(args, cfg, model, train, train, out, torch.device("cpu"), spec, audio=False)
+            saved = runner.load_payload(out / "training_state.pt")
+            self.assertEqual(saved["epoch"], 3)
+            self.assertEqual(saved["stale"], 0)
+            self.assertFalse((out / "best_checkpoint.pt").exists())
+            # Better mel alone must not overwrite the model that passed M0.
+            qualified = base / "qualified"; qualified.mkdir()
+            reports = [{"native_mel_mae": metric, "beats_template": True,
+                        "beats_wrong_trial": True, "m0_passed": passed}
+                       for metric, passed in [(1., True), (.8, True), (.6, False)]]
+            with patch.object(runner, "evaluate_model", side_effect=reports):
+                runner.train_loop(args, cfg, model, train, train, qualified, torch.device("cpu"), spec, audio=False)
+            m0_best = runner.load_payload(qualified / "best_m0_checkpoint.pt")
+            mel_best = runner.load_payload(qualified / "best_checkpoint.pt")
+            self.assertEqual(m0_best["epoch"], 2)
+            self.assertEqual(mel_best["epoch"], 3)
+            self.assertTrue(m0_best["history"][-1]["m0_passed"])
+            # A completed resume keeps the qualified checkpoint intact.
+            original_hash = sha256(qualified / "best_m0_checkpoint.pt")
+            runner.train_loop(args, cfg, model, train, train, qualified, torch.device("cpu"), spec, audio=False)
+            self.assertEqual(original_hash, sha256(qualified / "best_m0_checkpoint.pt"))
+
+    def test_legacy_reopen_requires_progress_and_remaining_budget(self):
+        args = argparse.Namespace(resume_early_stop_fix=True, epochs=100, max_steps=5000)
+        cfg = {"minimum_epochs": 20, "patience": 10}
+        saved = {"complete": True, "stage": "finetune", "epoch": 20, "step": 1000, "stale": 20,
+                 "history": [{"native_mel_mae": 3. - i * .01} for i in range(20)]}
+        self.assertTrue(runner.can_resume_early_stop_fix(saved, args, cfg))
+        for changes in ({"step": 5000}, {"epoch": 100}, {"stopping_policy": "metric_progress_v2"},
+                        {"history": [{"native_mel_mae": 3.}] * 20}):
+            self.assertFalse(runner.can_resume_early_stop_fix({**saved, **changes}, args, cfg))
+        args.resume_early_stop_fix = False
+        self.assertFalse(runner.can_resume_early_stop_fix(saved, args, cfg))
 
     def test_blind_review_rejects_incomplete_and_scores_paired_conditions(self):
         with tempfile.TemporaryDirectory() as directory:

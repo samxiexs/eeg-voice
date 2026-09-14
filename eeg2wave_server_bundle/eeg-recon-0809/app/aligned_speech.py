@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import random
 import signal
+import shutil
 import sys
 import time
 
@@ -72,7 +73,10 @@ def path_of(cfg, key):
 
 def artifact_paths(cfg):
     base = path_of(cfg, "artifact_root")
-    return base, base / "manifest.csv", base / "targets.h5", base / "eeg_normalizer.json"
+    target_name = os.environ.get("ALIGNED_TARGET_CACHE_NAME", "targets.h5")
+    if Path(target_name).name != target_name:
+        raise ValueError("ALIGNED_TARGET_CACHE_NAME must be a file name")
+    return base, base / "manifest.csv", base / target_name, base / "eeg_normalizer.json"
 
 
 def device(name):
@@ -90,6 +94,20 @@ def runtime_hash():
     files = [Path(__file__), *sorted((ROOT / "app/src/eeg2speech").glob("*.py"))]
     libraries = {name: version(name) for name in ("torch", "transformers", "numpy", "scipy", "h5py")}
     return hashlib.sha256(json.dumps({"files": [(p.name, sha256(p)) for p in files], "libraries": libraries}, sort_keys=True).encode()).hexdigest()
+
+
+def feature_hash():
+    """Cache identity excludes training, reporting and reference-text code."""
+    import inspect
+    from importlib.metadata import version
+    from eeg2speech import speecht5
+    import cache_speech_targets
+    payload = {"schema": "physical_audio_features_v2", "sample_rate": SAMPLE_RATE,
+               "wave_samples": WAVE_SAMPLES,
+               "functions": [inspect.getsource(fn) for fn in (cache_targets, fixed_wave, convolution_times)],
+               "frontends": [sha256(Path(speecht5.__file__)), sha256(Path(cache_speech_targets.__file__))],
+               "libraries": {name: version(name) for name in ("torch", "transformers", "numpy", "scipy", "h5py", "soundfile")}}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def atomic_save(path, payload):
@@ -123,9 +141,39 @@ def decoder_from(payload):
 def load_payload(path):
     # Only locally created training checkpoints; never accept untrusted .pt files.
     result = torch.load(path, map_location="cpu", weights_only=False)
-    if result.get("contract") != CONTRACT or result.get("runtime_hash") != runtime_hash():
+    current = runtime_hash()
+    registry = ROOT / "app/checkpoint_compatibility.json"
+    compatibility = json.loads(registry.read_text()) if registry.exists() else {}
+    accepted = compatibility.get(current, {}).get("compatible_previous_runtimes", [])
+    if result.get("contract") != CONTRACT or result.get("runtime_hash") not in [current, *accepted]:
         raise RuntimeError("checkpoint contract/runtime mismatch; do not silently reuse old experiments")
     return result
+
+
+def stopping_progress(history, stage):
+    """Track metric improvement independently of checkpoint eligibility."""
+    key = "sequence_mae" if stage == "align" else "native_mel_mae"
+    best, stale = float("inf"), 0
+    for row in history:
+        metric = row[key]
+        if math.isfinite(metric) and metric < best - 1e-5:
+            best, stale = metric, 0
+        else:
+            stale += 1
+    return best, stale
+
+
+def can_resume_early_stop_fix(saved, args, cfg):
+    # Only reopen a legacy run stopped prematurely by the eligibility bug.
+    # Never extend a step/epoch budget or restart a genuinely stalled run.
+    return bool(getattr(args, "resume_early_stop_fix", False)
+                and saved["complete"] and not saved.get("stopping_policy")
+                and saved["stage"] == "finetune"
+                and saved["epoch"] < args.epochs
+                and (not args.max_steps or saved["step"] < args.max_steps)
+                and saved["epoch"] >= cfg["minimum_epochs"]
+                and saved["stale"] >= cfg["patience"]
+                and stopping_progress(saved["history"], saved["stage"])[1] < cfg["patience"])
 
 
 def audit_active_sources(data_cfg):
@@ -319,13 +367,14 @@ def cache_targets(args, cfg):
     if not (teacher_path / "config.json").is_file():
         raise RuntimeError("supply --hubert or HUBERT_LOCAL_PATH with local frozen HuBERT weights")
     signature = {"contract": CONTRACT, "manifest_sha256": sha256(manifest), "teacher_sha256": tree_hash(teacher_path),
-                 "teacher_layer": 9, "wave_samples": WAVE_SAMPLES, "runtime_hash": runtime_hash()}
+                 "teacher_layer": 9, "wave_samples": WAVE_SAMPLES, "feature_hash": feature_hash()}
     target.parent.mkdir(parents=True, exist_ok=True)
     working = target.with_suffix(".partial.h5")
     if target.exists():
         with h5py.File(target, "r") as h5:
-            if not all(str(h5.attrs.get(k)) == str(v) for k, v in signature.items()):
-                raise RuntimeError("completed target cache provenance differs")
+            differences = [k for k, v in signature.items() if str(h5.attrs.get(k)) != str(v)]
+            if differences:
+                raise RuntimeError(f"target cache {target} differs in {differences}; preserve it and use a new cache path")
         print("target cache already complete"); return
     model = HubertModel.from_pretrained(teacher_path, local_files_only=True).eval().requires_grad_(False).to(device(args.device))
     processor = Wav2Vec2FeatureExtractor.from_pretrained(teacher_path, local_files_only=True)
@@ -473,6 +522,7 @@ def train_loop(args, cfg, model, train, validation, output, target, decoder_spec
                  "m0": bool(getattr(args, "m0", False))}
     progress = output / "training_state.pt"
     step = start_epoch = start_batch = 0; best = float("inf"); stale = 0; history = []
+    best_m0 = float("inf")
     if progress.exists():
         saved = load_payload(progress)
         if saved["signature"] != signature:
@@ -484,13 +534,26 @@ def train_loop(args, cfg, model, train, validation, output, target, decoder_spec
                     state[k] = v.to(target)
         step, start_epoch, start_batch = saved["step"], saved["epoch"], saved["next_batch"]
         best, stale, history = saved["best"], saved["stale"], saved["history"]
+        best_m0 = saved.get("best_m0", float("inf"))
+        if math.isfinite(best_m0) and not (output / "best_m0_checkpoint.pt").exists():
+            raise RuntimeError("saved passing M0 checkpoint is missing; restore it before resuming")
         torch.set_rng_state(saved["torch_rng"]); np.random.set_state(saved["numpy_rng"]); random.setstate(saved["python_rng"])
         if target.type == "cuda" and saved["cuda_rng"] is not None:
             torch.cuda.set_rng_state_all(saved["cuda_rng"])
         if target.type == "mps" and saved.get("mps_rng") is not None:
             torch.mps.set_rng_state(saved["mps_rng"])
-        if saved["complete"]:
+        reopen = can_resume_early_stop_fix(saved, args, cfg)
+        if saved["complete"] and not reopen:
             print("training already complete"); return
+        if reopen:
+            backup = output / "before_early_stop_fix"
+            backup.mkdir(exist_ok=True)
+            for name in ("training_state.pt", "last_checkpoint.pt", "metrics.json"):
+                source = output / name
+                if source.exists() and not (backup / name).exists():
+                    shutil.copy2(source, backup / name)
+            print(f"Resuming premature early stop at step {step}, epoch {start_epoch}; original saved in {backup}", flush=True)
+    monitor_best, stale = stopping_progress(history, args.stage)
 
     def payload(epoch, next_batch, complete=False):
         return {"contract": CONTRACT, "runtime_hash": runtime_hash(), "signature": signature,
@@ -499,7 +562,8 @@ def train_loop(args, cfg, model, train, validation, output, target, decoder_spec
                 "eeg_spec": cfg["encoder"] if not audio else None, "lag_ms": getattr(args, "lag_ms", 0),
                 "decoder_origin_sha256": getattr(args, "decoder_origin", None),
                 "step": step, "epoch": epoch, "next_batch": next_batch, "best": best, "stale": stale,
-                "history": history, "complete": complete, "torch_rng": torch.get_rng_state(),
+                "history": history, "complete": complete, "stopping_policy": "metric_progress_v2",
+                "monitor_best": monitor_best, "best_m0": best_m0, "torch_rng": torch.get_rng_state(),
                 "numpy_rng": np.random.get_state(), "python_rng": random.getstate(),
                 "cuda_rng": torch.cuda.get_rng_state_all() if target.type == "cuda" else None,
                 "mps_rng": torch.mps.get_rng_state() if target.type == "mps" else None}
@@ -538,6 +602,7 @@ def train_loop(args, cfg, model, train, validation, output, target, decoder_spec
                 if stop_requested[0]:
                     atomic_save(progress, payload(epoch, next_batch))
                     print("resumable state saved", flush=True)
+                    args.interrupted = True
                     return
                 if step % args.checkpoint_every == 0:
                     atomic_save(progress, payload(epoch, next_batch))
@@ -557,12 +622,25 @@ def train_loop(args, cfg, model, train, validation, output, target, decoder_spec
                     metric = report["sequence_mae"]; eligible = True
             history.append({"epoch": epoch + 1, "step": step, "eligible": bool(eligible), **report})
             if eligible and metric < best - 1e-5:
-                best = metric; stale = 0
-                atomic_save(output / "best_checkpoint.pt", payload(epoch + 1, 0))
+                best = metric
+                selected = True
+            else:
+                selected = False
+            if metric < monitor_best - 1e-5:
+                monitor_best = metric; stale = 0
             else:
                 stale += 1
+            # Preserve the best model satisfying ALL M0 conditions separately:
+            # a later mel improvement can lose content retrieval accuracy.
+            if (not audio and getattr(args, "m0", False) and args.stage == "finetune"
+                    and report.get("m0_passed", False) and metric < best_m0 - 1e-5):
+                best_m0 = metric
+                atomic_save(output / "best_m0_checkpoint.pt", payload(epoch + 1, 0))
+            if selected:
+                atomic_save(output / "best_checkpoint.pt", payload(epoch + 1, 0))
             atomic_json(output / "metrics.json", {"stage": args.stage, "history": history,
-                                                    "best_metric": best if np.isfinite(best) else None})
+                                                    "best_metric": best if np.isfinite(best) else None,
+                                                    "best_m0_metric": best_m0 if np.isfinite(best_m0) else None})
             print(json.dumps({"stage": args.stage, "epoch": epoch + 1, "metric": metric, "eligible": bool(eligible)}), flush=True)
             complete = ((epoch + 1 >= args.epochs) or (args.max_steps and step >= args.max_steps) or
                         (epoch + 1 >= cfg["minimum_epochs"] and stale >= cfg["patience"]))
@@ -586,6 +664,11 @@ def model_from(payload):
 
 def train_eeg(args, cfg):
     seed_all(args.seed); target = device(args.device)
+    refine = getattr(args, "refine_finetune", False)
+    if refine and (args.stage != "finetune" or not args.m0):
+        raise ValueError("refinement is a separate M0 finetune experiment")
+    if refine and Path(args.output).resolve() == Path(args.initialize).resolve().parent:
+        raise ValueError("refinement requires a new output directory to preserve the source experiment")
     initial = load_payload(Path(args.initialize))
     train = dataset_for(cfg, "train", m0=args.m0)
     validation = train if args.m0 else dataset_for(cfg, "validation")
@@ -600,12 +683,17 @@ def train_eeg(args, cfg):
         model = AlignedEEGModel(decoder_from(initial), lag_ms=args.lag_ms, **cfg["encoder"])
         args.decoder_origin = sha256(Path(args.initialize))
     else:
-        if initial["stage"] != "align" or initial["signature"]["m0"] != args.m0 or initial["lag_ms"] != args.lag_ms:
+        expected_stage = "finetune" if refine else "align"
+        if initial["stage"] != expected_stage or initial["signature"]["m0"] != args.m0 or initial["lag_ms"] != args.lag_ms:
             raise ValueError("fine-tuning requires corresponding alignment checkpoint, M0 mode and lag")
+        if initial["eeg_spec"] != cfg["encoder"]:
+            raise ValueError("fine-tuning encoder configuration differs from its initialization")
         model = model_from(initial)
         args.decoder_origin = initial["decoder_origin_sha256"]
+        if refine:
+            print("M0 refinement: initialize trained weights; new optimizer and additional step budget, recorded in a separate directory", flush=True)
     if not args.m0:
-        if getattr(args, "objective_only", False):
+        if cfg.get("objective_only", False) or getattr(args, "objective_only", False):
             if not args.m0_report:
                 raise ValueError("objective-only EEG training still requires --m0-report")
             gate = json.loads(Path(args.m0_report).read_text())
@@ -630,7 +718,7 @@ def train_eeg(args, cfg):
 
 
 def correlation(a, b):
-    a = a.flatten().double(); b = b.flatten().double()
+    a = a.detach().cpu().flatten().double(); b = b.detach().cpu().flatten().double()
     a = a - a.mean(); b = b - b.mean()
     denominator = a.norm() * b.norm()
     return float((a @ b / denominator).clamp(-1, 1)) if denominator > 1e-12 else 0.0
@@ -880,6 +968,7 @@ def export_audio(args, cfg):
     if len(selected) < 40 and not args.m0:
         raise ValueError("listening study needs at least 40 distinct held-out contents")
     blind_rows, private_rows, metric_rows, references = [], [], [], []
+    manual_listening = not cfg.get("objective_only", False)
     official_references, reference_source = official_reference_transcripts(data.frame)
     salt = signature["checkpoint_sha256"]
     with torch.inference_mode():
@@ -909,14 +998,14 @@ def export_audio(args, cfg):
                 if name != "source":
                     envelope = np.sqrt(np.mean(wave.reshape(-1, 160) ** 2, axis=1))
                     row[name + "_envelope_correlation"] = correlation(torch.from_numpy(envelope), torch.from_numpy(source_envelope))
-                if i in selected and name not in ("source", "mel_oracle", "zero", "time_block_shuffle", "channel_shuffle"):
+                if manual_listening and i in selected and name not in ("source", "mel_oracle", "zero", "time_block_shuffle", "channel_shuffle"):
                     sample = hashlib.sha256(f"{salt}:{trial}:{name}".encode()).hexdigest()[:20]
                     public = output / "blind"; public.mkdir(exist_ok=True)
                     wavfile.write(public / f"{sample}.wav", SAMPLE_RATE, wave.astype(np.float32))
                     for listener in ("listener-1", "listener-2", "listener-3"):
                         blind_rows.append({"listener_id": listener, "sample_id": sample, "transcript": ""})
                     private_rows.append({"sample_id": sample, "trial_id": trial, "condition": name})
-            if i in selected:
+            if i in selected or not manual_listening:
                 references.append({"trial_id": trial, **official_references[trial]})
             metric_rows.append(row)
             if i % 25 == 0:
@@ -926,13 +1015,15 @@ def export_audio(args, cfg):
         if not path.exists():
             pd.DataFrame(records).to_csv(path, index=False)
     blind_rows.sort(key=lambda r: hashlib.sha256(f"{r['listener_id']}:{r['sample_id']}".encode()).hexdigest())
-    create_csv(output / "blind/transcriptions.csv", blind_rows)
-    create_csv(output / "private_key.csv", private_rows)
+    if manual_listening:
+        create_csv(output / "blind/transcriptions.csv", blind_rows)
+        create_csv(output / "private_key.csv", private_rows)
     create_csv(output / "reference_transcripts.csv", references)
     pd.DataFrame(metric_rows).to_csv(output / "waveform_metrics.csv", index=False)
     atomic_json(passport, {"contract": CONTRACT, "signature": signature, "pairs": len(data),
                            "listening_contents": len(selected), "sample_rate": SAMPLE_RATE, "wave_samples": WAVE_SAMPLES,
-                           "blind_csv_sha256": sha256(output / "private_key.csv"),
+                           "blind_csv_sha256": sha256(output / "private_key.csv") if manual_listening else None,
+                           "evaluation_mode": "human_listening" if manual_listening else "objective_only",
                            "reference_source": reference_source,
                            "interpretation": "objective_metrics_are_not_a_human_intelligibility_pass"})
 
@@ -1061,6 +1152,10 @@ def main():
         p.add_argument("--epochs", type=int, default=100); p.add_argument("--max-steps", type=int, default=0)
         p.add_argument("--lr", type=float, default=3e-4); p.add_argument("--checkpoint-every", type=int, default=50)
         if name == "train-eeg":
+            p.add_argument("--refine-finetune", action="store_true",
+                           help="initialize a separate M0 refinement from trained finetune weights; reset optimizer")
+            p.add_argument("--resume-early-stop-fix", action="store_true",
+                           help="resume a legacy eligibility-induced early stop within its original budget")
             p.add_argument("--lag-ms", type=int, choices=LAGS_MS, default=0); p.add_argument("--m0", action="store_true")
             p.add_argument("--objective-only", action="store_true")
             p.add_argument("--audio-review"); p.add_argument("--m0-report")
@@ -1090,6 +1185,8 @@ def main():
                 "select-lag": select_lag, "probe": probe, "readiness": readiness,
                 "export": export_audio, "score-review": score_review, "report": summarize}
     commands[args.command](args, cfg)
+    if getattr(args, "interrupted", False):
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":

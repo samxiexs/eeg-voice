@@ -1,0 +1,15 @@
+{
+  "fb007c2b73ae788ae21f96123434693a881a02fec1f5a2b524afd6047e4acc84": {
+    "compatible_previous_runtimes": [
+      "16cfc00f7c4556cebc02d55cd554c812d1b7fdc809351e270721a77ad29b3f1a",
+      "865ab99e4b1398512a42075339b648823f40083b2b7f623a3bec42c61c742934"
+    ],
+    "reason": "Reviewed M0 checkpoint-selection repair and explicit finetune-weight refinement entry. Architecture, forward/loss, optimizer update rule, data/feature processing unchanged. Preserves a separate best fully passing M0 checkpoint. Refinement records source checkpoint hash, resets optimizer and uses a separate output/budget. Exact destination runtime required."
+  },
+  "865ab99e4b1398512a42075339b648823f40083b2b7f623a3bec42c61c742934": {
+    "compatible_previous_runtimes": [
+      "16cfc00f7c4556cebc02d55cd554c812d1b7fdc809351e270721a77ad29b3f1a"
+    ],
+    "reason": "Reviewed early-stopping repair: architecture, forward/loss, optimizer updates, data and target processing unchanged. Separates metric stagnation from checkpoint eligibility; explicit reopening retains original epoch/step budget and backs up legacy progress. Exact destination runtime required; other code/library changes remain incompatible."
+  }
+}

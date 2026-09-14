@@ -4,6 +4,7 @@ artifact_root: artifacts/aligned_speech_local_v1
 legacy_m0_manifest: artifacts/training_data/v4_ds004940_fixed/manifests/manifest_explore_m0_ds004940_trial_diverse_v3.csv
 split_seed: 31
 audio_initialization: project_train_only
+objective_only: true
 encoder:
   dimension: 192
   heads: 6
