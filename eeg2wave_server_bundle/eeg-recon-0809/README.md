@@ -379,3 +379,40 @@ validation/test 评估与 paired comparison。Stage 2 不会覆盖 M0 artifacts�
 缺失 speech target 会直接报错，绝不回退为全零监督。
 
 完整 gate、文件职责和当前限制见 [docs/joint_pilot_v1.md](docs/joint_pilot_v1.md)。
+
+## Recovery v3 (speech-frame-masked EEG → speech)
+
+`app/run_aligned_recovery.sh` drives the v3 recovery route (see the 2026-09-14
+addendum in `reports/CURRENT_EEG_SPEECH_STATUS.md` for why v2 metrics were
+duration-dominated):
+
+```bash
+bash app/run_aligned_recovery.sh linear   # G1 gate: linear envelope tracking vs. prior / wrong-trial / shift null
+bash app/run_aligned_recovery.sh m0       # closed-loop fit on 50 train trials (gate only)
+bash app/run_aligned_recovery.sh full     # fresh-init training; best_passed.pt only when validation controls pass
+.venv-aligned-local/bin/python app/evaluate_aligned_recovery.py --checkpoint outputs/aligned_recovery_v3/full_seed322/best_metric.pt --role validation --output outputs/aligned_recovery_v3/eval_validation --export-wavs
+```
+
+All gate metrics (`native_mel_mae`, `template_mae` = median template, `*_gain`,
+retrieval, `envelope_corr`) are computed on presented-speech frames only;
+`full_*` keys report the whole four-second window for comparison with v2.
+
+The v3 acoustic run that passed all validation controls is
+`outputs/aligned_recovery_v3/full_seed322_positional/best_passed.pt` (update 1800); its
+formal validation report and exported waveforms are in
+`outputs/aligned_recovery_v3/eval_validation_positional/`. Reproduce with
+`bash app/run_aligned_recovery.sh m0` then
+`python app/aligned_recovery.py --mode full --updates 4000 --eval-every 200 --sequence-weight 0 --delta-weight 0 --contrastive-weight 0.5 --m0-checkpoint outputs/aligned_recovery_v3/m0_seed322/best_passed.pt --output <dir>`
+(positional code, subject layer and augmentation are on by default).
+
+### v2 data route (prepared, not yet run)
+
+`app/run_aligned_v2_data.sh` audits and materializes both DS004940 tasks
+(Active + Passive) for all 22 participants with content roles pinned to the v1
+assignment, then rebuilds the target cache and acoustic decoder for the v2
+manifest (`configs/aligned_speech_local_v2.yaml`). Afterwards drive the recovery
+route with `ALIGNED_CONFIG=configs/aligned_speech_local_v2.yaml
+ALIGNED_RUN_ROOT=aligned_recovery_v3_data_v2 bash app/run_aligned_recovery.sh
+linear|m0|full|evaluate|sweep`. `ALIGNED_MIX=0.5` enables same-sentence EEG
+averaging during training; `ALIGNED_SEEDS="322 323 324" ... sweep` replicates
+over seeds and summarises with `app/aggregate_recovery_runs.py`.

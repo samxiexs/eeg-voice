@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Isolated collapse-recovery experiment. No legacy checkpoint is modified."""
+"""Isolated recovery experiment (v3). No legacy checkpoint is modified.
+
+All gate metrics are speech-frame-masked (see aligned_recovery_eval.py); the
+template baseline is the median train mel; there is no variance penalty and
+no 320-way bank classifier.  Full training starts from a fresh initialization
+and only requires that a v3 M0 closure run has passed.
+"""
 from __future__ import annotations
 
 import argparse
@@ -17,18 +23,19 @@ import time
 os.environ.setdefault('ALIGNED_TARGET_CACHE_NAME', 'targets_adapted.h5')
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 import aligned_speech as legacy
-from aligned_recovery_model import RecoveryEEGModel, diverse_batches, recovery_loss
-from eeg2speech.aligned_data import fixed_bank
+from aligned_recovery_model import (RecoveryEEGModel, augment_eeg, average_eeg, diverse_batches, duration_fraction,
+                                    recovery_loss, same_content_partners, speech_frame_masks)
+from aligned_recovery_eval import evaluate_recovery, passes_validation_controls, train_templates
 
 ROOT = legacy.ROOT
-CONTRACT = 'aligned_recovery_v2'
+CONTRACT = 'aligned_recovery_v3'
 
 
 def runtime_hash():
-    files = [Path(__file__), Path(__file__).with_name('aligned_recovery_model.py')]
+    files = [Path(__file__), Path(__file__).with_name('aligned_recovery_model.py'),
+             Path(__file__).with_name('aligned_recovery_eval.py')]
     return hashlib.sha256(json.dumps([legacy.runtime_hash(), *[legacy.sha256(p) for p in files]]).encode()).hexdigest()
 
 
@@ -47,13 +54,29 @@ def training_probe(dataset, per_subject=4):
     return subset(dataset, sorted(indices))
 
 
-def forward(model, batch):
-    return model(batch['eeg'], batch['channel_xyz'], batch['channel_mask'], batch['time_mask'])
+def subject_lookup(dataset):
+    return {s: i for i, s in enumerate(sorted(set(dataset.frame.subject)))}
+
+
+def forward(model, batch, subject):
+    return model(batch['eeg'], batch['channel_xyz'], batch['channel_mask'], batch['time_mask'], subject)
+
+
+def compatible_runtimes():
+    """Earlier runtime hashes whose checkpoints the current code may evaluate/resume.
+
+    Registered in app/recovery_compatibility.json, keyed by the current hash,
+    only for reviewed changes that leave the training forward/loss unchanged
+    (evaluation code, control selection, reporting).
+    """
+    registry = Path(__file__).with_name('recovery_compatibility.json')
+    table = json.loads(registry.read_text()) if registry.exists() else {}
+    return [runtime_hash(), *table.get(runtime_hash(), {}).get('compatible_previous_runtimes', [])]
 
 
 def load_checkpoint(path):
     value = torch.load(path, map_location='cpu', weights_only=False)
-    if value.get('contract') != CONTRACT or value.get('runtime_hash') != runtime_hash():
+    if value.get('contract') != CONTRACT or value.get('runtime_hash') not in compatible_runtimes():
         raise ValueError('recovery checkpoint/code mismatch')
     return value
 
@@ -65,8 +88,16 @@ def dataset_signature(cfg, data):
                 trials=hashlib.sha256('\n'.join(data.frame.trial_id).encode()).hexdigest())
 
 
-def metrics(model, cohort, train, target, batch):
-    return legacy.evaluate_model(model, cohort, train, target, batch, bootstrap=False)
+def metrics(model, cohort, train, target, batch, subjects, templates=None):
+    return evaluate_recovery(model, cohort, train, target, batch, subjects, bootstrap=False, templates=templates)
+
+
+def learning_rate(step, peak, updates, warmup):
+    """Linear warmup then cosine decay to a tenth of the peak; a pure function of the step."""
+    if step < warmup:
+        return peak * (step + 1) / warmup
+    progress = min(1., (step - warmup) / max(1, updates - warmup))
+    return peak * (.1 + .9 * .5 * (1 + math.cos(math.pi * progress)))
 
 
 def train(args, cfg):
@@ -83,16 +114,23 @@ def train(args, cfg):
     if source['stage'] != 'adapt' or source['teacher_sha256'] != data.teacher_sha256:
         raise ValueError('matching train-fold adapted decoder required')
     decoder = legacy.decoder_from(source)
-    # Always all 320 training contents, including in the M0 closure experiment.
-    labels, bank = fixed_bank(full_train, decoder.normalizer)
-    spec = dict(channels=data[0]['eeg'].shape[0], width=args.width, lag_ms=args.lag_ms)
+    # Subject indices come from the complete train fold so M0 and full runs share one table.
+    subjects = subject_lookup(full_train)
+    contents = {c: i for i, c in enumerate(sorted(set(full_train.frame.content_group)))}
+    spec = dict(channels=data[0]['eeg'].shape[0], width=args.width, lag_ms=args.lag_ms,
+                subjects=len(subjects) if args.subject_layer else 0, dropout=args.dropout,
+                positional=bool(args.positional))
     model = RecoveryEEGModel(decoder, **spec).to(target)
-    lookup = {c: i for i, c in enumerate(labels)}; bank = bank.to(target)
+    subject_index = subjects if args.subject_layer else None
     output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
+    weights = dict(contrastive_weight=args.contrastive_weight, sequence_weight=args.sequence_weight,
+                   delta_weight=args.delta_weight, duration_weight=args.duration_weight, temperature=args.temperature)
     signature = dict(**dataset_signature(cfg, data), seed=args.seed, mode=args.mode,
-                     batch_size=args.batch_size, updates=args.updates, lr=args.lr,
-                     spec=spec, decoder=legacy.sha256(Path(args.decoder)), eval_every=args.eval_every,
-                     initialize=legacy.sha256(Path(args.initialize)) if args.initialize else None)
+                     batch_size=args.batch_size, updates=args.updates, lr=args.lr, warmup=args.warmup,
+                     spec=spec, subjects=sorted(subjects), decoder=legacy.sha256(Path(args.decoder)),
+                     eval_every=args.eval_every, weights=weights, augment=bool(args.augment),
+                     mix_same_content=float(args.mix_same_content),
+                     mel_warmup=args.mel_warmup, initialize=legacy.sha256(Path(args.initialize)) if args.initialize else None)
     if args.mode == 'full':
         if not args.m0_checkpoint:
             raise ValueError('full recovery training requires --m0-checkpoint from this architecture')
@@ -112,7 +150,7 @@ def train(args, cfg):
         if Path(args.initialize).resolve().parent == output.resolve():
             raise ValueError('use a separate output directory when initializing weights')
         model.load_state_dict(initial['model'])
-    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=.01)
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=args.weight_decay)
     step = epoch = next_batch = 0; best = best_passing = float('inf'); history = []
     progress = output / 'training_state.pt'
     if progress.exists():
@@ -136,7 +174,9 @@ def train(args, cfg):
                 raise RuntimeError('this recovery run stopped for collapse; inspect metrics')
             print('recovery training already complete'); return
         print(f'resuming recovery update {step}', flush=True)
-    fetch = lru_cache(maxsize=128)(data.__getitem__)
+    fetch = lru_cache(maxsize=256)(data.__getitem__)
+    templates = train_templates(full_train)
+    mel_frames = len(model.decoder.mel_times)
     stopping = [False]
     old_handler = signal.getsignal(signal.SIGINT)
     def interrupt(signum, frame):
@@ -155,43 +195,63 @@ def train(args, cfg):
     try:
         while step < args.updates:
             batches = diverse_batches(data.frame, args.batch_size, args.seed + epoch)
+            partners = same_content_partners(data.frame, args.mix_same_content, np.random.default_rng(args.seed * 7919 + epoch))
             while next_batch < len(batches) and step < args.updates:
                 ids = batches[next_batch]
                 batch = legacy.move(torch.utils.data.default_collate([fetch(i) for i in ids]), target)
+                if any(i in partners for i in ids):
+                    # Same-sentence trial averaging: the mixed EEG keeps the
+                    # anchor trial's subject index and every other field.
+                    mixed = legacy.move(torch.utils.data.default_collate([fetch(partners.get(i, i)) for i in ids]), target)
+                    chosen = torch.tensor([i in partners for i in ids], device=target)[:, None, None]
+                    eeg = average_eeg(batch['eeg'], mixed['eeg'], batch['channel_mask'], mixed['channel_mask'])
+                    batch = dict(batch, eeg=torch.where(chosen, eeg, batch['eeg']))
+                subject = (torch.tensor([subjects[s] for s in batch['subject']], device=target)
+                           if subject_index is not None else None)
+                mel_mask, speech_mask = speech_frame_masks(batch['oracle_duration_frames'], model.decoder.mel_times,
+                                                           model.decoder.speech_times)
                 model.train(); model.decoder.eval(); optimizer.zero_grad(set_to_none=True)
-                state = forward(model, batch)
-                indices = torch.tensor([lookup[c] for c in batch['content']], device=target)
+                for group in optimizer.param_groups:
+                    group['lr'] = learning_rate(step, args.lr, args.updates, args.warmup)
+                if args.augment:
+                    batch = dict(batch, eeg=augment_eeg(batch['eeg'], batch['channel_mask']))
+                state = forward(model, batch, subject)
+                indices = torch.tensor([contents[c] for c in batch['content']], device=target)
                 loss, parts = recovery_loss(state, batch['teacher'], batch['mel'], model.decoder.normalizer,
-                                            bank, indices, mel_weight=min(1., (step + 1) / 100.))
+                                            speech_mask, mel_mask, duration_fraction(batch['oracle_duration_frames'], mel_frames),
+                                            indices, mel_weight=min(1., (step + 1) / max(1, args.mel_warmup)), **weights)
                 if not bool(torch.isfinite(loss)):
                     raise RuntimeError('nonfinite recovery loss')
                 loss.backward()
                 parts['grad_norm'] = float(torch.nn.utils.clip_grad_norm_(model.parameters(), 5., error_if_nonfinite=True))
+                parts['lr'] = optimizer.param_groups[0]['lr']
                 optimizer.step(); step += 1; next_batch += 1; collected.append(parts)
                 if step % 10 == 0:
                     print(json.dumps(dict(update=step, epoch=epoch + 1, seconds=round(time.monotonic() - start, 2),
-                                          **{k:float(np.mean([v[k] for v in collected])) for k in parts})), flush=True)
+                                          **{k: float(np.mean([v[k] for v in collected])) for k in parts})), flush=True)
                     collected = []
                 if stopping[0]:
                     save(progress); return
                 if step % args.eval_every == 0 or step == args.updates:
-                    training = metrics(model, probe, data, target, args.batch_size)
-                    report = training if args.mode == 'm0' else metrics(model, validation, data, target, args.batch_size)
+                    training = metrics(model, probe, full_train, target, args.batch_size, subject_index, templates)
+                    report = training if args.mode == 'm0' else metrics(model, validation, full_train, target, args.batch_size, subject_index, templates)
                     row = dict(update=step, train_probe=training, validation=report,
                                evaluation_scope=args.mode, selection_role='train' if args.mode == 'm0' else 'validation')
                     history.append(row)
                     score = report['native_mel_mae']
                     if score < best:
                         best = score; save(output / 'best_metric.pt', report)
-                    eligible = (report['m0_passed'] if args.mode == 'm0' else
-                                report['beats_template'] and report['beats_wrong_trial'] and
-                                report['zero_gain'] > 0 and report['time_block_shuffle_gain'] > 0)
+                    eligible = report['m0_passed'] if args.mode == 'm0' else passes_validation_controls(report)
                     if eligible and score < best_passing:
                         best_passing = score; save(output / 'best_passed.pt', report)
                     legacy.atomic_json(output / 'metrics.json', dict(contract=CONTRACT, signature=signature, history=history))
                     print(json.dumps(row), flush=True)
+                    summary = {k: round(report[k], 4) for k in ('native_mel_mae', 'template_mae', 'template_improvement',
+                               'retrieval_r1', 'chance_r1', 'zero_gain', 'wrong_trial_gain', 'time_block_shuffle_gain',
+                               'envelope_corr', 'envelope_zero_gain', 'duration_corr', 'prediction_variance_ratio')}
+                    print(json.dumps(dict(update=step, eligible=eligible, best=round(best, 4), **summary)), flush=True)
                     # Fail early on sustained collapse; do not consume the full budget silently.
-                    collapsed = len(history) >= 3 and all(
+                    collapsed = len(history) >= 5 and all(
                         h['train_probe']['prediction_variance_ratio'] < .001 and
                         h['train_probe']['retrieval_r1'] <= h['train_probe']['chance_r1'] + .02
                         for h in history[-3:])
@@ -219,15 +279,31 @@ def main():
     parser.add_argument('--initialize'); parser.add_argument('--m0-checkpoint')
     parser.add_argument('--seed', type=int, default=322)
     parser.add_argument('--width', type=int, default=128)
-    parser.add_argument('--lag-ms', type=int, choices=[0,100,200,300,400], default=0)
-    parser.add_argument('--batch-size', type=int, default=8)
+    parser.add_argument('--lag-ms', type=int, choices=[0, 100, 200, 300, 400], default=0)
+    parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--updates', type=int, default=1000)
     parser.add_argument('--eval-every', type=int, default=100)
-    parser.add_argument('--lr', type=float, default=.0001)
+    parser.add_argument('--lr', type=float, default=3e-4)
+    parser.add_argument('--warmup', type=int, default=200)
+    parser.add_argument('--weight-decay', type=float, default=.05)
+    parser.add_argument('--dropout', type=float, default=.1)
+    parser.add_argument('--mel-warmup', type=int, default=100)
+    parser.add_argument('--temperature', type=float, default=.1)
+    parser.add_argument('--contrastive-weight', type=float, default=1.)
+    parser.add_argument('--sequence-weight', type=float, default=1.)
+    parser.add_argument('--delta-weight', type=float, default=.2)
+    parser.add_argument('--duration-weight', type=float, default=.5)
+    parser.add_argument('--no-subject-layer', dest='subject_layer', action='store_false')
+    parser.add_argument('--no-augment', dest='augment', action='store_false')
+    parser.add_argument('--no-positional', dest='positional', action='store_false')
+    parser.add_argument('--mix-same-content', type=float, default=0.,
+                        help='probability of averaging a training trial with another trial of the same sentence')
     parser.add_argument('--device', default='auto')
     args = parser.parse_args()
-    if args.batch_size < 2 or min(args.updates, args.eval_every, args.width) < 1 or not math.isfinite(args.lr) or args.lr <= 0:
-        parser.error('require batch >= 2, positive sizes/updates and finite positive lr')
+    if (args.batch_size < 2 or min(args.updates, args.eval_every, args.width, args.mel_warmup) < 1
+            or not math.isfinite(args.lr) or args.lr <= 0 or args.temperature <= 0
+            or not 0 <= args.mix_same_content <= 1):
+        parser.error('require batch >= 2, positive sizes/updates, finite positive lr/temperature, mix probability in [0, 1]')
     torch.set_num_threads(4)
     train(args, legacy.config(args.config))
 

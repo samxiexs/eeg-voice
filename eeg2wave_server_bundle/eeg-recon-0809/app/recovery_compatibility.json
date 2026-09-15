@@ -1,0 +1,15 @@
+{
+  "a8be1484972b1798ec4cd781bf89b6d367b7d4fc61af1a963e4e44d630dbdfa1": {
+    "compatible_previous_runtimes": [
+      "868d93cdc3436c8f9ecfeba8665a940842890c17ace534210db602a2e3f6ab5a"
+    ],
+    "reason": "Reviewed evaluation-only change: duration-matched wrong-trial control, chance MRR, control-based gate, optional positional code (absent in earlier specs => disabled). Training forward/loss for existing checkpoints unchanged."
+  },
+  "746933a7acb7cc823a75aa30dca1c15cd46cae6bd4bf539d65cbd8d31173e21a": {
+    "compatible_previous_runtimes": [
+      "a8be1484972b1798ec4cd781bf89b6d367b7d4fc61af1a963e4e44d630dbdfa1",
+      "868d93cdc3436c8f9ecfeba8665a940842890c17ace534210db602a2e3f6ab5a"
+    ],
+    "reason": "Reviewed 2026-09-15 additions: per-task evaluation summary and same-task preference for the matched wrong-trial control (evaluation only); optional same-sentence EEG averaging augmentation (off unless --mix-same-content > 0, so existing checkpoints' training path is unchanged). Model forward, loss and gate unchanged."
+  }
+}

@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Recovery v3 driver.  Environment knobs:
+#   ALIGNED_CONFIG    aligned config (default configs/aligned_speech_local_v1.yaml; v2 data: configs/aligned_speech_local_v2.yaml)
+#   ALIGNED_RUN_ROOT  output folder under outputs/ (default aligned_recovery_v3)
+#   ALIGNED_SEED      seed for m0/full (default 322); ALIGNED_SEEDS  space-separated seeds for sweep
+#   ALIGNED_MIX       probability of same-sentence EEG averaging during training (default 0)
+#   ALIGNED_DEVICE    auto|cpu|mps|cuda
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -8,21 +14,31 @@ export PYTORCH_ENABLE_MPS_FALLBACK=1
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
-SEED="${ALIGNED_SEED:-${ALIGNED_SEEDS:-322}}"
+SEED="${ALIGNED_SEED:-322}"
 DEVICE="${ALIGNED_DEVICE:-auto}"
+CONFIG="${ALIGNED_CONFIG:-$PROJECT_ROOT/configs/aligned_speech_local_v1.yaml}"
+MIX="${ALIGNED_MIX:-0}"
+RUN_ROOT="${ALIGNED_RUN_ROOT:-aligned_recovery_v3}"
 case "$SEED" in ''|*[!0-9]*) echo 'ALIGNED_SEED must be an integer' >&2; exit 2;; esac
-BASE="$PROJECT_ROOT/outputs/aligned_recovery_v2"
+BASE="$PROJECT_ROOT/outputs/$RUN_ROOT"
+DECODER="${ALIGNED_DECODER:-$PROJECT_ROOT/outputs/$(basename "${CONFIG%.yaml}")/adapt/best_checkpoint.pt}"
+HIFIGAN="${ALIGNED_HIFIGAN:-$PROJECT_ROOT/outputs/aligned_speech_local_v1/hifigan/best}"
 run() {
-  echo "Recovery v2: seed=$SEED, device=$DEVICE, physical batch=8"
-  "$PYTHON_BIN" app/aligned_recovery.py --seed "$SEED" --device "$DEVICE" "$@"
+  echo "Recovery v3: config=$(basename "$CONFIG") seed=$SEED device=$DEVICE mix=$MIX root=$RUN_ROOT"
+  "$PYTHON_BIN" app/aligned_recovery.py --config "$CONFIG" --decoder "$DECODER" --seed "$SEED" --device "$DEVICE" "$@"
 }
 case "${1:-m0}" in
-  m0|pilot|full)
+  linear|m0|pilot|full|evaluate|sweep)
     mkdir -p logs
-    bash "$0" "_$1" 2>&1 | tee -a "logs/aligned_recovery_${1}_seed${SEED}.log"
+    bash "$0" "_$1" 2>&1 | tee -a "logs/${RUN_ROOT}_${1}_seed${SEED}.log"
+    ;;
+  _linear)
+    # G1 gate: linear envelope tracking on validation contents; no network involved.
+    "$PYTHON_BIN" app/linear_envelope_check.py --config "$CONFIG" --output "$BASE/linear_envelope_check"
     ;;
   _m0)
-    run --mode m0 --updates 600 --eval-every 100 --output "$BASE/m0_seed$SEED"
+    # Closed-loop sanity on 50 train-fold trials: can the masked objective be fit at all?
+    run --mode m0 --updates 600 --eval-every 100 --batch-size 8 --warmup 50 --output "$BASE/m0_seed$SEED"
     "$PYTHON_BIN" - "$BASE/m0_seed$SEED/best_passed.pt" <<'PY'
 import sys
 from pathlib import Path
@@ -39,11 +55,29 @@ PY
     run --mode pilot --updates 600 --eval-every 200 --output "$BASE/pilot_seed$SEED"
     ;;
   _full)
-    # M0 weights contain only train-fold observations. A passing v2 gate is required.
-    run --mode full --updates 10000 --eval-every 250 \
-      --initialize "$BASE/m0_seed$SEED/best_passed.pt" \
+    # Fresh initialization (an M0 memorization checkpoint is a gate, not a starting point).
+    # Acoustic-dominant weights + positional code: the recipe that passed every
+    # validation control on 2026-09-15 (outputs/aligned_recovery_v3/full_seed322_positional).
+    run --mode full --updates 4000 --eval-every 200 \
+      --sequence-weight 0 --delta-weight 0 --contrastive-weight 0.5 --mix-same-content "$MIX" \
       --m0-checkpoint "$BASE/m0_seed$SEED/best_passed.pt" \
-      --output "$BASE/full_seed$SEED"
+      --output "$BASE/full_seed${SEED}_positional"
     ;;
-  *) echo 'usage: bash app/run_aligned_recovery.sh m0|pilot|full' >&2; exit 2;;
+  _evaluate)
+    # Formal validation report (bootstrap CIs) and waveform export for the passing checkpoint.
+    "$PYTHON_BIN" app/evaluate_aligned_recovery.py --config "$CONFIG" --device "$DEVICE" --hifigan "$HIFIGAN" \
+      --checkpoint "$BASE/full_seed${SEED}_positional/best_passed.pt" --role validation \
+      --output "$BASE/eval_validation_seed$SEED" --export-wavs --tail predicted
+    ;;
+  _sweep)
+    # Replication over seeds, then a seed-level summary with t-intervals.
+    dirs=()
+    for seed in ${ALIGNED_SEEDS:-322 323 324}; do
+      ALIGNED_SEED="$seed" bash "$0" _m0
+      ALIGNED_SEED="$seed" bash "$0" _full
+      dirs+=("$BASE/full_seed${seed}_positional")
+    done
+    "$PYTHON_BIN" app/aggregate_recovery_runs.py "${dirs[@]}" --output "$BASE/sweep_summary.json"
+    ;;
+  *) echo 'usage: bash app/run_aligned_recovery.sh linear|m0|pilot|full|evaluate|sweep' >&2; exit 2;;
 esac
