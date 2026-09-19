@@ -11,5 +11,55 @@
       "868d93cdc3436c8f9ecfeba8665a940842890c17ace534210db602a2e3f6ab5a"
     ],
     "reason": "Reviewed 2026-09-15 additions: per-task evaluation summary and same-task preference for the matched wrong-trial control (evaluation only); optional same-sentence EEG averaging augmentation (off unless --mix-same-content > 0, so existing checkpoints' training path is unchanged). Model forward, loss and gate unchanged."
+  },
+  "e33488fc3ebbecdb2058b2cb59be50875bdaf0477118c39e01d8ebff6ce6b437": {
+    "compatible_previous_runtimes": [
+      "746933a7acb7cc823a75aa30dca1c15cd46cae6bd4bf539d65cbd8d31173e21a",
+      "868d93cdc3436c8f9ecfeba8665a940842890c17ace534210db602a2e3f6ab5a",
+      "a8be1484972b1798ec4cd781bf89b6d367b7d4fc61af1a963e4e44d630dbdfa1"
+    ],
+    "reason": "Legacy runtime hash changed by the reviewed DS006104 removal (see checkpoint_compatibility.json); recovery model/loss/eval files unchanged."
+  },
+  "79b48bc65258839e2379882d76d8181ccc665f83bf84ca19ff84db7feb46ee25": {
+    "compatible_previous_runtimes": [
+      "746933a7acb7cc823a75aa30dca1c15cd46cae6bd4bf539d65cbd8d31173e21a",
+      "868d93cdc3436c8f9ecfeba8665a940842890c17ace534210db602a2e3f6ab5a",
+      "a8be1484972b1798ec4cd781bf89b6d367b7d4fc61af1a963e4e44d630dbdfa1",
+      "e33488fc3ebbecdb2058b2cb59be50875bdaf0477118c39e01d8ebff6ce6b437"
+    ],
+    "reason": "Reviewed 2026-09-15: legacy prepare() build() call updated to the DS006104-free builder signature (no --tms-condition). No model/loss/data-processing change."
+  },
+  "bf123c79251cc80e026ac675d55bbc02208585463979b17f427ea98e07168e58": {
+    "compatible_previous_runtimes": [
+      "746933a7acb7cc823a75aa30dca1c15cd46cae6bd4bf539d65cbd8d31173e21a",
+      "79b48bc65258839e2379882d76d8181ccc665f83bf84ca19ff84db7feb46ee25",
+      "868d93cdc3436c8f9ecfeba8665a940842890c17ace534210db602a2e3f6ab5a",
+      "a8be1484972b1798ec4cd781bf89b6d367b7d4fc61af1a963e4e44d630dbdfa1",
+      "e33488fc3ebbecdb2058b2cb59be50875bdaf0477118c39e01d8ebff6ce6b437"
+    ],
+    "reason": "Reviewed 2026-09-15: evaluation adds oracle-free fixed-window time-resolved retrieval metrics. Training forward/loss unchanged."
+  },
+  "735a6fd387fd9beee71ad585e33b9e2ea1a0219ed1d01a3ebe3ae1279df0e040": {
+    "compatible_previous_runtimes": [
+      "746933a7acb7cc823a75aa30dca1c15cd46cae6bd4bf539d65cbd8d31173e21a",
+      "79b48bc65258839e2379882d76d8181ccc665f83bf84ca19ff84db7feb46ee25",
+      "868d93cdc3436c8f9ecfeba8665a940842890c17ace534210db602a2e3f6ab5a",
+      "a8be1484972b1798ec4cd781bf89b6d367b7d4fc61af1a963e4e44d630dbdfa1",
+      "bf123c79251cc80e026ac675d55bbc02208585463979b17f427ea98e07168e58",
+      "e33488fc3ebbecdb2058b2cb59be50875bdaf0477118c39e01d8ebff6ce6b437"
+    ],
+    "reason": "Reviewed 2026-09-15: optional --initialize-trunk (pretrained trunk weights; off by default). Forward/loss unchanged."
+  },
+  "6125999f2d7110da62fdd2c4628ce70604febea2333b016f0e7593251a229810": {
+    "compatible_previous_runtimes": [
+      "735a6fd387fd9beee71ad585e33b9e2ea1a0219ed1d01a3ebe3ae1279df0e040",
+      "746933a7acb7cc823a75aa30dca1c15cd46cae6bd4bf539d65cbd8d31173e21a",
+      "79b48bc65258839e2379882d76d8181ccc665f83bf84ca19ff84db7feb46ee25",
+      "868d93cdc3436c8f9ecfeba8665a940842890c17ace534210db602a2e3f6ab5a",
+      "a8be1484972b1798ec4cd781bf89b6d367b7d4fc61af1a963e4e44d630dbdfa1",
+      "bf123c79251cc80e026ac675d55bbc02208585463979b17f427ea98e07168e58",
+      "e33488fc3ebbecdb2058b2cb59be50875bdaf0477118c39e01d8ebff6ce6b437"
+    ],
+    "reason": "Reviewed 2026-09-18 removal of the legacy joint/train_joint pipeline: eeg2speech/gates.py and eeg2speech/diffusion.py deleted (used only by train_joint/prepare_stage2_split/the legacy mel refiner). No aligned-route module (aligned.py, aligned_data.py, data.py, model.py, losses.py, speecht5.py) and no recovery file changed, so decoder/vocoder/EEG checkpoints and cached targets are unaffected. Exact destination runtime required."
   }
 }

@@ -15,14 +15,6 @@ class TestPureV3Contracts(unittest.TestCase):
         self.assertEqual((500 + 2500 - (500 - 500)) * 256 // 2000, 384)
         self.assertEqual(2356 * 256 // 512, 1178)
 
-    def test_tms_matlab_inclusive_conversion_and_mask(self):
-        # Matlab pulse-10:pulse+50 has 61 values, so Python is [-10,+51).
-        pulse = 1000
-        self.assertEqual(list(range(pulse - 10, pulse + 51)).__len__(), 61)
-        mask = prepare.source_interval_to_target_mask(source_zero=1200, output_zero=64, target_length=384,
-            source_sfreq=2000, target_sfreq=256, intervals=[(1190, 1251)])
-        self.assertTrue(any(mask))
-
     def test_singlephoneme_is_not_implicitly_cropped(self):
         mask = prepare.clean_perception_mask(384, 0, 384, False)
         self.assertEqual(sum(mask), 384)
@@ -39,10 +31,6 @@ class TestPureV3Contracts(unittest.TestCase):
     def test_channel_hash_is_order_sensitive(self):
         self.assertNotEqual(prepare.channel_order_hash(["A1", "A2"]), prepare.channel_order_hash(["A2", "A1"]))
 
-    def test_clean_audio_never_upgraded(self):
-        self.assertEqual(prepare.audio_semantics_ds006104("x", {"x"})[0], "clean_stimulus")
-        self.assertEqual(prepare.audio_semantics_ds006104("y", set())[0], "unknown")
-
     def test_pinned_source_hash_positive_and_negative(self):
         payload = b"pinned-source"
         expected = prepare.sha256_bytes(payload)
@@ -58,11 +46,6 @@ class TestPureV3Contracts(unittest.TestCase):
         text = (Path(__file__).parents[1] / "configs" / "training_data_v3.yaml").read_text()
         for required in ("output_root: artifacts/training_data/v3", "candidate_filename_timing", "relative_frames: 161", "fit_scope: train_fold_only"):
             self.assertIn(required, text)
-
-    def test_task_normalization(self):
-        self.assertEqual(prepare.canonical_task_name("singlephoneme"), "single-phoneme")
-        self.assertEqual(prepare.canonical_task_name("single-phoneme"), "single-phoneme")
-        self.assertEqual(prepare.canonical_task_name("Words"), "words")
 
     def test_ds004_split_recording_offsets_are_explicit(self):
         root = Path(__file__).parents[1]

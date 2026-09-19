@@ -403,7 +403,7 @@ class AlignedTests(unittest.TestCase):
                  patch.object(prepare_training_data, "build", build), patch.object(runner, "fit_eeg_normalizer") as normalize:
                 runner.prepare(argparse.Namespace(materialize=True), cfg)
             self.assertEqual(len(calls), 1)
-            self.assertEqual(calls[0][8], "materialize")
+            self.assertEqual(calls[0][7], "materialize")      # build() lost its tms_condition argument
             prepared = pd.read_csv(out / "manifest.csv")
             self.assertEqual(set(prepared.role), {"train", "validation", "test"})
             self.assertEqual(set(prepared.split_index_sha256), {sha256(data_root / "splits/aligned_v1_materialize_fold-0.csv")})

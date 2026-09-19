@@ -1,4 +1,4 @@
-"""Joint DS004940/DS006104 EEG-to-speech-content pilot."""
+"""DS004940 EEG-to-speech-content pilot."""
 
 from .model import JointEEGContentModel, JointState
 

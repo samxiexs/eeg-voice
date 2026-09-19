@@ -177,7 +177,7 @@ def can_resume_early_stop_fix(saved, args, cfg):
 
 
 def audit_active_sources(data_cfg):
-    """Reuse the DS004 event adapter without requiring DS006 audio/auxiliary files."""
+    """Reuse the DS004940 event adapter for the Active task only."""
     from collections import Counter
     from prepare_training_data import (_ds004_trial_rows, inventory_sha256, source_lock_entry,
                                        output_root, write_frame, stable_json, sha256_bytes)
@@ -288,7 +288,7 @@ def prepare(args, cfg):
             raise RuntimeError("build selection changed; use a new version directory")
         transport_path.write_text(transport_text)
         build(data_cfg, "ds004940", "all", "N400Active", None, None, None,
-              "any", "materialize", "aligned_v1_materialize", 0, True, False, "aligned_v1")
+              "materialize", "aligned_v1_materialize", 0, True, False, "aligned_v1")
         built = pd.read_csv(data_root / "manifests/manifest_aligned_v1.csv", keep_default_na=False)
         built = built[built.build_status == "included"]
         absent = set(selected.loc[selected.role != "excluded", "trial_id"]) - set(built.trial_id)

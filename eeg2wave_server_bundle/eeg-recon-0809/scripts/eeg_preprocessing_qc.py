@@ -52,7 +52,7 @@ def run(config: dict, trials_per_dataset: int | None = None) -> dict:
     bands = qc["bands_hz"]; requested = trials_per_dataset or int(qc["trials_per_dataset"])
     channel_limit = int(qc["channels_per_trial"]); seconds = float(qc["welch_seconds"])
     records = []
-    for dataset in ("ds004940", "ds006104"):
+    for dataset in ("ds004940",):
         selected = frame[(frame.dataset == dataset) & (frame.build_status == "included")].copy()
         selected["_order"] = selected.trial_id.map(lambda value: _stable(f"preprocessing-psd|{value}"))
         selected = selected.sort_values("_order").head(requested)

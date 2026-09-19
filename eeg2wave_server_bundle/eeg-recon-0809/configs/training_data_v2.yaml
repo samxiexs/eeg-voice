@@ -17,22 +17,6 @@ sources:
     data_root: data/ds004940
     channel_order: [A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, A23, A24, A25, A26, A27, A28, A29, A30, A31, A32, B1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, B15, B16, B17, B18, B19, B20, B21, B22, B23, B24, B25, B26, B27, B28, B29, B30, B31, B32, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C25, C26, C27, C28, C29, C30, C31, C32, D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16, D17, D18, D19, D20, D21, D22, D23, D24, D25, D26, D27, D28, D29, D30, D31, D32]
 
-  ds006104:
-    openneuro_version: 1.0.1
-    dataset_doi: doi:10.18112/openneuro.ds006104.v1.0.1
-    dataset_description_sha256: c496465528c6641f56e344e99990af605af3936c4f9c85e4ad38740958abb093
-    participants_sha256: 9f84e0c1dd26b4ec9b6be924b7df626d5eb4bec4a0de5540ac8773064aa0b683
-    stimulus_inventory_sha256: 03a43d55092f22f6437380946b4d52eb52c2af8ba65848bd19dce96257218eba
-    expected_subjects: 16
-    expected_trials: 10888
-    data_root: data/ds006104
-    channel_order: [Fp1, Fpz, Fp2, F7, F3, Fz, F4, F8, FC5, FC1, FC2, FC6, T7, C3, Cz, C4, T8, CP5, CP1, CP2, CP6, P7, P3, Pz, P4, P8, POz, O1, O2, AF7, AF3, AF4, AF8, F5, F1, F2, F6, FC3, FCz, FC4, C5, C1, C2, C6, CP3, CP4, P5, P1, P2, P6, PO5, PO3, PO4, PO6, FT7, FT8, TP7, TP8, PO7, PO8, Oz]
-    auxiliary_repository:
-      url: https://github.com/mcjpedro/speech_decoding
-      commit: 6cf2db37ee42eeeaccb29343239e416f69e9498d
-      events_inventory_sha256: e8445ae03374bb0c435ebf1fbb3c5dab99eac0359a7eaa43141c540e76801552
-      analysis_bids_sha256: 5b8fc952455320dda755d0850ff230c850b41fae68f34cf0bed911b610bedc23
-
 harmonized:
   target_sfreq_hz: 256
   bandpass_hz: [0.5, 45.0]
@@ -40,7 +24,6 @@ harmonized:
   interpolation:
     max_bad_fraction: 0.15
     ds004940_montage: biosemi128
-    ds006104_montage: standard_1020
   units: V
   dtype: float32
   epoch:
@@ -51,22 +34,6 @@ harmonized:
       total_samples_target: 1178
       eeg_zero_index: 64
       post_sentence_s: 0.5
-    ds006104:
-      source_sfreq_hz: 2000
-      pre_samples_source: 500
-      post_samples_source: 2500
-      total_samples_target: 384
-      eeg_zero_index: 64
-      response_onset_relative_s: 0.3
-      clean_perception_end_target_index: 140
-  tms:
-    source_code: mcjpedro/speech_decoding@6cf2db37ee42eeeaccb29343239e416f69e9498d:matlab_code/analysis_bids.m
-    source_code_sha256: 5b8fc952455320dda755d0850ff230c850b41fae68f34cf0bed911b610bedc23
-    pulse_1_relative_to_stimulus_s: -0.1
-    pulse_2_relative_to_stimulus_s: -0.05
-    # Matlab inclusive [pulse-10, pulse+50] at 2 kHz; Python stores [start,end).
-    interval_half_open_offsets_source_samples: [-10, 51]
-    interpolation_algorithm: linear_endpoints_harmonized
 
 audio:
   target_sample_rate: 16000
@@ -78,7 +45,6 @@ audio:
   clipping: false
   max_samples:
     ds004940: 64000
-    ds006104: 20000
   mel:
     n_fft: 400
     win_length: 400

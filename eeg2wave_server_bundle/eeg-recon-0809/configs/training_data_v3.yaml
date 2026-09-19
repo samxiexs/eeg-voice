@@ -16,16 +16,10 @@ pairing_policy:
 
 evidence_policy:
   ds004940_human_pair_review_required_for_formal_m0: true
-  ds006104_presentation_manifest: null
-  ds006104_candidate_pairing_allowed_for_content_only: true
-  ds006104_s15_aux_action: require_pinned_official_table
-  ds006104_expected_missing_s15_trials: 0
 
 sources:
   ds004940:
     stimulus_inventory_sha256: e4370258f7d8b395ec1879de4826f9e1a9c322ce7c566bcd6cbe9ea6904f9fd3
-  ds006104:
-    stimulus_inventory_sha256: 6f382882656dc4f0a750c00af319c24807ba9c72903e518e482d4420853b3cd7
 
 normalization:
   method: dataset_channel_median_mad
@@ -39,10 +33,6 @@ harmonized:
     ds004940:
       variable_valid_length: true
       exclude_boundary_overlap: true
-    ds006104:
-      variable_valid_length: false
-      response_onset_relative_s: null
-      clean_perception_end_target_index: 384
 
 audio:
   content:

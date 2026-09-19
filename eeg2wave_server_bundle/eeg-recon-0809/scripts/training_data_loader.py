@@ -82,7 +82,6 @@ class TrainingShardDataset:
             "eeg_valid_mask": time_mask,
             "clean_perception_mask": self.h5["clean_perception_mask"][index].astype(bool),
             "audio_loss_mask": audio_loss_mask,
-            "tms_output_mask": self.h5["tms_output_mask"][index].astype(bool),
             "bad_channel_mask": self.h5["bad_channel_mask"][index].astype(bool),
             "pairing_level": pairing,
             "supervision_type": supervision,

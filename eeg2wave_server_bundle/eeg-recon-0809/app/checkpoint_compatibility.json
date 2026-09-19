@@ -11,5 +11,32 @@
       "16cfc00f7c4556cebc02d55cd554c812d1b7fdc809351e270721a77ad29b3f1a"
     ],
     "reason": "Reviewed early-stopping repair: architecture, forward/loss, optimizer updates, data and target processing unchanged. Separates metric stagnation from checkpoint eligibility; explicit reopening retains original epoch/step budget and backs up legacy progress. Exact destination runtime required; other code/library changes remain incompatible."
+  },
+  "79e71cb2d39a36d1295bd0ea28270cca654ac9a56b7ea11fa1cc523a26289549": {
+    "compatible_previous_runtimes": [
+      "16cfc00f7c4556cebc02d55cd554c812d1b7fdc809351e270721a77ad29b3f1a",
+      "865ab99e4b1398512a42075339b648823f40083b2b7f623a3bec42c61c742934",
+      "fb007c2b73ae788ae21f96123434693a881a02fec1f5a2b524afd6047e4acc84"
+    ],
+    "reason": "Reviewed 2026-09-15 DS006104 removal: eeg2speech/data.py drops the DS006104 dataset id, TMS filters and the tms_applied/tms_output_mask batch fields; eeg2speech/gates.py keeps only the ds004940 M0 gate. No aligned-route module (aligned.py, aligned_data.py, model.py, losses.py, speecht5.py) changed, so decoder/vocoder/EEG checkpoints and cached targets are unaffected. Exact destination runtime required."
+  },
+  "8559f3290f6e17f09db358cf490aec8019b04e1c4adf8a24118a5ff03437719a": {
+    "compatible_previous_runtimes": [
+      "16cfc00f7c4556cebc02d55cd554c812d1b7fdc809351e270721a77ad29b3f1a",
+      "79e71cb2d39a36d1295bd0ea28270cca654ac9a56b7ea11fa1cc523a26289549",
+      "865ab99e4b1398512a42075339b648823f40083b2b7f623a3bec42c61c742934",
+      "fb007c2b73ae788ae21f96123434693a881a02fec1f5a2b524afd6047e4acc84"
+    ],
+    "reason": "Reviewed 2026-09-15: legacy prepare() build() call updated to the DS006104-free builder signature (no --tms-condition). No model/loss/data-processing change."
+  },
+  "d1b755652cd60dd916e3db1aa7b8d47f60d4431c856cd46d12f2b04474a96f35": {
+    "compatible_previous_runtimes": [
+      "16cfc00f7c4556cebc02d55cd554c812d1b7fdc809351e270721a77ad29b3f1a",
+      "79e71cb2d39a36d1295bd0ea28270cca654ac9a56b7ea11fa1cc523a26289549",
+      "8559f3290f6e17f09db358cf490aec8019b04e1c4adf8a24118a5ff03437719a",
+      "865ab99e4b1398512a42075339b648823f40083b2b7f623a3bec42c61c742934",
+      "fb007c2b73ae788ae21f96123434693a881a02fec1f5a2b524afd6047e4acc84"
+    ],
+    "reason": "Reviewed 2026-09-18 removal of the legacy joint/train_joint pipeline: eeg2speech/gates.py and eeg2speech/diffusion.py deleted (used only by train_joint/prepare_stage2_split/the legacy mel refiner). No aligned-route module (aligned.py, aligned_data.py, data.py, model.py, losses.py, speecht5.py) and no recovery file changed, so decoder/vocoder/EEG checkpoints and cached targets are unaffected. Exact destination runtime required."
   }
 }

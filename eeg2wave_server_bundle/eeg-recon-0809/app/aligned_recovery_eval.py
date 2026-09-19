@@ -24,6 +24,7 @@ from eeg2speech.losses import counterfactual_eeg
 from aligned_recovery_model import speech_frame_masks, duration_fraction
 
 CONTROLS = ('correct', 'zero', 'wrong_trial', 'time_block_shuffle', 'channel_shuffle')
+FIXED_WINDOW_S = 1.5      # shortest DS004940 sentence is 1.59 s; retrieval inside this window needs no oracle duration
 
 
 def matched_wrong_trial_indices(frame):
@@ -111,6 +112,7 @@ def evaluate_recovery(model, dataset, train_dataset, target, batch_size, subject
     tasks_by_trial = (dict(zip(dataset.frame.trial_id.astype(str), dataset.frame.task.astype(str)))
                       if 'task' in dataset.frame else {})
     records, predictions, targets, masks, embeddings, teachers, durations = [], [], [], [], [], [], []
+    fixed_teachers, fixed_embeddings = [], []
     with torch.inference_mode():
         for offset in range(0, len(dataset), batch_size):
             ids = list(range(offset, min(len(dataset), offset + batch_size)))
@@ -133,6 +135,10 @@ def evaluate_recovery(model, dataset, train_dataset, target, batch_size, subject
             weight = speech_mask[:, :, None].float()
             teachers.append((F.normalize((normalized_teacher * weight).sum(1) / weight.sum(1), dim=-1)).cpu())
             embeddings.append((F.normalize((model.decoder.normalizer(state.aligned_sequence) * weight).sum(1) / weight.sum(1), dim=-1)).cpu())
+            # Oracle-free retrieval: per-frame unit vectors over a fixed 1.5 s window that every sentence covers.
+            fixed = (model.decoder.speech_times < FIXED_WINDOW_S)
+            fixed_teachers.append(F.normalize(normalized_teacher[:, fixed], dim=-1).cpu())
+            fixed_embeddings.append(F.normalize(model.decoder.normalizer(state.aligned_sequence)[:, fixed], dim=-1).cpu())
             predictions.append(state.native_mel.cpu()); targets.append(batch['mel'].cpu()); masks.append(mel_mask.cpu())
             fraction = duration_fraction(batch['oracle_duration_frames'], len(model.decoder.mel_times))
             durations.append(torch.stack([state.duration_fraction.cpu(), fraction.cpu()], 1))
@@ -166,12 +172,19 @@ def evaluate_recovery(model, dataset, train_dataset, target, batch_size, subject
     order = (emb @ F.normalize(prototypes, dim=-1).T).argsort(1, descending=True)
     indices = torch.tensor([unique.index(label) for label in labels])
     ranks = (order == indices[:, None]).nonzero()[:, 1].float() + 1
+    # Fixed-window, time-resolved retrieval (mean per-frame cosine against each content's teacher frames).
+    fixed_teacher = torch.cat(fixed_teachers); fixed_embedding = torch.cat(fixed_embeddings)
+    fixed_prototypes = torch.stack([fixed_teacher[torch.tensor([x == label for x in labels])].mean(0) for label in unique])   # C, F, D
+    fixed_similarity = torch.einsum('nfd,cfd->nc', fixed_embedding, fixed_prototypes) / fixed_embedding.shape[1]
+    fixed_ranks = (fixed_similarity.argsort(1, descending=True) == indices[:, None]).nonzero()[:, 1].float() + 1
     # Trial-to-trial variance over frames that every evaluated trial contains.
     common = int(mask.sum(1).min())
     variance = float(pred[:, :, :common].var(0, unbiased=False).mean() /
                      truth_mel[:, :, :common].var(0, unbiased=False).mean().clamp_min(1e-8))
     result = {'pairs': len(records), 'unique_contents': len(unique), 'retrieval_r1': float((ranks == 1).float().mean()),
               'retrieval_mrr': float((1 / ranks).mean()), 'chance_r1': 1 / len(unique), 'chance_mrr': chance_mrr(len(unique)),
+              'fixed_window_retrieval_r1': float((fixed_ranks == 1).float().mean()), 'fixed_window_retrieval_top5': float((fixed_ranks <= 5).float().mean()),
+              'fixed_window_retrieval_mrr': float((1 / fixed_ranks).mean()), 'chance_top5': min(1., 5 / len(unique)), 'fixed_window_s': FIXED_WINDOW_S,
               'prediction_variance_ratio': variance, 'common_speech_frames': common,
               'duration_corr': pearson(duration[:, 0], duration[:, 1]) if len(duration) > 2 else 0.,
               'duration_mae_s': float((duration[:, 0] - duration[:, 1]).abs().mean() * len(model.decoder.mel_times) * 256 / 16000),

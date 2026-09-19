@@ -253,7 +253,7 @@ def cache(config: dict, dataset: str, limit: int | None, include_hubert: bool,
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=ROOT / "configs" / "training_data_v3.yaml")
-    parser.add_argument("--dataset", choices=["all", "ds004940", "ds006104"], default="all")
+    parser.add_argument("--dataset", choices=["all", "ds004940"], default="all")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--manifest", default="built")
     parser.add_argument("--target-name", default="speech_targets")

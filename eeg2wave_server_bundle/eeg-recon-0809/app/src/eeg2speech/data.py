@@ -16,7 +16,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, Sampler, WeightedRandomSampler
 
 
-DATASET_IDS = {"ds004940": 0, "ds006104": 1}
+DATASET_IDS = {"ds004940": 0}
 
 
 def _decode(value: Any) -> str:
@@ -81,8 +81,6 @@ def pilot_indices(dataset: "JointManifestDataset", config: dict, stage: str,
     if stage == "overfit":
         if role != "train":
             raise ValueError("the M0 overfit subset must come from the train role")
-        if frame.dataset.iloc[0] == "ds006104" and not bool(pilot["primary_ds006104_tms"]):
-            frame = frame[~frame.tms_applied.astype(str).str.lower().isin(["true", "1", "yes"])]
         subject_count = int(pilot["overfit_subjects_per_dataset"])
         content_count = int(pilot["overfit_contents_per_dataset"])
         pair_count = int(pilot["overfit_pairs_per_dataset"])
@@ -101,8 +99,6 @@ def pilot_indices(dataset: "JointManifestDataset", config: dict, stage: str,
             raise RuntimeError("M1 content role counts do not sum to generalization_contents_per_dataset")
         if role not in subject_roles or role not in content_roles:
             raise ValueError(f"unknown M1 role {role}")
-        if frame.dataset.iloc[0] == "ds006104" and not bool(pilot["primary_ds006104_tms"]):
-            frame = frame[~frame.tms_applied.astype(str).str.lower().isin(["true", "1", "yes"])]
         frame = _complete_grid(
             frame, int(subject_roles[role]), int(content_roles[role]),
             f"M1|{frame.dataset.iloc[0]}|{role}",
@@ -342,12 +338,10 @@ class JointManifestDataset(Dataset):
             "subject_index": torch.tensor(self.subject_vocabulary[str(row.subject)], dtype=torch.long),
             "linguistic_content_id": str(row.linguistic_content_id), "pairing_level": pairing,
             "supervision_type": str(row.supervision_type), "audio_id": audio_id,
-            "tms_applied": str(row.get("tms_applied", "false")).lower() in {"true", "1", "yes"},
             "eeg": torch.from_numpy(eeg), "channel_xyz": torch.from_numpy(shard["channel_xyz"][:].astype("float32")),
             "channel_mask": torch.from_numpy(channel_mask),
             "time_mask": torch.from_numpy(time_mask),
             "model_time_mask": torch.from_numpy(model_time_mask),
-            "tms_output_mask": torch.from_numpy(shard["tms_output_mask"][shard_row].astype(bool)),
             "content_mfcc": torch.from_numpy(content), "content_mask": torch.from_numpy(content_mask),
             "hubert_local": torch.from_numpy(hubert), "hubert_global": torch.from_numpy(hubert_global),
             "hubert_mask": torch.from_numpy(hubert_mask),
@@ -389,9 +383,9 @@ def homogeneous_collate(records: list[dict[str, Any]]) -> dict[str, Any]:
     datasets = {record["dataset"] for record in records}
     if len(datasets) != 1:
         raise ValueError("a batch must contain exactly one dataset")
-    tensor_keys = ("dataset_id", "subject_index", "eeg", "channel_xyz", "channel_mask", "time_mask", "model_time_mask", "tms_output_mask",
+    tensor_keys = ("dataset_id", "subject_index", "eeg", "channel_xyz", "channel_mask", "time_mask", "model_time_mask",
                    "content_mfcc", "content_mask", "hubert_local", "hubert_global", "hubert_mask", "pairing_weight", "phoneme_index",
-                   "acoustic_log_mel", "acoustic_rms", "acoustic_activity", "acoustic_supervision", "tms_applied",
+                   "acoustic_log_mel", "acoustic_rms", "acoustic_activity", "acoustic_supervision",
                    "audio_duration_frames")
     batch = {key: torch.stack([torch.as_tensor(record[key]) for record in records]) for key in tensor_keys}
     # SpeechT5 target mel remains native-duration/ragged.  Padding is purely a

@@ -15,15 +15,17 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
 _cache_name = os.environ.get('ALIGNED_TARGET_CACHE_NAME')
 import aligned_recovery as runner
-if _cache_name is None:
-    os.environ.pop('ALIGNED_TARGET_CACHE_NAME', None)
-else:
-    os.environ['ALIGNED_TARGET_CACHE_NAME'] = _cache_name
 from aligned_recovery_model import (RecoveryEEGModel, apply_tail, augment_eeg, diverse_batches,
                                     duration_fraction, recovery_loss, speech_frame_masks)
 import aligned_recovery_eval as evaluation
 import linear_envelope_check as linear
 from eeg2speech.aligned import AcousticDecoder
+# aligned_recovery and linear_envelope_check default the cache name at import;
+# restore the caller's environment so other test modules keep targets.h5.
+if _cache_name is None:
+    os.environ.pop('ALIGNED_TARGET_CACHE_NAME', None)
+else:
+    os.environ['ALIGNED_TARGET_CACHE_NAME'] = _cache_name
 
 
 def tiny_decoder():
@@ -317,7 +319,7 @@ class RecoveryTests(unittest.TestCase):
                                       initialize=None, m0_checkpoint=None, output=str(base / 'continuous'),
                                       warmup=1, weight_decay=.05, dropout=.1, mel_warmup=2, temperature=.1,
                                       contrastive_weight=1., sequence_weight=1., delta_weight=.2, duration_weight=.5,
-                                      subject_layer=True, augment=True, positional=True, mix_same_content=1.)
+                                      subject_layer=True, augment=True, positional=True, mix_same_content=1., initialize_trunk=None)
             with patch.object(runner.legacy, 'dataset_for', return_value=data), \
                  patch.object(runner.legacy, 'load_payload', return_value=source), \
                  patch.object(runner.legacy, 'check_eeg_artifacts'), \

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproducible DS004940/DS006104 training-data preparation (v3).
+"""Reproducible DS004940 training-data preparation (v3).
 
 This program deliberately separates *audit* (inventory and immutable locks),
 *make-splits*, *build*, *validate*, and *fit-normalizer*.  It never edits a
@@ -23,7 +23,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 from collections import Counter
@@ -35,24 +34,6 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 DEFAULT_CONFIG = ROOT / "configs" / "training_data_v3.yaml"
 SPLIT_ALGORITHM = "balanced-greedy-v3-subject-content-waveform-label"
-EVENT_TABLE_SHA256 = {
-    "S01": "5c9323d3805b30bccc1698145f0adc651f8e4f1073234f3e614b128d6054736c",
-    "S02": "6ce6643d7d59213dad2468ec08360a5427a70395248a070fb92f3bc0fb89a17c",
-    "S03": "3c0c5e1bafadb250714e637a536583fbe9904b0bc0cbb74d4f8cd0b096cce3b3",
-    "S04": "d954874a3e59a799b36abbafbcc20672cde8c7f654b610e250391c4b73c80ace",
-    "S05": "0b84b0724a195c57a9e8d4757286e44efcd2ece74f10e36b6ea3d54ba6f8e5db",
-    "S06": "1f449d0b18bd824e7171c5a6ea771849c44dee571ca7685b375c54a80a0d0630",
-    "S07": "14f88dcd25bed34a90ee194a9942936ac022ada7658bc398219ca777708296f9",
-    "S08": "1fba9eb0e587dd1cb514538b6fcd7273987833f7c97e21977acacf5be7f3bcf5",
-    "S09": "9e13d7b744a421289529623a70c12bf076d984c5d4c88df9edd6fe5c362aa24f",
-    "S10": "d3d57bf88cfbb9f0249740accbd9aeec3ba724f410bf04736bd7f1ba27b6990a",
-    "S11": "4142ea24e2c766def6ebc821e1d9587aae383af5593736cfaec5c34db16c6bcc",
-    "S12": "e5b2e0a00f418fb91582846bb44de2026eca7487332ee56483bcb807d97e32c0",
-    "S13": "86ede0fad758fe9ec41ed172b92bc19b4cbb2e899cfa388b3e6eb90851364451",
-    "S14": "5b13d654f1414069b0405017244b6f7ec59751c50b8db7d5bf85ffcbef1c4079",
-    "S15": "97b2aabfe88add53f49d5c933cec9e1d556d1f57fc26c5d7a7c375d4e5382390",
-    "S16": "39ca3f87c21e577b0074b6cf8cf7e91359f8d3802ba253183f839c121cf038ac",
-}
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -85,21 +66,6 @@ def round_half_up(value: float) -> int:
 def trial_id(dataset: str, subject: str, task: str, run: str, event_row: int, onset: float) -> str:
     text = f"{dataset}|{subject}|{task}|{run}|{event_row}|{onset:.9f}"
     return f"{dataset}-{sha256_bytes(text.encode())[:20]}"
-
-
-def source_interval_to_target_mask(
-    *, source_zero: int, output_zero: int, target_length: int,
-    source_sfreq: int, target_sfreq: int, intervals: list[tuple[int, int]],
-) -> list[bool]:
-    """Map direct source interpolation intervals to output samples only.
-
-    It intentionally does not claim to represent filtering-ring effects.
-    """
-    out = []
-    for index in range(target_length):
-        source = source_zero + round_half_up((index - output_zero) * source_sfreq / target_sfreq)
-        out.append(any(start <= source < end for start, end in intervals))
-    return out
 
 
 def clean_perception_mask(target_length: int, start: int, end: int, mixed: bool) -> list[bool]:
@@ -175,25 +141,9 @@ def split_role(protocol: str, fold: int, subject_fold: int, content_fold: int | 
     return "train", ""
 
 
-def audio_semantics_ds006104(wav_sha: str | None, clean_hashes: set[str], presentation_evidence: str | None = None) -> tuple[str, str]:
-    if wav_sha and wav_sha in clean_hashes:
-        return "clean_stimulus", "sha256_matches_cleaned_inventory"
-    if presentation_evidence:
-        return "presented_waveform", presentation_evidence
-    return "unknown", "no_pinned_presentation_manifest"
-
-
 def stimulus_content_id(dataset: str, value: str) -> str:
-    """Content-level identity, deliberately coarser than the waveform file id.
-
-    DS006104 emotional variants such as ``Bo_happy1`` and ``Bo_angry2`` are
-    grouped as ``Bo``.  The original string stays in the manifest, so this
-    grouping is auditable rather than destructive.
-    """
-    stem = Path(value).stem
-    if dataset == "ds006104":
-        stem = re.sub(r"_(?:happy|angry|neutral|sad|fear|fearful)\d*$", "", stem, flags=re.I)
-    return f"{dataset}:content:{stem}"
+    """Content-level identity, deliberately coarser than the waveform file id."""
+    return f"{dataset}:content:{Path(value).stem}"
 
 
 def parse_bdf_header(path: Path) -> tuple[int, float]:
@@ -212,7 +162,7 @@ def git_provenance() -> tuple[str, str]:
         except Exception:
             return "unknown"
     transformation_functions = (
-        "round_half_up", "source_interval_to_target_mask", "clean_perception_mask",
+        "round_half_up", "clean_perception_mask",
         "acoustic_supervision_mask", "channel_order_hash", "_descriptive_stats",
         "_atomic_shard", "_raw_to_canonical", "_rows_for_shards", "build",
     )
@@ -298,17 +248,6 @@ def normalise_ds004_channel(name: str) -> str:
     return name.split("_")[0].strip()
 
 
-def canonical_task_name(value: str) -> str:
-    compact = re.sub(r"[-_\s]", "", str(value)).lower()
-    if compact == "singlephoneme":
-        return "single-phoneme"
-    if compact == "words":
-        return "words"
-    if compact == "phonemes":
-        return "phonemes"
-    return compact
-
-
 def pairing_level(supervision_type: str, audio_semantics: str) -> str:
     if supervision_type == "label_only":
         return "label_only"
@@ -328,47 +267,8 @@ def find_ds004_audio(root: Path, stim_file: str) -> Path | None:
     return first_existing([root / "stimuli" / base, root / "stimuli" / "audio" / base, *root.glob(f"**/{base}")])
 
 
-def find_ds006_audio(root: Path, stimulus: str) -> Path | None:
-    stem = Path(str(stimulus)).stem
-    audio_root = root / "audio_internal" / "stimuli"
-    return first_existing([audio_root / f"{stem}.wav", *audio_root.glob(f"**/{stem}.wav")])
-
-
 def source_lock_entry(path: Path, kind: str) -> dict[str, Any]:
     return {"path": as_relative(path), "sha256": sha256_file(path), "bytes": path.stat().st_size, "kind": kind}
-
-
-def download_pinned_url(url: str, destination: Path, *, retries: int = 3) -> None:
-    """Download a pinned source robustly on macOS Conda/OpenSSL setups.
-
-    Some Conda Python builds fail the TLS handshake against raw.githubusercontent
-    while the system curl trust store succeeds.  We try urllib first, then use
-    curl with retries and write atomically in both cases.
-    """
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    last_error: Exception | None = None
-    for attempt in range(retries):
-        temporary: Path | None = None
-        try:
-            with urllib.request.urlopen(url, timeout=60) as response, tempfile.NamedTemporaryFile(delete=False, dir=destination.parent) as tmp:
-                shutil.copyfileobj(response, tmp)
-                temporary = Path(tmp.name)
-            os.replace(temporary, destination)
-            return
-        except Exception as exc:
-            last_error = exc
-            if temporary and temporary.exists(): temporary.unlink()
-    temporary = destination.with_name(destination.name + ".download")
-    if temporary.exists(): temporary.unlink()
-    try:
-        subprocess.run(["curl", "--fail", "--location", "--retry", str(retries), "--retry-all-errors",
-                        "--connect-timeout", "20", "--max-time", "180", "--output", str(temporary), url],
-                       check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        os.replace(temporary, destination)
-        return
-    except Exception as exc:
-        if temporary.exists(): temporary.unlink()
-        raise RuntimeError(f"unable to download pinned source after urllib/curl attempts: {url}; last error: {exc}") from last_error
 
 
 def inventory_sha256(root: Path, suffixes: tuple[str, ...] = (".wav",)) -> str:
@@ -377,13 +277,6 @@ def inventory_sha256(root: Path, suffixes: tuple[str, ...] = (".wav",)) -> str:
     for path in sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in suffixes):
         entries.append(f"{path.relative_to(root).as_posix()}\t{sha256_file(path)}\n")
     return sha256_bytes("".join(entries).encode("utf-8"))
-
-
-def pinned_hash_status(path: Path, expected: str) -> tuple[bool, str]:
-    if not path.exists():
-        return False, "missing"
-    actual = sha256_file(path)
-    return actual == expected, actual
 
 
 def resume_compatible(attrs: dict[str, Any], *, config_sha: str, source_lock_sha: str,
@@ -575,223 +468,6 @@ def _ds004_trial_rows(config: dict[str, Any], lock: dict[str, Any], qc: dict[str
     return rows
 
 
-def _existing_aux_event(subject: str, config: dict[str, Any]) -> Path:
-    spec = config["sources"]["ds006104"]["auxiliary_repository"]
-    cache = output_root(config) / "auxiliary" / spec["commit"]
-    cache.mkdir(parents=True, exist_ok=True)
-    target = cache / f"{subject}_Tab.csv"
-    expected = EVENT_TABLE_SHA256[subject]
-    if not target.exists():
-        candidates = sorted((ROOT / "artifacts" / "training_data").glob(
-            f"*/auxiliary/{spec['commit']}/{subject}_Tab.csv"
-        ))
-        target = next((path for path in candidates if sha256_file(path) == expected), target)
-    return target
-
-
-def _fetch_aux_event(subject: str, config: dict[str, Any]) -> Path:
-    spec = config["sources"]["ds006104"]["auxiliary_repository"]
-    target = _existing_aux_event(subject, config)
-    expected = EVENT_TABLE_SHA256[subject]
-    if not target.exists():
-        url = f"https://raw.githubusercontent.com/mcjpedro/speech_decoding/{spec['commit']}/events_information/{subject}_Tab.csv"
-        download_pinned_url(url, target)
-    actual = sha256_file(target)
-    if actual != expected:
-        raise RuntimeError(f"official event table hash mismatch {subject}: {actual} != {expected}")
-    return target
-
-
-def _fetch_analysis_bids(config: dict[str, Any], allow_download: bool) -> Path | None:
-    spec = config["sources"]["ds006104"]["auxiliary_repository"]
-    cache = output_root(config) / "auxiliary" / spec["commit"]
-    path = cache / "analysis_bids.m"
-    if not path.exists():
-        candidates = sorted((ROOT / "artifacts" / "training_data").glob(
-            f"*/auxiliary/{spec['commit']}/analysis_bids.m"
-        ))
-        path = next((candidate for candidate in candidates if sha256_file(candidate) == spec["analysis_bids_sha256"]), path)
-    if allow_download and not path.exists():
-        cache.mkdir(parents=True, exist_ok=True)
-        url = f"https://raw.githubusercontent.com/mcjpedro/speech_decoding/{spec['commit']}/matlab_code/analysis_bids.m"
-        download_pinned_url(url, path)
-    if not path.exists():
-        return None
-    actual = sha256_file(path)
-    if actual != spec["analysis_bids_sha256"]:
-        raise RuntimeError(f"analysis_bids.m hash mismatch: {actual} != {spec['analysis_bids_sha256']}")
-    return path
-
-
-def _ds006_clean_hashes(root: Path) -> set[str]:
-    return {sha256_file(p) for p in root.glob("audio_internal/stimuli/**/cleaned/**/*.wav")}
-
-
-def _ds006_content_id(aux_row: Any | None, task: str) -> tuple[str, str]:
-    if aux_row is None:
-        return "", ""
-    values = []
-    for key in ("Phoneme1", "Phoneme2", "Phoneme3"):
-        value = str(aux_row.get(key, "")).strip().lower().replace("\x00", "")
-        if value not in {"", "nan", "n/a", "none"}:
-            values.append(value)
-    label = "".join(values)
-    return (f"ds006104:linguistic:{canonical_task_name(task)}:{label}" if label else "", label)
-
-
-def _ds006_trial_rows(config: dict[str, Any], lock: dict[str, Any], qc: dict[str, Any], fetch_aux: bool) -> list[dict[str, Any]]:
-    _, pd = runtime()
-    spec = config["sources"]["ds006104"]
-    data_root = ROOT / spec["data_root"]
-    audio_root = data_root / "audio_internal" / "stimuli"
-    audio_index: dict[str, Path] = {}
-    for path in sorted(audio_root.rglob("*.wav")):
-        audio_index.setdefault(path.stem, path)
-    for path in sorted(audio_root.glob("*.wav")):
-        audio_index[path.stem] = path
-    audio_hashes: dict[Path, str] = {}
-    rows: list[dict[str, Any]] = []
-    bids_subjects = sorted(data_root.glob("sub-*"))
-    for bids_subject in progress(bids_subjects, desc="audit ds006104 subjects"):
-        suffix = bids_subject.name.removeprefix("sub-")
-        subject = f"S{int(suffix):02d}" if suffix.isdigit() else suffix
-        try:
-            aux = _fetch_aux_event(subject, config) if fetch_aux else _existing_aux_event(subject, config)
-        except RuntimeError as exc:
-            qc["warnings"].append(f"ds006104 {subject}: {exc}")
-            qc["exclusions"]["official_aux_download_failed"] += 1
-            aux = _existing_aux_event(subject, config)
-        if aux.exists():
-            lock["official_aux"][f"events_information/{subject}_Tab.csv"] = source_lock_entry(aux, "official_event_table")
-        else:
-            qc["warnings"].append(f"ds006104 {subject}: pinned official event table unavailable; subject trials remain explicitly excluded")
-        aux_frame = pd.read_csv(aux) if aux.exists() else None
-        event_files = sorted(bids_subject.glob("ses-*/eeg/*_events.tsv"))
-        for events_path in event_files:
-            raw_task = next((x.removeprefix("task-") for x in events_path.name.split("_") if x.startswith("task-")), "unknown")
-            task = canonical_task_name(raw_task)
-            run = next((x.removeprefix("run-") for x in events_path.name.split("_") if x.startswith("run-")), "01")
-            session = next((p.name for p in events_path.parents if p.name.startswith("ses-")), "")
-            frame = read_tsv(events_path, pd)
-            onset_col = _event_column(frame, ["onset"])
-            trial_col = _event_column(frame, ["trial_type", "value"])
-            bids_trial_col = _event_column(frame, ["trial"])
-            eeg_path = first_existing([events_path.parent / events_path.name.replace("_events.tsv", "_eeg.edf")])
-            channels_path = events_path.with_name(events_path.name.replace("_events.tsv", "_channels.tsv"))
-            channels_path = channels_path if channels_path.exists() else None
-            bad_channels = _bad_channels_from_sidecar(channels_path, "ds006104")
-            event_sha = sha256_file(events_path)
-            channels_sha = sha256_file(channels_path) if channels_path else ""
-            for position in range(len(frame)):
-                event = frame.iloc[position]
-                row_index = frame.index[position]
-                value = str(event[trial_col]).strip().lower() if trial_col else ""
-                if value != "stimulus":
-                    continue
-                onset = float(event[onset_col]) if onset_col else float("nan")
-                if not math.isfinite(onset):
-                    qc["exclusions"]["missing_onset"] += 1
-                    continue
-                previous = frame.iloc[position - 1] if position > 0 else None
-                previous_type = str(previous[trial_col]).strip().lower() if previous is not None and trial_col else ""
-                event_trial = previous[bids_trial_col] if previous is not None and bids_trial_col and previous_type == "tms" else None
-                aux_row = None
-                if aux_frame is not None:
-                    candidates = aux_frame
-                    task_col = _event_column(aux_frame, ["Task", "task"])
-                    if task_col:
-                        candidates = candidates[candidates[task_col].astype(str).map(canonical_task_name) == task]
-                    aux_trial_col = _event_column(candidates, ["TrialN", "trial"])
-                    if event_trial is not None and aux_trial_col and str(event_trial).lower() not in {"nan", "n/a", ""}:
-                        wanted = str(int(float(event_trial)))
-                        candidates = candidates[candidates[aux_trial_col].map(lambda value: str(int(float(value))) if str(value).lower() not in {"nan", "n/a", ""} else "") == wanted]
-                    else:
-                        candidates = candidates.iloc[0:0]
-                    if len(candidates) == 1:
-                        aux_row = candidates.iloc[0]
-                stimulus = str(aux_row.get("Stimulus", "")) if aux_row is not None else ""
-                is_single = task == "single-phoneme"
-                audio = None if is_single else audio_index.get(Path(stimulus).stem)
-                if audio is not None and audio not in audio_hashes:
-                    audio_hashes[audio] = sha256_file(audio)
-                audio_sha = audio_hashes.get(audio, "")
-                linguistic_content_id, phoneme_label = _ds006_content_id(aux_row, task)
-                reason = ""
-                if eeg_path is None:
-                    reason = "missing_eeg"
-                elif previous_type != "tms" or event_trial is None or str(event_trial).lower() in {"nan", "n/a", ""}:
-                    reason = "missing_preceding_tms_trial"
-                elif aux_row is None:
-                    reason = "missing_official_aux_row"
-                elif not is_single and audio is None:
-                    reason = "missing_audio"
-                source_zero = round_half_up(onset * 2000)
-                official_p1 = int(float(aux_row.get("P1_TSidx"))) if aux_row is not None and str(aux_row.get("P1_TSidx", "")).lower() not in {"", "nan", "n/a"} else None
-                official_error = abs(source_zero - official_p1) if official_p1 is not None else None
-                if not reason and (official_error is None or official_error > 1):
-                    reason = "official_timing_mismatch"
-                if reason:
-                    qc["exclusions"][reason] += 1
-                identifier = trial_id("ds006104", subject, task, run, int(row_index), onset)
-                tms = bool(int(aux_row.get("TMS", 0))) if aux_row is not None and str(aux_row.get("TMS", "")).strip() not in ("", "nan") else False
-                supervision = "label_only" if is_single else "weak_audio"
-                semantics = "unknown" if is_single else "candidate_waveform"
-                evidence = "singlephoneme_no_paired_wav" if is_single else "official_aux_filename_and_bids_sample_alignment"
-                entry = {
-                    "trial_id": identifier, "dataset": "ds006104", "dataset_version": spec["openneuro_version"],
-                    "subject": subject, "session": session, "task": task, "run": run,
-                    "source_eeg_path": as_relative(eeg_path) if eeg_path else "", "source_eeg_sha256": "",
-                    "source_channels_path": as_relative(channels_path) if channels_path else "",
-                    "source_channels_sha256": channels_sha,
-                    "bad_channels": json.dumps(bad_channels),
-                    "source_event_path": as_relative(events_path), "source_event_sha256": event_sha, "source_event_row": int(row_index),
-                    "official_aux_path": as_relative(aux) if aux.exists() else "", "official_aux_sha256": sha256_file(aux) if aux.exists() else "", "official_aux_row": int(aux_row.name) if aux_row is not None else None,
-                    "event_onset_seconds": onset, "event_to_sample_error": abs(onset * 2000 - source_zero),
-                    "official_timing_error_samples": official_error if official_error is not None else "",
-                    "trial_number": int(float(event_trial)) if event_trial is not None and str(event_trial).lower() not in {"nan", "n/a", ""} else "",
-                    "condition": task, "stimulus": stimulus, "phoneme_label": phoneme_label,
-                    "waveform_id": audio_sha, "audio_path": as_relative(audio) if audio else "", "audio_sha256": audio_sha,
-                    "stimulus_content_id": linguistic_content_id, "linguistic_content_id": linguistic_content_id,
-                    "supervision_type": supervision, "audio_semantics": semantics,
-                    "pairing_level": "label_only" if is_single else "candidate_filename_timing",
-                    "audio_semantics_evidence": evidence,
-                    "neural_task": "perception", "response_onset_relative_s": None,
-                    "response_onset_output_index": None, "response_onset_provenance": "",
-                    "production_contaminated": False, "clean_perception_start_index": 0,
-                    "clean_perception_end_index": 384,
-                    "source_sfreq_hz": 2000, "target_sfreq_hz": 256, "eeg_zero_index": 64,
-                    "audio_start_relative_to_eeg_samples": 64, "source_zero_sample": source_zero,
-                    "source_start_sample": source_zero - 500, "source_end_sample": source_zero + 2500,
-                    "eeg_valid_samples_target": 384,
-                    "source_run_offsets": json.dumps([{"path": as_relative(eeg_path), "start_sample": 0}]) if eeg_path else "[]", "boundary_overlap": False, "tms_applied": tms,
-                    "tms_pulse_1_source_sample": None,
-                    "tms_pulse_2_source_sample": None, "tms_intervals_source_half_open": "[]",
-                    "qc_pass": not bool(reason) and abs(onset * 2000 - source_zero) <= .5,
-                    "build_status": "included" if not reason else "excluded", "exclusion_reason": reason,
-                    "channel_order_hash": channel_order_hash(spec["channel_order"]),
-                }
-                p1_index = official_p1
-                if tms and p1_index is not None:
-                    # Verified pinned Matlab: pulses occur at P1_TSidx-0.100fs
-                    # and P1_TSidx-0.050fs; P1_TSidx itself is not a pulse.
-                    p1 = int(p1_index) - 200
-                    p2 = int(p1_index) - 100
-                    entry["tms_pulse_1_source_sample"] = p1
-                    entry["tms_pulse_2_source_sample"] = p2
-                    entry["tms_intervals_source_half_open"] = json.dumps([[p1 - 10, p1 + 51], [p2 - 10, p2 + 51]])
-                rows.append(entry)
-    qc["actual_subjects"]["ds006104"] = len(bids_subjects)
-    actual_inventory = sha256_bytes("".join(
-        f"{subject}\t{EVENT_TABLE_SHA256[subject]}\n" for subject in sorted(EVENT_TABLE_SHA256)
-    ).encode())
-    lock["official_aux"]["events_inventory_computed_sha256"] = actual_inventory
-    lock["official_aux"]["events_inventory_pinned_sha256"] = spec["auxiliary_repository"]["events_inventory_sha256"]
-    # The release-level inventory SHA is pinned above.  The source release does
-    # not specify its concatenation encoding, so audit verifies every pinned
-    # table SHA256 individually (and records a transparent local aggregate).
-    return rows
-
-
 def write_frame(frame, path: Path, pd) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(path.with_suffix(".csv"), index=False)
@@ -802,7 +478,7 @@ def write_frame(frame, path: Path, pd) -> None:
         (path.with_suffix(".parquet.unavailable.txt")).write_text(str(exc) + "\n")
 
 
-def audit(config: dict[str, Any], strict: bool, fetch_aux: bool) -> int:
+def audit(config: dict[str, Any], strict: bool) -> int:
     _, pd = runtime()
     root = output_root(config)
     root.mkdir(parents=True, exist_ok=True)
@@ -828,12 +504,7 @@ def audit(config: dict[str, Any], strict: bool, fetch_aux: bool) -> int:
                 qc["warnings"].append(f"{dataset}: dataset_description hash mismatch")
         else:
             qc["warnings"].append(f"{dataset}: missing dataset_description")
-        if dataset == "ds006104":
-            participants = data_root / "participants.tsv"
-            ok, value = pinned_hash_status(participants, spec["participants_sha256"])
-            if participants.exists(): lock["files"].append(source_lock_entry(participants, "participants"))
-            if not ok: qc["warnings"].append(f"{dataset}: participants.tsv hash {value}, expected pinned SHA256")
-        stimulus_root = data_root / ("stimuli" if dataset == "ds004940" else "audio_internal/stimuli")
+        stimulus_root = data_root / "stimuli"
         if stimulus_root.exists():
             actual_inventory = inventory_sha256(stimulus_root)
             lock["stimulus_inventory"] = lock.get("stimulus_inventory", {}) | {dataset: {"root": as_relative(stimulus_root), "sha256": actual_inventory}}
@@ -841,25 +512,10 @@ def audit(config: dict[str, Any], strict: bool, fetch_aux: bool) -> int:
                 qc["warnings"].append(f"{dataset}: stimulus inventory hash mismatch")
         else:
             qc["warnings"].append(f"{dataset}: missing stimulus inventory")
-    try:
-        auxiliary_code = _fetch_analysis_bids(config, fetch_aux)
-    except RuntimeError as exc:
-        auxiliary_code = None
-        qc["warnings"].append(f"ds006104 official Matlab source: {exc}")
-    if auxiliary_code is None:
-        qc["warnings"].append("ds006104: pinned analysis_bids.m is unavailable; use --fetch-aux")
-    else:
-        lock["official_aux"]["analysis_bids.m"] = source_lock_entry(auxiliary_code, "official_matlab_code")
-    try:
-        rows = _ds004_trial_rows(config, lock, qc) + _ds006_trial_rows(config, lock, qc, fetch_aux)
-    except Exception as exc:
-        # QC must be written even when a dependency/network/source issue is
-        # encountered.  Keep the DS004 inventory if DS006 scanning is blocked.
-        qc["warnings"].append(f"DS006104 scan failed: {type(exc).__name__}: {exc}")
-        rows = _ds004_trial_rows(config, lock, qc)
+    rows = _ds004_trial_rows(config, lock, qc)
     # Add every actually referenced source only once; raw hashes are intentionally computed here,
     # before build, so resume can reject a mutated raw dataset.
-    sources = sorted({r.get(k, "") for r in rows for k in ("source_eeg_path", "source_channels_path", "source_event_path", "official_aux_path", "audio_path") if r.get(k)})
+    sources = sorted({r.get(k, "") for r in rows for k in ("source_eeg_path", "source_channels_path", "source_event_path", "audio_path") if r.get(k)})
     for relative in progress(sources, desc="SHA256 source lock"):
         path = ROOT / relative
         if path.exists():
@@ -867,7 +523,6 @@ def audit(config: dict[str, Any], strict: bool, fetch_aux: bool) -> int:
             lock["files"].append(entry)
             for row in rows:
                 if row.get("source_eeg_path") == relative: row["source_eeg_sha256"] = entry["sha256"]
-    lock["official_aux"]["repository_commit"] = config["sources"]["ds006104"]["auxiliary_repository"]["commit"]
     for dataset, spec in config["sources"].items():
         observed = sum(r["dataset"] == dataset for r in rows)
         if observed != spec["expected_trials"]:
@@ -1102,7 +757,6 @@ def _atomic_shard(path: Path, arrays: dict[str, Any], attrs: dict[str, Any], str
 
 
 def _raw_to_canonical(raw, channels: list[str], dataset: str, config: dict[str, Any],
-                      source_intervals: list[tuple[int, int]] | None = None,
                       bad_channels: list[str] | None = None):
     """Preprocess one recording once, failing loudly on invalid montage/QC."""
     _, mne, np = require_build_runtime()
@@ -1114,15 +768,6 @@ def _raw_to_canonical(raw, channels: list[str], dataset: str, config: dict[str, 
     rename = {actual: normalise_ds004_channel(actual) for actual in raw.ch_names} if dataset == "ds004940" else {}
     if rename:
         raw.rename_channels(rename)
-    # TMS is source-rate, before filtering/resampling.  Endpoint interpolation is
-    # a stated harmonized substitute for unavailable official fillgaps.
-    if source_intervals:
-        data = raw.get_data()
-        for start, end in source_intervals:
-            start, end = max(1, start), min(data.shape[1] - 1, end)
-            if start < end:
-                data[:, start:end] = np.linspace(data[:, start - 1], data[:, end], end - start, endpoint=False).T
-        raw._data = data
     available_names = set(raw.ch_names)
     declared_bad = set(bad_channels or [])
     bad = sorted(c for c in declared_bad if c in available_names)
@@ -1168,7 +813,7 @@ def _rows_for_shards(frame, requested_dataset: str, requested_subjects: set[str]
 def build(config: dict[str, Any], dataset: str, subjects: str, tasks: str,
           limit_trials_per_group: int | None, common_contents: int | None,
           content_ids: str | None,
-          tms_condition: str, split_role_filter: str, split_protocol: str,
+          split_role_filter: str, split_protocol: str,
           split_fold: int, resume: bool, allow_audit_warnings: bool,
           artifact_set: str = "built") -> int:
     h5py, mne, np = require_build_runtime()
@@ -1188,7 +833,7 @@ def build(config: dict[str, Any], dataset: str, subjects: str, tasks: str,
         raise ValueError("a named artifact_set requires an explicit split role")
     split_contract_hash = split_index["split_index_sha256"]
     requested = None if subjects == "all" else set(subjects.split(","))
-    requested_tasks = None if tasks == "all" else {canonical_task_name(value) if dataset == "ds006104" else value for value in tasks.split(",")}
+    requested_tasks = None if tasks == "all" else set(tasks.split(","))
     selected = _rows_for_shards(frame, dataset, requested, requested_tasks)
     preprocessing_selected = selected.copy()
     if split_role_filter != "any":
@@ -1198,11 +843,6 @@ def build(config: dict[str, Any], dataset: str, subjects: str, tasks: str,
         selected = selected[selected.trial_id.isin(allowed)]
         if artifact_set != "built":
             split_contract_hash = sha256_file(split_path)
-    if tms_condition != "any":
-        if dataset != "ds006104":
-            raise ValueError("--tms-condition is only valid for ds006104")
-        applied = selected.tms_applied.astype(str).str.lower().isin(["true", "1", "yes"])
-        selected = selected[applied if tms_condition == "on" else ~applied]
     selected_contents: set[str] | None = None
     if content_ids:
         if common_contents is not None:
@@ -1244,19 +884,11 @@ def build(config: dict[str, Any], dataset: str, subjects: str, tasks: str,
                 if not resume_compatible(dict(previous.attrs), config_sha=config["_config_sha256"], source_lock_sha=lock["source_lock_sha256"], channel_hash=channel_order_hash(canonical), split_hash=split_contract_hash):
                     raise RuntimeError(f"resume refuses incompatible shard {target}")
             continue
-        # One recording is loaded/filter/resampled once.  DS006104 TMS intervals
-        # are unioned before filtering, which preserves the required operation
-        # order without an O(trials × recording_size) implementation.
+        # One recording is loaded/filtered/resampled once for all of its trials.
         raw_cache: dict[str, Any] = {}
         raw_errors: dict[str, str] = {}
         for raw_relative, recording_rows in preprocessing_group.groupby("source_eeg_path"):
             raw_path = ROOT / raw_relative
-            intervals: list[tuple[int, int]] = []
-            for text_value in recording_rows.get("tms_intervals_source_half_open", []):
-                text_value = str(text_value)
-                if text_value.startswith("["):
-                    intervals.extend((int(pair[0]), int(pair[1])) for pair in json.loads(text_value))
-            intervals = sorted(set(intervals))
             declared_bad: set[str] = set()
             for text_value in recording_rows.get("bad_channels", []):
                 text_value = str(text_value)
@@ -1267,20 +899,16 @@ def build(config: dict[str, Any], dataset: str, subjects: str, tasks: str,
                 expected_sfreq = float(recording_rows.iloc[0].source_sfreq_hz)
                 if abs(float(raw.info["sfreq"]) - expected_sfreq) > 1e-6:
                     raise ValueError(f"source sampling rate {raw.info['sfreq']} != locked {expected_sfreq}")
-                raw_cache[raw_relative] = _raw_to_canonical(
-                    raw, canonical, ds, config, intervals if ds == "ds006104" else [], sorted(declared_bad)
-                )
+                raw_cache[raw_relative] = _raw_to_canonical(raw, canonical, ds, config, sorted(declared_bad))
             except Exception as exc:
                 raw_errors[raw_relative] = f"{type(exc).__name__}:{exc}"
 
-        eegs=[]; valids=[]; cleans=[]; audio_losses=[]; tmsm=[]; bads=[]; interps=[]; zeros=[]; ids=[]; retained=[]
+        eegs=[]; valids=[]; cleans=[]; audio_losses=[]; bads=[]; interps=[]; zeros=[]; ids=[]; retained=[]
         shard_xyz = None
         for _, row in progress(group.iterrows(), desc=f"{ds}/{subject}/{task}", total=len(group)):
             try:
                 if row.source_eeg_path in raw_errors:
                     raise ValueError(f"recording_preprocess:{raw_errors[row.source_eeg_path]}")
-                interval_text = str(row.get("tms_intervals_source_half_open", ""))
-                intervals = json.loads(interval_text) if ds == "ds006104" and interval_text.startswith("[") else []
                 data, bad, interp, zero, xyz = raw_cache[row.source_eeg_path]
                 if shard_xyz is None:
                     shard_xyz = xyz
@@ -1306,17 +934,15 @@ def build(config: dict[str, Any], dataset: str, subjects: str, tasks: str,
                     audio_duration, target_sfreq,
                     str(row.get("pairing_level", "")),
                 ), dtype=bool))
-                ivals = [(int(x[0]), int(x[1])) for x in intervals]
-                tmsm.append(np.array(source_interval_to_target_mask(source_zero=int(row.source_zero_sample), output_zero=int(row.eeg_zero_index), target_length=target_len, source_sfreq=source_sfreq, target_sfreq=target_sfreq, intervals=ivals), bool))
                 bads.append(bad); interps.append(interp); zeros.append(zero); ids.append(row.trial_id); retained.append(row.to_dict())
             except Exception as exc:
                 row = row.copy(); row["build_status"] = "excluded"; row["exclusion_reason"] = f"build:{type(exc).__name__}:{exc}"; row["build_timestamp_utc"] = build_timestamp_utc; built_rows.append(row.to_dict())
         if not eegs:
             continue
-        arrays={"eeg": np.stack(eegs), "channel_xyz": shard_xyz, "eeg_valid_mask": np.stack(valids), "clean_perception_mask": np.stack(cleans), "audio_loss_mask": np.stack(audio_losses), "tms_output_mask": np.stack(tmsm), "bad_channel_mask":np.stack(bads), "interpolated_channel_mask":np.stack(interps), "zero_filled_channel_mask":np.stack(zeros), "channel_valid_mask":~np.stack(zeros)}
+        arrays={"eeg": np.stack(eegs), "channel_xyz": shard_xyz, "eeg_valid_mask": np.stack(valids), "clean_perception_mask": np.stack(cleans), "audio_loss_mask": np.stack(audio_losses), "bad_channel_mask":np.stack(bads), "interpolated_channel_mask":np.stack(interps), "zero_filled_channel_mask":np.stack(zeros), "channel_valid_mask":~np.stack(zeros)}
         commit, diff = git_provenance()
         fixed_policy = bool(config["harmonized"]["epoch"].get(ds, {}).get("fixed_window", False))
-        attrs={"schema_version": config["schema_version"], "preprocessing_profile": config.get("preprocessing_profile", "harmonized_v3"), "artifact_set": artifact_set, "eeg_unit": "V", "eeg_dtype": "float32", "channel_order": canonical, "channel_order_hash": channel_order_hash(canonical), "preprocess_config_sha256":config["_config_sha256"], "source_lock_sha256":lock["source_lock_sha256"], "split_index_sha256":split_contract_hash, "split_hash_required": True, "code_commit":commit, "code_diff_hash":sha256_bytes(diff.encode()), "audit_override_allow_warnings": bool(allow_audit_warnings), "tms_interpolation_algorithm": config["harmonized"]["tms"]["interpolation_algorithm"], "official_tms_code_sha256": config["harmonized"]["tms"]["source_code_sha256"], "model_time_mask_policy": "fixed_full_epoch" if fixed_policy else "variable_valid_epoch"}
+        attrs={"schema_version": config["schema_version"], "preprocessing_profile": config.get("preprocessing_profile", "harmonized_v3"), "artifact_set": artifact_set, "eeg_unit": "V", "eeg_dtype": "float32", "channel_order": canonical, "channel_order_hash": channel_order_hash(canonical), "preprocess_config_sha256":config["_config_sha256"], "source_lock_sha256":lock["source_lock_sha256"], "split_index_sha256":split_contract_hash, "split_hash_required": True, "code_commit":commit, "code_diff_hash":sha256_bytes(diff.encode()), "audit_override_allow_warnings": bool(allow_audit_warnings), "model_time_mask_policy": "fixed_full_epoch" if fixed_policy else "variable_valid_epoch"}
         provenance_keys = ("dataset", "subject", "task", "condition", "pairing_level", "supervision_type", "linguistic_content_id", "waveform_id", "phoneme_label", "audio_id")
         strings = {"trial_id": ids}
         for key in provenance_keys:
@@ -1526,7 +1152,7 @@ def validate(config: dict[str, Any], strict: bool) -> int:
                 observed_contracts[key].add(str(h5.attrs.get(key, "")))
             if h5.attrs.get("eeg_unit") != "V" or h5["eeg"].dtype != np.dtype("float32"): errors.append(f"unit/dtype {shard}")
             if h5["eeg"].shape[1:] != (c,t): errors.append(f"shape {shard}: {h5['eeg'].shape}")
-            for required in ("channel_xyz", "eeg_valid_mask", "clean_perception_mask", "audio_loss_mask", "tms_output_mask", "bad_channel_mask", "interpolated_channel_mask", "zero_filled_channel_mask", "channel_valid_mask"):
+            for required in ("channel_xyz", "eeg_valid_mask", "clean_perception_mask", "audio_loss_mask", "bad_channel_mask", "interpolated_channel_mask", "zero_filled_channel_mask", "channel_valid_mask"):
                 if required not in h5: errors.append(f"missing {required} {shard}")
             if h5.attrs.get("channel_order_hash") != channel_order_hash(config["sources"][ds]["channel_order"]): errors.append(f"channel hash {shard}")
             if h5.attrs.get("preprocess_config_sha256", "") != config["_config_sha256"]: errors.append(f"config hash {shard}")
@@ -1650,28 +1276,6 @@ def validate(config: dict[str, Any], strict: bool) -> int:
     human_status = "pass" if review_rows and all(
         str(row["human_listen_transcript_status"]).strip().lower() in approved for row in review_rows
     ) else "pending"
-    evidence = config.get("evidence_policy", {})
-    presentation = evidence.get("ds006104_presentation_manifest")
-    if presentation:
-        presentation_path = ROOT / presentation["path"] if isinstance(presentation, dict) else ROOT / str(presentation)
-        expected_presentation_hash = presentation.get("sha256", "") if isinstance(presentation, dict) else ""
-        presentation_status = "pass" if presentation_path.exists() and (not expected_presentation_hash or sha256_file(presentation_path) == expected_presentation_hash) else "fail"
-    else:
-        presentation_status = "pending_content_only"
-    inventory = pd.read_csv(root / "manifests" / "manifest_all.csv", keep_default_na=False, low_memory=False)
-    s15_missing = int(((inventory.dataset == "ds006104") & (inventory.subject == "S15") &
-                       (inventory.exclusion_reason == "missing_official_aux_row")).sum())
-    s15_expected = int(evidence.get("ds006104_expected_missing_s15_trials", 0))
-    s15_aux = _existing_aux_event("S15", config)
-    s15_aux_valid = s15_aux.exists() and sha256_file(s15_aux) == EVENT_TABLE_SHA256["S15"]
-    if s15_missing == 0 and s15_aux_valid:
-        s15_status = "pinned_official_table_verified"
-    elif s15_missing == s15_expected:
-        s15_status = "excluded_as_registered"
-    else:
-        s15_status = "unexpected_count"
-    if s15_missing != s15_expected or (s15_expected == 0 and not s15_aux_valid):
-        errors.append(f"S15 explicit exclusion count {s15_missing} != {s15_expected}")
     psd_path = root / "qc" / "preprocessing_psd.json"
     psd_status = json.loads(psd_path.read_text()).get("status", "fail") if psd_path.exists() else "pending"
     if strict and psd_status != "pass":
@@ -1680,11 +1284,6 @@ def validate(config: dict[str, Any], strict: bool) -> int:
     report={"status":"pass" if not errors else "fail", "errors":errors,
             "ds004940_machine_pair_review_count":len(review_rows),
             "ds004940_human_listen_transcript_status":human_status,
-            "ds006104_presentation_provenance_status": presentation_status,
-            "ds006104_acoustic_supervision_enabled": presentation_status == "pass",
-            "ds006104_s15_auxiliary_status": s15_status,
-            "ds006104_s15_excluded_trials": s15_missing,
-            "ds006104_s15_auxiliary_sha256": sha256_file(s15_aux) if s15_aux_valid else "",
             "preprocessing_psd_status": psd_status,
             "formal_m0_ready": formal_ready,
             "formal_m0_blockers": [name for name, passed in {
@@ -1700,10 +1299,10 @@ def validate(config: dict[str, Any], strict: bool) -> int:
 def parser() -> argparse.ArgumentParser:
     p=argparse.ArgumentParser(description=__doc__); p.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     sub=p.add_subparsers(dest="command",required=True)
-    a=sub.add_parser("audit"); a.add_argument("--strict",action="store_true"); a.add_argument("--fetch-aux",action="store_true",help="download pinned official DS006104 event tables")
+    a=sub.add_parser("audit"); a.add_argument("--strict",action="store_true")
     ab=sub.add_parser("build-audio-bank"); ab.add_argument("--resume", action="store_true")
     sub.add_parser("make-splits")
-    b=sub.add_parser("build"); b.add_argument("--dataset",choices=["all","ds004940","ds006104"],default="all"); b.add_argument("--subjects",default="all"); b.add_argument("--tasks",default="all"); b.add_argument("--limit-trials-per-group",type=int); b.add_argument("--common-contents",type=int); b.add_argument("--content-ids"); b.add_argument("--tms-condition",choices=["any","off","on"],default="any"); b.add_argument("--split-role",choices=["any","train","validation","test"],default="any"); b.add_argument("--split-protocol",choices=["subject_ood","audio_ood","joint_ood","stage2_joint_ood"],default="joint_ood"); b.add_argument("--split-fold",type=int,default=0); b.add_argument("--artifact-set",default="built"); b.add_argument("--resume",action="store_true"); b.add_argument("--allow-audit-warnings",action="store_true")
+    b=sub.add_parser("build"); b.add_argument("--dataset",choices=["all","ds004940"],default="all"); b.add_argument("--subjects",default="all"); b.add_argument("--tasks",default="all"); b.add_argument("--limit-trials-per-group",type=int); b.add_argument("--common-contents",type=int); b.add_argument("--content-ids"); b.add_argument("--split-role",choices=["any","train","validation","test"],default="any"); b.add_argument("--split-protocol",choices=["subject_ood","audio_ood","joint_ood","stage2_joint_ood"],default="joint_ood"); b.add_argument("--split-fold",type=int,default=0); b.add_argument("--artifact-set",default="built"); b.add_argument("--resume",action="store_true"); b.add_argument("--allow-audit-warnings",action="store_true")
     n=sub.add_parser("fit-normalizer"); n.add_argument("--split-csv",type=Path,required=True); n.add_argument("--fold",type=int,required=True); n.add_argument("--manifest-kind",default="built"); n.add_argument("--normalizer-name"); n.add_argument("--allow-mixed-production",action="store_true")
     sub.add_parser("migrate-provenance")
     v=sub.add_parser("validate"); v.add_argument("--strict",action="store_true")
@@ -1712,10 +1311,10 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args=parser().parse_args(argv); config,_=load_config(args.config)
-    if args.command=="audit": return audit(config,args.strict,args.fetch_aux)
+    if args.command=="audit": return audit(config,args.strict)
     if args.command=="build-audio-bank": return build_audio_bank(config,args.resume)
     if args.command=="make-splits": return make_splits(config)
-    if args.command=="build": return build(config,args.dataset,args.subjects,args.tasks,args.limit_trials_per_group,args.common_contents,args.content_ids,args.tms_condition,args.split_role,args.split_protocol,args.split_fold,args.resume,args.allow_audit_warnings,args.artifact_set)
+    if args.command=="build": return build(config,args.dataset,args.subjects,args.tasks,args.limit_trials_per_group,args.common_contents,args.content_ids,args.split_role,args.split_protocol,args.split_fold,args.resume,args.allow_audit_warnings,args.artifact_set)
     if args.command=="fit-normalizer": return fit_normalizer(config,args.split_csv,args.fold,args.allow_mixed_production,args.manifest_kind,args.normalizer_name)
     if args.command=="migrate-provenance": return migrate_provenance(config)
     return validate(config,args.strict)

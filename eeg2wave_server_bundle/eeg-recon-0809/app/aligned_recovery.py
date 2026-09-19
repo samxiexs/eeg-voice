@@ -130,7 +130,8 @@ def train(args, cfg):
                      spec=spec, subjects=sorted(subjects), decoder=legacy.sha256(Path(args.decoder)),
                      eval_every=args.eval_every, weights=weights, augment=bool(args.augment),
                      mix_same_content=float(args.mix_same_content),
-                     mel_warmup=args.mel_warmup, initialize=legacy.sha256(Path(args.initialize)) if args.initialize else None)
+                     mel_warmup=args.mel_warmup, initialize=legacy.sha256(Path(args.initialize)) if args.initialize else None,
+                     trunk=legacy.sha256(Path(args.initialize_trunk)) if args.initialize_trunk else None)
     if args.mode == 'full':
         if not args.m0_checkpoint:
             raise ValueError('full recovery training requires --m0-checkpoint from this architecture')
@@ -150,6 +151,14 @@ def train(args, cfg):
         if Path(args.initialize).resolve().parent == output.resolve():
             raise ValueError('use a separate output directory when initializing weights')
         model.load_state_dict(initial['model'])
+    if args.initialize_trunk:
+        # Trunk pretrained elsewhere (e.g. Broderick 2018 envelope tracking); head, decoder,
+        # positional code, duration head and subject deltas start fresh.
+        trunk = torch.load(Path(args.initialize_trunk), map_location='cpu', weights_only=False)['trunk']
+        missing, unexpected = model.load_state_dict(trunk, strict=False)
+        if unexpected or any(k.split('.')[0] in ('spatial', 'temporal', 'blocks', 'output_norm') for k in missing):
+            raise ValueError('pretrained trunk does not match the encoder architecture')
+        print(f'initialised {len(trunk)} trunk tensors from {args.initialize_trunk}', flush=True)
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=args.weight_decay)
     step = epoch = next_batch = 0; best = best_passing = float('inf'); history = []
     progress = output / 'training_state.pt'
@@ -277,6 +286,7 @@ def main():
     parser.add_argument('--decoder', default=str(ROOT / 'outputs/aligned_speech_local_v1/adapt/best_checkpoint.pt'))
     parser.add_argument('--output', required=True)
     parser.add_argument('--initialize'); parser.add_argument('--m0-checkpoint')
+    parser.add_argument('--initialize-trunk', help='trunk checkpoint from app/broderick_pretrain.py')
     parser.add_argument('--seed', type=int, default=322)
     parser.add_argument('--width', type=int, default=128)
     parser.add_argument('--lag-ms', type=int, choices=[0, 100, 200, 300, 400], default=0)

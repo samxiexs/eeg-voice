@@ -166,7 +166,7 @@ def prepare(cfg, *, materialize):
             raise RuntimeError('build selection changed; use a new version directory')
         transport_path.write_text(transport_text)
         build(data_cfg, 'ds004940', 'all', ','.join(tasks), None, None, None,
-              'any', 'materialize', f'{tag}_materialize', 0, True, False, tag)
+              'materialize', f'{tag}_materialize', 0, True, False, tag)
         built = pd.read_csv(data_root / f'manifests/manifest_{tag}.csv', keep_default_na=False)
         built = built[built.build_status == 'included']
         absent = set(selected.loc[selected.role != 'excluded', 'trial_id']) - set(built.trial_id)

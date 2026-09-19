@@ -4,6 +4,7 @@
 #   ALIGNED_RUN_ROOT  output folder under outputs/ (default aligned_recovery_v3)
 #   ALIGNED_SEED      seed for m0/full (default 322); ALIGNED_SEEDS  space-separated seeds for sweep
 #   ALIGNED_MIX       probability of same-sentence EEG averaging during training (default 0)
+#   ALIGNED_TRUNK     pretrained trunk checkpoint (app/broderick_pretrain.py) to initialise the encoder
 #   ALIGNED_DEVICE    auto|cpu|mps|cuda
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,6 +19,8 @@ SEED="${ALIGNED_SEED:-322}"
 DEVICE="${ALIGNED_DEVICE:-auto}"
 CONFIG="${ALIGNED_CONFIG:-$PROJECT_ROOT/configs/aligned_speech_local_v1.yaml}"
 MIX="${ALIGNED_MIX:-0}"
+TRUNK="${ALIGNED_TRUNK:-}"
+SUFFIX="${TRUNK:+_trunk}"
 RUN_ROOT="${ALIGNED_RUN_ROOT:-aligned_recovery_v3}"
 case "$SEED" in ''|*[!0-9]*) echo 'ALIGNED_SEED must be an integer' >&2; exit 2;; esac
 BASE="$PROJECT_ROOT/outputs/$RUN_ROOT"
@@ -60,14 +63,15 @@ PY
     # validation control on 2026-09-15 (outputs/aligned_recovery_v3/full_seed322_positional).
     run --mode full --updates 4000 --eval-every 200 \
       --sequence-weight 0 --delta-weight 0 --contrastive-weight 0.5 --mix-same-content "$MIX" \
+      ${TRUNK:+--initialize-trunk "$TRUNK"} \
       --m0-checkpoint "$BASE/m0_seed$SEED/best_passed.pt" \
-      --output "$BASE/full_seed${SEED}_positional"
+      --output "$BASE/full_seed${SEED}_positional$SUFFIX"
     ;;
   _evaluate)
     # Formal validation report (bootstrap CIs) and waveform export for the passing checkpoint.
     "$PYTHON_BIN" app/evaluate_aligned_recovery.py --config "$CONFIG" --device "$DEVICE" --hifigan "$HIFIGAN" \
-      --checkpoint "$BASE/full_seed${SEED}_positional/best_passed.pt" --role validation \
-      --output "$BASE/eval_validation_seed$SEED" --export-wavs --tail predicted
+      --checkpoint "$BASE/full_seed${SEED}_positional$SUFFIX/best_passed.pt" --role validation \
+      --output "$BASE/eval_validation_seed$SEED$SUFFIX" --export-wavs --tail predicted
     ;;
   _sweep)
     # Replication over seeds, then a seed-level summary with t-intervals.
