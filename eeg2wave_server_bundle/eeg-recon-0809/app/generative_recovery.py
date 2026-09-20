@@ -65,7 +65,7 @@ SILENCE_MEL = -10.
 DEFAULT_ENCODER = ROOT / 'outputs/aligned_recovery_v3/full_seed322_positional/best_passed.pt'
 DEFAULT_ENVELOPE = ROOT / 'outputs/envelope_decoder/trunk/best.pt'
 DEFAULT_OUTPUT = ROOT / 'outputs/generative_recovery'
-CONDITIONS = ('correct', 'zero', 'wrong_trial', 'time_block_shuffle', 'pooled', 'teacher_oracle')
+CONDITIONS = ('correct', 'zero', 'wrong_trial', 'time_block_shuffle', 'pooled', 'pooled_wrong', 'teacher_oracle')
 
 
 # ----------------------------------------------------------------------------- cache
@@ -893,6 +893,10 @@ def export(args, cfg):
                     c = conditioner(counterfactual_eeg(eeg, 'time_block_shuffle', channel_mask=mask), mask, subject, fold)
                 elif name == 'pooled':
                     c = conditioner(eeg, mask, subject, fold, premixed=pooled_eeg(conditioner, role, chunk, device))
+                elif name == 'pooled_wrong':
+                    # Control for the pooled condition: every presentation of a DIFFERENT (duration-matched)
+                    # sentence, averaged the same way.  If pooling only cleaned up the conditioning, this scores as high.
+                    c = conditioner(eeg, mask, subject, fold, premixed=pooled_eeg(conditioner, role, role.wrong_index[chunk], device))
                 elif name == 'teacher_oracle':
                     teacher = torch.from_numpy(np.asarray(audio.teacher[role.audio_index[chunk]], dtype=np.float32)).to(device)
                     c = conditioner.teacher(teacher, speech_times)
@@ -939,7 +943,7 @@ def compare(args, cfg):
     index = json.loads((export_folder / 'index.json').read_text())['samples']
     folders = {e['folder']: export_folder / 'waveforms' / e['folder'] for e in index}
     contents = {e['folder']: e['content'] for e in index}
-    names = ['native_mel_oracle', 'teacher_oracle', 'regression', 'correct', 'zero', 'wrong_trial', 'time_block_shuffle', 'pooled']
+    names = ['native_mel_oracle', 'teacher_oracle', 'regression', 'correct', 'zero', 'wrong_trial', 'time_block_shuffle', 'pooled', 'pooled_wrong']
     rng = np.random.default_rng(args.seed)
     rows = {n: [] for n in names}; sharp = {n: [] for n in names + ['original']}
     for k, entry in enumerate(index, start=1):
@@ -965,11 +969,12 @@ def compare(args, cfg):
     afc = ac.two_alternative({k: folders[k] for k in afc_keys}, [e for e in index if e['folder'] in afc_keys], names, contents, rng)
     # Paired: does real EEG beat its own zero-EEG sample (same noise) on the same trial?
     paired = {}
-    for n in ('zero', 'wrong_trial', 'time_block_shuffle'):
-        if rows[n] and rows['correct']:
-            d = np.array([a['stoi'] - b['stoi'] for a, b in zip(rows['correct'], rows[n])])
-            e = np.array([a['envelope_corr'] - b['envelope_corr'] for a, b in zip(rows['correct'], rows[n])])
-            paired[n] = dict(stoi_gain=float(np.nanmean(d)), stoi_gain_ci95=ac.bootstrap_interval(d[np.isfinite(d)], rng),
+    for n in ('zero', 'wrong_trial', 'time_block_shuffle', 'pooled_wrong'):
+        base = 'pooled' if n == 'pooled_wrong' else 'correct'
+        if rows[n] and rows[base]:
+            d = np.array([a['stoi'] - b['stoi'] for a, b in zip(rows[base], rows[n])])
+            e = np.array([a['envelope_corr'] - b['envelope_corr'] for a, b in zip(rows[base], rows[n])])
+            paired[n] = dict(baseline=base, stoi_gain=float(np.nanmean(d)), stoi_gain_ci95=ac.bootstrap_interval(d[np.isfinite(d)], rng),
                              envelope_gain=float(np.nanmean(e)), envelope_gain_ci95=ac.bootstrap_interval(e[np.isfinite(e)], rng),
                              fraction_trials_real_better_stoi=float(np.nanmean(d > 0)))
     result = dict(contract=CONTRACT, export=str(export_folder), trials=len(index), per_condition=summary,
@@ -983,7 +988,7 @@ def compare(args, cfg):
               f"{sh.get('spectral_contrast', float('nan')):7.3f} {sh.get('temporal_modulation', float('nan')):6.3f} {sh.get('frame_flux', float('nan')):6.3f} |"
               f" {a.get('stoi', {}).get('accuracy', float('nan')):5.2f} {a.get('mcd', {}).get('accuracy', float('nan')):5.2f} {a.get('envelope_corr', {}).get('accuracy', float('nan')):5.2f}")
     for n, p in paired.items():
-        print(f"  paired real-EEG minus {n:18s}: STOI {p['stoi_gain']:+.4f} {p['stoi_gain_ci95']}  envelope r {p['envelope_gain']:+.4f} {p['envelope_gain_ci95']}  real better in {p['fraction_trials_real_better_stoi']:.0%} of trials")
+        print(f"  paired {p['baseline']}-EEG minus {n:14s}: STOI {p['stoi_gain']:+.4f} {p['stoi_gain_ci95']}  envelope r {p['envelope_gain']:+.4f} {p['envelope_gain_ci95']}  real better in {p['fraction_trials_real_better_stoi']:.0%} of trials")
     figure(export_folder, index, args.figure_trials)
 
 
@@ -991,10 +996,11 @@ def figure(export_folder: Path, index, count: int):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    rows = ['native_mel_oracle', 'teacher_oracle', 'regression', 'correct', 'zero', 'wrong_trial', 'pooled']
+    rows = ['native_mel_oracle', 'teacher_oracle', 'regression', 'correct', 'zero', 'wrong_trial', 'pooled', 'pooled_wrong']
     labels = {'native_mel_oracle': 'presented sentence', 'teacher_oracle': 'audio→teacher→diffusion (ceiling)',
               'regression': 'v3 regression, real EEG', 'correct': 'diffusion, real EEG', 'zero': 'diffusion, zero EEG',
-              'wrong_trial': 'diffusion, wrong-trial EEG', 'pooled': 'diffusion, pooled EEG (all presentations)'}
+              'wrong_trial': 'diffusion, wrong-trial EEG', 'pooled': 'diffusion, pooled EEG (all presentations)',
+              'pooled_wrong': 'diffusion, pooled EEG of a different sentence'}
     chosen = index[:count]
     fig, axes = plt.subplots(len(rows), len(chosen), figsize=(4.2 * len(chosen), 1.6 * len(rows)), squeeze=False)
     for j, entry in enumerate(chosen):
@@ -1002,6 +1008,8 @@ def figure(export_folder: Path, index, count: int):
         frames = int(entry['oracle_duration_frames'])
         for i, name in enumerate(rows):
             ax = axes[i, j]
+            if name not in mels:
+                ax.set_visible(False); continue
             if name in mels:
                 ax.imshow(mels[name].astype(np.float32)[:, :frames + 20], origin='lower', aspect='auto', vmin=-7, vmax=1, cmap='magma')
             ax.set_xticks([]); ax.set_yticks([])
@@ -1014,10 +1022,212 @@ def figure(export_folder: Path, index, count: int):
     print(f'figure written to {export_folder / "comparison.png"}')
 
 
+# ----------------------------------------------------------------------------- feature figures
+FIGURE_ORDER = [('original', 'original (presented)'), ('native_mel_oracle', 'presented mel → vocoder'),
+                ('teacher_oracle', 'audio → teacher → diffusion (ceiling)'), ('regression', 'v3 regression, real EEG'),
+                ('correct', 'diffusion, real EEG'), ('zero', 'diffusion, zero EEG'), ('wrong_trial', 'diffusion, wrong-trial EEG'),
+                ('time_block_shuffle', 'diffusion, time-block-shuffled EEG'), ('pooled', 'diffusion, pooled EEG (all presentations)'),
+                ('pooled_wrong', 'diffusion, pooled EEG of a different sentence')]
+FIGURE_COLOURS = {'original': 'black', 'native_mel_oracle': 'dimgray', 'teacher_oracle': 'tab:purple', 'regression': 'tab:orange',
+                  'correct': 'tab:red', 'zero': 'tab:blue', 'wrong_trial': 'tab:gray', 'time_block_shuffle': 'tab:brown',
+                  'pooled': 'tab:green', 'pooled_wrong': 'tab:olive'}
+LISTENING_NAMES = {'0_original': 'original', '1_ceiling_audio_teacher_to_diffusion': 'teacher_oracle', '2_v3_regression_blob': 'regression',
+                   '3_diffusion_real_EEG': 'correct', '4_diffusion_zero_EEG': 'zero', '5_diffusion_wrong_trial_EEG': 'wrong_trial',
+                   '6_diffusion_pooled_EEG_all_presentations': 'pooled', '7_diffusion_pooled_EEG_of_a_DIFFERENT_sentence': 'pooled_wrong'}
+
+
+def yin_f0(wave: np.ndarray, rate: int = 16000, frame: int = 1024, hop: int = 160, fmin: float = 60., fmax: float = 400.,
+           threshold: float = .15, silence_db: float = -40.) -> tuple[np.ndarray, np.ndarray]:
+    """Frame-wise fundamental frequency by YIN (de Cheveigné & Kawahara 2002); NaN where unvoiced.
+
+    Difference function over a window of ``frame - tau_max`` samples, cumulative mean normalised, first dip
+    below ``threshold`` with parabolic interpolation.  Frames quieter than ``silence_db`` relative to the
+    loudest frame are unvoiced.  Good enough for contour comparison; not a reference pitch tracker.
+    """
+    wave = np.asarray(wave, dtype=np.float64)
+    tau_min, tau_max = int(rate / fmax), int(rate / fmin)
+    window = frame - tau_max
+    count = max(0, 1 + (len(wave) - frame) // hop)
+    f0 = np.full(count, np.nan); times = (np.arange(count) * hop + frame / 2) / rate
+    rms = np.array([np.sqrt((wave[i * hop:i * hop + frame] ** 2).mean() + 1e-12) for i in range(count)])
+    floor = rms.max() * 10 ** (silence_db / 20) if count else 0.
+    for i in range(count):
+        if rms[i] <= floor:
+            continue
+        x = wave[i * hop:i * hop + frame]
+        head = x[:window]
+        energy_head = float(head @ head)
+        cumulative = np.concatenate([[0.], np.cumsum(x ** 2)])
+        acf = np.correlate(x, head, mode='valid')                       # tau = 0 .. tau_max
+        shifted = np.array([cumulative[t + window] - cumulative[t] for t in range(tau_max + 1)])
+        d = energy_head + shifted - 2 * acf
+        d[0] = 1.
+        cmnd = np.ones_like(d)
+        running = np.cumsum(d[1:])
+        cmnd[1:] = d[1:] * np.arange(1, tau_max + 1) / np.maximum(running, 1e-12)
+        candidates = np.flatnonzero(cmnd[tau_min:tau_max] < threshold)
+        if len(candidates):
+            tau = tau_min + candidates[0]
+            while tau + 1 < tau_max and cmnd[tau + 1] < cmnd[tau]:
+                tau += 1
+        else:
+            tau = tau_min + int(np.argmin(cmnd[tau_min:tau_max]))
+            if cmnd[tau] > .35:
+                continue
+        if 0 < tau < tau_max:
+            a, b, c = cmnd[tau - 1], cmnd[tau], cmnd[tau + 1]
+            denominator = a - 2 * b + c
+            tau = tau + (.5 * (a - c) / denominator if abs(denominator) > 1e-12 else 0.)
+        f0[i] = rate / tau
+    return times, f0
+
+
+def mfcc_frames(wave: np.ndarray, coefficients: int = 13):
+    import audio_comparison as ac
+    from scipy.fft import dct
+    spectrum = ac.log_mel(wave, bands=40)
+    return dct(spectrum, type=2, axis=0, norm='ortho')[:coefficients]
+
+
+def feature_figures(wavs: dict, output_stacked: Path, output_overlay: Path, title: str, duration_s: float,
+                    reference: str = 'original', rate: int = 16000) -> None:
+    """Stacked per-condition panels (mel + F0, MFCC, energy) and an overlay figure (envelope, F0, MFCC distance)."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import soundfile as sf
+    import audio_comparison as ac
+    span = min(4., duration_s + .35)
+    samples = int(span * rate)
+    order = [name for name, _ in FIGURE_ORDER if name in wavs]
+    labels = dict(FIGURE_ORDER)
+    data = {}
+    for name in order:
+        wave = sf.read(wavs[name], dtype='float32')[0][:samples]
+        wave = np.pad(wave, (0, max(0, samples - len(wave))))
+        mel = ac.log_mel(wave, bands=64)
+        env = ac.envelope(wave)
+        times, f0 = yin_f0(wave, rate)
+        data[name] = dict(wave=wave, mel=mel, mfcc=mfcc_frames(wave), env=env, f0_times=times, f0=f0)
+    ref = data.get(reference)
+    speech = int(duration_s * rate)
+    metrics = {}
+    for name in order:
+        if ref is None or name == reference:
+            continue
+        a, b = ref['wave'][:speech], data[name]['wave'][:speech]
+        metrics[name] = dict(stoi=ac.stoi(a, b), env=ac.correlation(ac.envelope(a), ac.envelope(b)))
+    hop_s = 160 / rate
+    # ---- stacked
+    rows = len(order)
+    fig, axes = plt.subplots(rows, 3, figsize=(16, 1.75 * rows + .8), squeeze=False, gridspec_kw=dict(width_ratios=[3, 2, 2]))
+    vmin = min(float(np.percentile(d['mel'], 2)) for d in data.values()); vmax = max(float(np.percentile(d['mel'], 99.5)) for d in data.values())
+    mfcc_scale = max(float(np.abs(d['mfcc'][1:]).max()) for d in data.values()) or 1.
+    for r, name in enumerate(order):
+        d = data[name]; colour = FIGURE_COLOURS.get(name, 'k')
+        ax = axes[r, 0]
+        ax.imshow(d['mel'], origin='lower', aspect='auto', cmap='magma', vmin=vmin, vmax=vmax,
+                  extent=[0, d['mel'].shape[1] * hop_s, 0, 64])
+        twin = ax.twinx()
+        twin.plot(d['f0_times'], d['f0'], '.', color='cyan', markersize=2.5)
+        twin.set_ylim(50, 420); twin.set_ylabel('F0 (Hz)', fontsize=7, color='cyan'); twin.tick_params(labelsize=6, colors='cyan')
+        ax.axvline(duration_s, color='white', linestyle=':', linewidth=.8)
+        text = labels.get(name, name)
+        if name in metrics:
+            text += f"   STOI {metrics[name]['stoi']:.2f}  env r {metrics[name]['env']:.2f}"
+        ax.set_title(text, fontsize=8, loc='left', color=colour)
+        ax.set_ylabel('mel band', fontsize=7); ax.tick_params(labelsize=6); ax.set_xlim(0, span)
+        ax = axes[r, 1]
+        ax.imshow(d['mfcc'][1:], origin='lower', aspect='auto', cmap='coolwarm', vmin=-mfcc_scale, vmax=mfcc_scale,
+                  extent=[0, d['mfcc'].shape[1] * hop_s, 1, d['mfcc'].shape[0]])
+        ax.axvline(duration_s, color='k', linestyle=':', linewidth=.8)
+        ax.set_ylabel('MFCC c1–c12', fontsize=7); ax.tick_params(labelsize=6); ax.set_xlim(0, span)
+        if r == 0:
+            ax.set_title('MFCC (c0 removed)', fontsize=8)
+        ax = axes[r, 2]
+        t_env = np.arange(len(d['env'])) * hop_s
+        if ref is not None and name != reference:
+            ax.plot(np.arange(len(ref['env'])) * hop_s, ref['env'] / (ref['env'].max() + 1e-9), color='black', linewidth=.8, alpha=.5, label='original')
+        ax.plot(t_env, d['env'] / (d['env'].max() + 1e-9), color=colour, linewidth=1.2, label=labels.get(name, name)[:24])
+        ax.axvline(duration_s, color='k', linestyle=':', linewidth=.8)
+        ax.set_ylim(0, 1.05); ax.set_xlim(0, span); ax.tick_params(labelsize=6); ax.set_ylabel('RMS energy', fontsize=7)
+        if r == 0:
+            ax.set_title('energy envelope (normalised; black = original)', fontsize=8)
+        if r == rows - 1:
+            for c in range(3):
+                axes[r, c].set_xlabel('seconds', fontsize=7)
+    fig.suptitle(title, fontsize=10)
+    fig.tight_layout(rect=[0, 0, 1, .98])
+    fig.savefig(output_stacked, dpi=95); plt.close(fig)
+    # ---- overlay
+    fig, axes = plt.subplots(3, 1, figsize=(14, 9), sharex=True)
+    for name in order:
+        d = data[name]; colour = FIGURE_COLOURS.get(name, 'k'); lw = 2.2 if name == reference else 1.2
+        style = '-' if name in (reference, 'correct', 'pooled', 'teacher_oracle') else '--'
+        label = labels.get(name, name)
+        if name in metrics:
+            label += f" (STOI {metrics[name]['stoi']:.2f}, env r {metrics[name]['env']:.2f})"
+        axes[0].plot(np.arange(len(d['env'])) * hop_s, d['env'] / (d['env'].max() + 1e-9), style, color=colour, linewidth=lw, label=label)
+        axes[1].plot(d['f0_times'], d['f0'], '.', color=colour, markersize=3 if name == reference else 2, label=label, alpha=.9 if name == reference else .7)
+        if ref is not None and name != reference:
+            length = min(ref['mfcc'].shape[1], d['mfcc'].shape[1])
+            distance = np.sqrt(((ref['mfcc'][1:, :length] - d['mfcc'][1:, :length]) ** 2).sum(0))
+            kernel = np.ones(5) / 5
+            axes[2].plot(np.arange(length) * hop_s, np.convolve(distance, kernel, mode='same'), style, color=colour, linewidth=lw, label=label)
+    for ax in axes:
+        ax.axvline(duration_s, color='k', linestyle=':', linewidth=.8); ax.tick_params(labelsize=8); ax.set_xlim(0, span)
+    axes[0].set_ylabel('RMS energy (normalised)'); axes[0].set_title('energy envelopes, all conditions overlaid', fontsize=9, loc='left')
+    voiced = np.concatenate([d['f0'][~np.isnan(d['f0'])] for d in data.values()] or [np.array([150., 250.])])
+    low, high = (np.percentile(voiced, 2), np.percentile(voiced, 98)) if len(voiced) else (100., 300.)
+    axes[1].set_ylabel('F0 (Hz)'); axes[1].set_ylim(max(50., low - 30), min(420., high + 30))
+    axes[1].set_title('pitch contours (YIN; unvoiced frames omitted; y-range fitted to the voiced frames)', fontsize=9, loc='left')
+    axes[2].set_ylabel('MFCC distance to original'); axes[2].set_title('per-frame MFCC (c1–c12) Euclidean distance to the presented sentence, 50 ms smoothed', fontsize=9, loc='left')
+    axes[2].set_xlabel('seconds (dotted line = end of the presented sentence)')
+    handles, names_ = axes[0].get_legend_handles_labels()
+    fig.legend(handles, names_, fontsize=7.5, loc='lower center', ncol=3, frameon=False)
+    fig.suptitle(title, fontsize=10)
+    fig.tight_layout(rect=[0, .07, 1, .97])
+    fig.savefig(output_overlay, dpi=100); plt.close(fig)
+
+
+def figures(args, cfg):
+    """Per-trial feature figures for an export folder (``--export-output``) or the curated listening folder (``--listening``)."""
+    made = 0
+    if args.listening:
+        root = Path(args.listening)
+        for folder in sorted(p for p in root.glob('*/*') if p.is_dir()):
+            wavs = {LISTENING_NAMES[p.stem]: p for p in sorted(folder.glob('*.wav')) if p.stem in LISTENING_NAMES}
+            if 'original' not in wavs:
+                continue
+            import soundfile as sf
+            original = sf.read(wavs['original'], dtype='float32')[0]
+            # presented-speech length: last sample above -50 dB of the presented stimulus
+            loud = np.flatnonzero(np.abs(original) > np.abs(original).max() * 10 ** (-50 / 20))
+            duration = (loud[-1] + 1) / 16000 if len(loud) else len(original) / 16000
+            title = folder.name.split('_', 1)[1].replace('_', ' ') + f'   [{folder.parent.name}]'
+            feature_figures(wavs, folder / 'features_stacked.png', folder / 'features_overlay.png', title, duration)
+            made += 1
+            print(json.dumps(dict(figures=str(folder))), flush=True)
+    if args.export_output:
+        export_folder = Path(args.export_output)
+        index = json.loads((export_folder / 'index.json').read_text())['samples']
+        chosen = index if not args.limit else index[:args.limit]
+        for entry in chosen:
+            folder = export_folder / 'waveforms' / entry['folder']
+            wavs = {name: folder / f'{name}.wav' for name, _ in FIGURE_ORDER if (folder / f'{name}.wav').exists()}
+            duration = int(entry['oracle_duration_frames']) * 256 / 16000
+            title = f"{entry.get('reference_transcript', entry['trial_id'])}   [{entry['subject']}, {entry['trial_id']}]"
+            feature_figures(wavs, folder / 'features_stacked.png', folder / 'features_overlay.png', title, duration)
+            made += 1
+            if made % 10 == 0:
+                print(json.dumps(dict(figures=made, total=len(chosen))), flush=True)
+    print(json.dumps(dict(figures_written=made)))
+
+
 # ----------------------------------------------------------------------------- main
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('stage', choices=['cache', 'crossfit', 'train', 'export', 'compare'])
+    parser.add_argument('stage', choices=['cache', 'crossfit', 'train', 'export', 'compare', 'figures'])
     parser.add_argument('--config', default=str(ROOT / 'configs/aligned_speech_local_v1.yaml'))
     parser.add_argument('--encoder', default=str(DEFAULT_ENCODER))
     parser.add_argument('--envelope', default=str(DEFAULT_ENVELOPE), help='"" disables the envelope channel')
@@ -1052,6 +1262,7 @@ def main():
     parser.add_argument('--steps', type=int, default=50); parser.add_argument('--guidance', type=float, default=2.)
     parser.add_argument('--limit', type=int, default=0); parser.add_argument('--skip', nargs='*', default=[])
     parser.add_argument('--afc-trials', type=int, default=120); parser.add_argument('--figure-trials', type=int, default=4)
+    parser.add_argument('--listening', help='figures: curated listening folder (outputs/generative_recovery/listening)')
     args = parser.parse_args()
     torch.set_num_threads(4)
     cfg = legacy.config(args.config)
@@ -1065,6 +1276,10 @@ def main():
         if not args.checkpoint or not args.export_output:
             parser.error('export needs --checkpoint and --export-output')
         export(args, cfg)
+    elif args.stage == 'figures':
+        if not args.export_output and not args.listening:
+            parser.error('figures needs --export-output and/or --listening')
+        figures(args, cfg)
     else:
         if not args.export_output:
             parser.error('compare needs --export-output')

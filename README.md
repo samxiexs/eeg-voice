@@ -1,195 +1,52 @@
-# EEG-Voice Speech Decoding
+# EEG-Voice
 
-This repository is a research codebase for building an EEG-to-voice token foundation model. The current V1 scope is not waveform generation. The first objective is to learn discrete EEG tokens that align with speech and voice attributes, then use those tokens for voice or speaker retrieval.
+Research workspace for decoding speech from scalp EEG. The goal is imagined speech; the current work establishes what perceived-speech EEG supports first, because that is where paired EEG and audio exist at scale.
 
-```text
-EEG -> grouped discrete token
-    -> content / pitch / timbre / speaker / style / mode alignment
-    -> voice / speaker retrieval
+## What is here
+
+```
+eeg2wave_server_bundle/
+  eeg-recon-0809/                        active project: EEG → speech on DS004940, KaraOne baselines
+  eeg-recon-0809_explore_8h_v1_backup/   read-only snapshot of the earlier MFCC / Griffin-Lim pipeline
+  generate_all_waveform_comparisons.py   standalone waveform-comparison helpers from an earlier bundle
+  waveform_compare_utils.py
+paper-ref/                               literature notes, reading lists, BibTeX and manifests (PDFs stay local)
+docs/                                    local working documents: reviews, protocols, design notes, talk notes (not tracked)
+requirements.txt                         server-side Python requirements
 ```
 
-The project is organized around a multi-dataset EEG and speech catalog. Public datasets are treated as selected research data if they are included in the catalog and are publicly obtainable or requestable. Local download status is tracked separately and does not define whether a dataset belongs to the research pool.
+The code lives in `eeg2wave_server_bundle/eeg-recon-0809`; start with its [README](eeg2wave_server_bundle/eeg-recon-0809/README.md). Raw EEG, audio, model weights, caches and generated outputs are kept outside git.
 
-## Current Status
+## Current pipeline
 
-The V1 model skeleton has been implemented. It can run synthetic batches through the tokenizer, grouped RVQ, alignment heads, speaking-mode head, retrieval head, and reconstruction losses.
-
-The real-data training system is not finished yet. Dataset registry, real-data collators, target extraction, samplers, training scripts, and evaluation scripts are the next engineering layer.
-
-| Area | Status |
-| --- | --- |
-| V1 model design | Implemented in documentation |
-| `EEGVoiceTokenV1` code skeleton | Implemented |
-| Hierarchical grouped RVQ | Implemented |
-| q7 weak residual policy | Implemented |
-| Speaking-mode dataset adapter | Implemented |
-| Acquisition device context | Implemented |
-| Memory queue retrieval negatives | Implemented |
-| Synthetic model tests | Passing |
-| Real selected-dataset training | Not connected yet |
-
-## Research Boundary
-
-V1 is designed to answer whether EEG can support a stable speech and voice token interface:
-
-- Can continuous EEG be compressed into discrete tokens with reasonable codebook usage?
-- Do the tokens carry readable content, pitch, prosody, timbre, speaker, style, and mode information?
-- Can EEG-derived voice tokens retrieve matching audio, speaker, or stream embeddings?
-
-V1 deliberately does not claim personalized subjective voice-image reconstruction. That target would require a unified voice bank, same-subject subjective similarity ratings, and controlled F0/formant/style manipulation. The current public data pool is appropriate for token learning, attribute alignment, and retrieval, not for final personalized perceptual voice reconstruction.
-
-## English-First Data Policy
-
-The first experimental chain is English-first. Cross-lingual datasets are kept for transfer and robustness analysis, rather than mixed into the first main conclusion.
-
-| Data layer | Role |
-| --- | --- |
-| English-first core | Main tokenizer, attribute alignment, and retrieval training |
-| English / near-English retrieval expansion | Attention stream and speaker retrieval robustness |
-| Cross-lingual reserved | Later transfer tests for Mandarin, Cantonese, Spanish, Dutch, Danish, and related data |
-| Auditory proxy | Auxiliary auditory pretraining and ablation |
-
-The detailed selected dataset catalog is in [`docs/multi_dataset_voice_eeg_catalog_0518.md`](docs/multi_dataset_voice_eeg_catalog_0518.md).
-
-## Model V1
-
-The V1 model is named `EEGVoiceTokenV1`.
-
-```text
-EEG
--> preprocessing / montage normalization
--> acquisition device context
--> sensor-aware temporal encoder
--> latent token former
--> hierarchical grouped RVQ
--> alignment heads
--> retrieval embedding space
+```
+EEG (128 ch, 256 Hz, 4.6 s window)
+  → recovery-v3 encoder, trained with a time-resolved CLIP loss against HuBERT features and a mel loss through a frozen audio decoder
+  → 18-channel conditioning (encoder head output on the teacher PCA basis, predicted duration, predicted envelope)
+  → conditional diffusion decoder over the 80 × 251 SpeechT5 mel, classifier-free guidance
+  → HiFi-GAN → 16 kHz waveform
 ```
 
-The grouped RVQ uses eight quantizer levels:
+Audio-side models (HuBERT teacher, mel decoder, vocoder) are fine-tuned on the training-fold audio only and provide the reconstruction ceilings. Every result is a paired comparison against zero-EEG, wrong-trial and time-shuffled controls on the same trial and noise seed.
 
-| Quantizer | Group | Role |
-| --- | --- | --- |
-| q0-q1 | `base` | onset, envelope, shared auditory response |
-| q2-q3 | `content` | phoneme, syllable, word, speech unit |
-| q4 | `prosody` | F0, intensity, rhythm, prosody |
-| q5-q6 | `voice` | timbre, speaker, style, stream identity |
-| q7 | `residual` | weak reconstruction residual and dataset nuisance |
+## Datasets
 
-Head routing is fixed:
+| Dataset | Content | Use |
+|---|---|---|
+| OpenNeuro ds004940 | 128-channel EEG, English sentence listening (N400 paradigm); 17 participants, 402 sentences, 6,641 trials in the default configuration | encoder and decoder training, all reported numbers |
+| KaraOne (Zhao & Rudzicz 2015) | imagined and spoken prompts, 11 classes, 14 participants | the target task; baselines and transfer tests |
+| Broderick et al. 2018 | audiobook listening, 19 participants | optional envelope-tracking pre-training |
 
-| Head | Token groups |
-| --- | --- |
-| Content / phoneme | `base + content` |
-| Pitch / prosody | `base + prosody` |
-| Timbre / style / retrieval | `base + voice` |
-| Speaking mode | `base + content + prosody + voice` |
-| Aligned reconstruction | q0-q6 |
-| Full reconstruction | q0-q7 |
+## Status
 
-q7 does not enter alignment, retrieval, or speaking-mode heads. It only participates in low-weight full reconstruction.
+On held-out sentences the diffusion decoder produces samples with the spectral texture of speech, and the real-EEG sample is measurably closer to its own sentence than every control (STOI +0.032 [+0.018, +0.047] and envelope correlation +0.057 [+0.029, +0.083] against wrong-trial EEG; 2AFC 0.59 versus 0.45–0.54 for the controls). Pooling the EEG of all participants who heard a sentence raises the 2AFC to 0.66–0.84, and pooling a different sentence scores at chance. The EEG determines rhythm, duration and envelope; word content is not recovered. On KaraOne, imagined-speech decoding is at chance under block-wise cross-validation and the DS004940 encoder does not transfer.
 
-Device information is handled separately from q7. `acquisition_device_id`, `montage_id`, `reference_id`, `sampling_rate_hz`, and `native_channel_count` are embedded as recording-level acquisition context. This context conditions the sensor representation and latent token former, but it is not used as a retrieval target or an attribute label.
+The full account (data, splits, architectures, tensor shapes, training curves, result tables) is in [`eeg2wave_server_bundle/eeg-recon-0809/reports/updated-results_2026-09-19.md`](eeg2wave_server_bundle/eeg-recon-0809/reports/updated-results_2026-09-19.md).
 
-## Repository Layout
+## Environment
 
-```text
-configs/
-  model_v1.yaml                  # V1 default model and data-layer config
+The project is developed on macOS (Apple Silicon, MPS) in a conda environment `eegvoice` (Python 3.12) with a project venv created by `bash app/run_aligned_local.sh setup` inside `eeg-recon-0809`. `requirements.txt` at this level lists the equivalent packages for a CUDA server; install the CUDA-matched PyTorch build first.
 
-docs/
-  multi_dataset_voice_eeg_catalog_0518.md
-  model_v1_design_0518.md
-  model_v1_development_status_0518.md
-  assets/                        # V1 architecture and routing figures
+## Literature
 
-paper-ref/
-  Reference papers used for model and dataset design
-
-scripts/
-  Dataset probing, sample download, derivative building, and visualization scripts
-
-src/eeg_voice_model/
-  tokenizer.py                   # EEGVoiceTokenizerV1 and grouped RVQ
-  voice_model.py                  # EEGVoiceTokenV1 and batch/target schemas
-  heads.py                        # Alignment, mode, and retrieval heads
-  losses.py                       # Reconstruction, retrieval, and token metrics
-  builders.py                     # Config-to-model construction
-  modules.py                      # Encoder, latent aggregator, decoder blocks
-
-tests/
-  test_model_v1_synthetic.py      # Synthetic V1 forward and builder tests
-```
-
-Local raw data, derived arrays, checkpoints, and downloaded audio or EEG files are ignored by git.
-
-## Quick Start
-
-The repository currently has no package installer or pinned environment file. For the synthetic V1 tests, the minimum practical dependencies are Python, PyTorch, and pytest. The real-data path will additionally need MNE-Python, NumPy, pandas, SciPy, and torchaudio.
-
-Run the current verification:
-
-```bash
-python3 -m py_compile src/eeg_voice_model/*.py
-PYTHONPATH=. python3 -m pytest -q
-git diff --check
-```
-
-Build the V1 model from config:
-
-```python
-from src.eeg_voice_model.builders import build_eeg_voice_token_v1
-
-model = build_eeg_voice_token_v1("configs/model_v1.yaml")
-print(type(model).__name__)
-```
-
-Expected model name:
-
-```text
-EEGVoiceTokenV1
-```
-
-## Main Documents
-
-| Document | Purpose |
-| --- | --- |
-| [`docs/multi_dataset_voice_eeg_catalog_0518.md`](docs/multi_dataset_voice_eeg_catalog_0518.md) | Selected EEG-voice dataset catalog and availability interpretation |
-| [`docs/model_v1_design_0518.md`](docs/model_v1_design_0518.md) | Full V1 model design, data-to-loss mapping, RVQ policy, and future interfaces |
-| [`docs/model_v1_development_status_0518.md`](docs/model_v1_development_status_0518.md) | Current implementation status and next engineering steps |
-| [`docs/voice_image_eeg_self_collection_protocol_0520.md`](docs/voice_image_eeg_self_collection_protocol_0520.md) | Literature-supported self-collection protocol for controlled voice-image EEG and clinical AVH validation |
-| [`docs/voice_bank_design_0521.md`](docs/voice_bank_design_0521.md) | Standalone voice bank design and execution specification for controlled EEG-voice stimuli, AudioTokenBundle extraction, subject manifolds, and AVH prototype matching |
-| [`docs/voice_image_experiment_design_optimized_0521.md`](docs/voice_image_experiment_design_optimized_0521.md) | Second-pass optimized healthy and clinical AVH voice-image EEG experiment design with reproducibility templates, Mermaid workflows, and pilot checklist |
-| [`docs/voice_image_eeg_voice_model_design_0521.md`](docs/voice_image_eeg_voice_model_design_0521.md) | V1-compatible model design for token-wise EEG-to-AudioTokenBundle alignment, subject voice manifolds, and AVH prototype retrieval |
-| [`docs/voice_image_protocol_consistency_review_0520.md`](docs/voice_image_protocol_consistency_review_0520.md) | Internal consistency, BIDS, statistics, and execution risk review for the self-collection protocol |
-| [`docs/voice_image_pilot_feasibility_review_0520.md`](docs/voice_image_pilot_feasibility_review_0520.md) | Three-month healthy pilot go/no-go assessment under constrained staff and recording resources |
-| [`docs/talk_eeg_audio_dataset_0521.md`](docs/talk_eeg_audio_dataset_0521.md) | Markdown speaker script for the EEG-Audio Dataset presentation |
-| [`docs/talk_audio_decoder_methods_paper_0521.md`](docs/talk_audio_decoder_methods_paper_0521.md) | Markdown speaker script for the Audio Decoder Methods/Paper presentation |
-
-## Current Engineering Gaps
-
-The next phase should turn the model skeleton into a real selected-dataset training system:
-
-1. Build a `DatasetRegistry` for the English-first core datasets.
-2. Implement a real `EEGVoiceBatch` collator for local sample folders and derived EEG/audio files, including device, montage, reference, sampling-rate, and channel-count metadata.
-3. Extract content, phoneme, F0, prosody, style, speaker, and audio embeddings into a unified target schema.
-4. Add English-first mixed batching and retrieval hard-negative sampling.
-5. Add smoke training on one or two real examples.
-6. Add evaluation scripts for Recall@K, phoneme accuracy, pitch correlation, token usage, q7 ablation, and q7 dataset predictability.
-7. Add seen-device and held-out-device splits to test whether device context improves cross-device transfer instead of creating a shortcut.
-
-## Data Handling
-
-Large EEG, audio, archive, model, and derivative files should stay outside git. The repository keeps catalog and metadata reports in text form, while raw data and local samples are expected under ignored directories such as:
-
-```text
-data/
-datasets/
-downloads/
-openneuro/
-zenodo/
-derived/
-checkpoints/
-```
-
-For selected datasets, the catalog is the source of truth for research inclusion. Local folders only indicate download or conversion progress.
+`paper-ref/` collects the reading behind the design: EEG-to-speech decoding (CCF-A venues), audio decoders and vocoders, factorised speech representations, visual decoding from EEG embeddings, and the dataset papers. Each folder has a README or manifest; `deep-research-report.md` and `eeg_speech_factorized_decoding_literature_review_20260726.md` are the two summaries.
