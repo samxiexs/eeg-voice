@@ -28,8 +28,8 @@ continuous recording in ``sourcedata/``):
 Harmonisation matches the DS004940 and Di Liberto shards: electrodes further
 than ``--max-offcap-deg`` from every DS004940 BioSemi-128 electrode (the
 face, neck and eye ring of the EGI net: 20 of 129 at 15 deg) are dropped,
-bad electrodes are interpolated with spherical splines, then average
-reference, 0.5-45 Hz band-pass, 256 Hz, volts.
+a 50 Hz notch, bad electrodes (judged in 1-45 Hz) interpolated with
+spherical splines, then average reference, 0.5-45 Hz band-pass, 256 Hz, volts.
 
 Splits (fixed by hashes): 1 test song, 1 validation song, 10 training songs;
 ``--heldout`` participants removed entirely (the unseen-participant cohort).
@@ -62,6 +62,7 @@ AUDIO_RATE = 24000
 REFERENCE = 'E129'                      # recording reference (Cz), identically zero
 PARTICIPANTS = tuple(range(1, 21))      # the dataset's 20 participants (README); the split never depends on what is on disk
 SPHERE_RADIUS = .095
+LINE_HZ = 50.                           # eeg.json PowerLineFrequency (recorded in India)
 
 
 def montage_positions(names):
@@ -87,6 +88,9 @@ def harmonise(raw, keep, xyz):
     raw = raw.copy().pick(keep)
     raw.set_annotations(None)                                  # the shipped annotations are misaligned
     raw.set_montage(mne.channels.make_dig_montage(dict(zip(keep, xyz)), coord_frame='head'), verbose='ERROR')
+    # Mains first: MNE's 45 Hz low-pass has an 11 Hz transition band and leaves 50 Hz only ~6 dB down,
+    # and several EGI channels carry 50 Hz at 10^3-10^5 x their in-band power.
+    raw.notch_filter(LINE_HZ, verbose='ERROR')
     data = raw.get_data()
     reference = [keep.index(REFERENCE)] if REFERENCE in keep else []
     bads = [keep[i] for i in bad_channels(data, raw.info['sfreq'], exclude=reference)]

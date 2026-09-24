@@ -70,9 +70,11 @@ def harmonise(trial, fs, names, xyz):
     data = trial.T.astype(np.float64)                         # channels x samples
     if np.median(np.abs(data - np.median(data, 1, keepdims=True))) > 1e-3:
         data = data * 1e-6                                    # CND data stored in microvolts
-    bads = bad_channels(data, fs)
     info = mne.create_info(list(names), fs, 'eeg')
     raw = mne.io.RawArray(data, info, verbose='ERROR')
+    raw.notch_filter(50., verbose='ERROR')                  # recorded in Paris; see scripts/prepare_musin_g.py
+    data = raw.get_data()
+    bads = bad_channels(data, fs)
     raw.set_montage(mne.channels.make_dig_montage(dict(zip(names, xyz)), coord_frame='head'), verbose='ERROR')
     raw.info['bads'] = [names[i] for i in bads]
     if len(bads):

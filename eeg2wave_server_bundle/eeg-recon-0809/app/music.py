@@ -199,10 +199,16 @@ def group_identical(vectors, *, tolerance=1e-9):
 
 # --- shared EEG preparation helpers ------------------------------------------------------
 
-def bad_channels(data, fs, *, threshold=3.5, exclude=()):
-    """Flat channels and channels whose high-passed log-SD is a robust outlier (``exclude``: never flagged, e.g. the reference)."""
+def bad_channels(data, fs, *, threshold=3.5, exclude=(), band=(1., 45.)):
+    """Flat channels and channels whose log-SD in ``band`` is a robust outlier (``exclude``: never flagged, e.g. the reference).
+
+    Judged in the band the shards keep: a channel whose only defect is mains
+    noise above it is removed by the filter, not by interpolation (on MUSIN-G a
+    1 Hz high-pass criterion flagged such channels, 50 Hz power up to 10^5 x the
+    5-45 Hz power, and excluded 70 of 240 trials).
+    """
     from scipy.signal import butter, sosfiltfilt
-    filtered = sosfiltfilt(butter(4, 1., 'highpass', fs=fs, output='sos'), data, axis=1)
+    filtered = sosfiltfilt(butter(4, band, 'bandpass', fs=fs, output='sos'), data, axis=1)
     sd = filtered.std(1)
     log_sd = np.log(np.maximum(sd, 1e-20))
     candidate = np.ones(len(sd), bool); candidate[list(exclude)] = False
