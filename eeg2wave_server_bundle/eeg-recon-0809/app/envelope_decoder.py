@@ -181,7 +181,7 @@ def partial_correlation(prediction, target, prior, mask) -> torch.Tensor:
 def evaluate(model, dataset, targets, prior, subjects, device, batch_size: int, candidates=None, window=None) -> dict:
     """Correlation metrics, plus single-trial retrieval among the role's sentences.
 
-    Retrieval is scored exactly as `app/group_content.py` scores it -- partial
+    Retrieval is scored exactly as the pooled content route scores it -- partial
     correlation against every candidate over a fixed 1.5 s window, no oracle
     duration -- so a checkpoint can be selected for the decision the programme
     actually cares about rather than for correlation alone.

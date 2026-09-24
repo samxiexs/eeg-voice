@@ -20,8 +20,8 @@ case "${1:-all}" in
     bash "$0" "_$1" 2>&1 | grep -v -i "warning" | tee -a "logs/karaone_$1.log"
     ;;
   _prepare)   "$PYTHON_BIN" scripts/prepare_karaone.py ;;
-  _baselines) "$PYTHON_BIN" app/karaone_baselines.py --permutations "$PERMUTATIONS" ;;
-  _transfer)  "$PYTHON_BIN" app/karaone_transfer.py --permutations "$PERMUTATIONS" --checkpoint "$CHECKPOINT" ;;
+  _baselines) "$PYTHON_BIN" app/karaone.py baselines --permutations "$PERMUTATIONS" ;;
+  _transfer)  "$PYTHON_BIN" app/karaone.py transfer --permutations "$PERMUTATIONS" --checkpoint "$CHECKPOINT" ;;
   _all)       bash "$0" _prepare; bash "$0" _baselines; bash "$0" _transfer ;;
   *) echo 'usage: bash app/run_karaone.sh prepare|baselines|transfer|all' >&2; exit 2 ;;
 esac

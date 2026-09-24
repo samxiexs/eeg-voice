@@ -27,21 +27,36 @@ Objective measures (all implemented here, no extra packages):
 
 Nothing here can replace a human listening test; `--listening-test` writes a
 randomised forced-choice bundle (audio + answer key + scoring script) for one.
+
+With ``--figure`` the same module instead draws the spectrogram and envelope
+panels of the exported reconstructions (report figure 10):
+
+One row per condition (original, pipeline oracle, real EEG, zero-EEG,
+wrong-trial), one column per example sentence, plus an envelope panel that
+overlays real EEG and zero-EEG on the original.  Intended as the visual
+companion to app/audio_comparison.py.
 """
 from __future__ import annotations
-
 import argparse
 import json
-from pathlib import Path
 import sys
-
+from pathlib import Path
 import numpy as np
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'app'))
 import soundfile as sf
 from scipy.fft import dct
 from scipy.signal import get_window, resample_poly, stft
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
-ROOT = Path(__file__).resolve().parents[1]
+
+# --- 1. Waveform metrics, 2AFC and listening bundles (default entry point) -----
+
 CONDITIONS = ('correct', 'zero', 'wrong_trial', 'time_block_shuffle', 'channel_shuffle', 'native_mel_oracle', 'teacher_oracle')
+
+
 RATE = 16000
 
 
@@ -49,13 +64,14 @@ try:                                   # reference implementations when installe
     from pystoi import stoi as _reference_stoi
 except Exception:
     _reference_stoi = None
+
+
 try:
     from pesq import pesq as _reference_pesq
 except Exception:
     _reference_pesq = None
 
 
-# ----------------------------------------------------------------------------- STOI
 def third_octave_matrix(fft_size: int, rate: int, bands: int = 15, first_centre: float = 150.):
     """15 one-third-octave bands from 150 Hz (Taal et al. 2011, Table 1)."""
     freqs = np.linspace(0, rate / 2, fft_size // 2 + 1)
@@ -119,7 +135,6 @@ def stoi(reference: np.ndarray, degraded: np.ndarray, rate: int = RATE, beta_db:
     return float(np.mean(values))
 
 
-# ----------------------------------------------------------------------------- other measures
 def log_mel(x: np.ndarray, rate: int = RATE, n_fft: int = 512, hop: int = 160, bands: int = 40):
     _, _, spectrum = stft(x, fs=rate, window='hann', nperseg=n_fft, noverlap=n_fft - hop, nfft=n_fft, boundary=None, padded=False)
     power = np.abs(spectrum) ** 2
@@ -176,7 +191,6 @@ def speech_length(index_entry, rate: int = RATE) -> int:
     return int(index_entry['oracle_duration_frames']) * 256
 
 
-# ----------------------------------------------------------------------------- per-trial scoring
 def score_trial(folder: Path, samples: int, conditions) -> dict:
     original = sf.read(folder / 'original.wav', dtype='float32')[0][:samples]
     reference_envelope = envelope(original)
@@ -335,7 +349,7 @@ def score_listening(folder: Path) -> dict:
                 by_item={item: dict(answer=scored[item], correct=answers[item], right=scored[item] == answers[item]) for item in sorted(scored)})
 
 
-def main():
+def metrics_main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--export', default=str(ROOT / 'outputs/aligned_recovery_v3/eval_validation_positional'))
     parser.add_argument('--manifest', default=str(ROOT / 'artifacts/aligned_speech_local_v1/manifest.csv'),
@@ -346,7 +360,7 @@ def main():
     parser.add_argument('--listening-test', type=int, default=0, help='write a human 2AFC bundle with this many items')
     parser.add_argument('--score-listening', help='score responses.json in this bundle folder')
     parser.add_argument('--seed', type=int, default=31)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.score_listening:
         folder = Path(args.score_listening)
         if not (folder / 'answer_key.json').exists():
@@ -411,6 +425,62 @@ def main():
     if args.listening_test:
         bundle = output / 'listening_test'
         print(f"\nwrote {listening_bundle(folders, index, contents, bundle, args.listening_test, rng)} listening items to {bundle}")
+
+
+# --- 2. Spectrogram / envelope figure (python app/audio_comparison.py --figure) ----
+
+
+
+ROWS = [('original', 'presented sentence'), ('teacher_oracle', 'pipeline oracle (audio → decoder → vocoder)'),
+        ('correct', 'real EEG'), ('zero', 'zero-EEG control'), ('wrong_trial', 'wrong-trial EEG')]
+
+
+def figure_main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--export', default=str(ROOT / 'outputs/aligned_recovery_v3/eval_validation_positional'))
+    parser.add_argument('--output', default=str(ROOT / 'outputs/aligned_recovery_v3/audio_comparison'))
+    parser.add_argument('--examples', type=int, default=4)
+    parser.add_argument('--seed', type=int, default=7)
+    args = parser.parse_args(argv)
+    export = Path(args.export); index = json.loads((export / 'index.json').read_text())['samples']
+    rng = np.random.default_rng(args.seed)
+    chosen = [index[i] for i in sorted(rng.choice(len(index), size=args.examples, replace=False))]
+    figure, axes = plt.subplots(len(ROWS) + 1, len(chosen), figsize=(4.1 * len(chosen), 1.7 * (len(ROWS) + 1)), constrained_layout=True)
+    for column, entry in enumerate(chosen):
+        folder = export / 'waveforms' / entry['folder']; samples = speech_length(entry)
+        seconds = samples / RATE
+        waves = {name: sf.read(folder / f'{name}.wav', dtype='float32')[0][:samples] for name, _ in ROWS}
+        for row, (name, label) in enumerate(ROWS):
+            spectrogram = log_mel(waves[name])
+            axes[row, column].imshow(spectrogram, origin='lower', aspect='auto', cmap='magma',
+                                     extent=[0, seconds, 0, spectrogram.shape[0]], vmin=-12, vmax=4)
+            axes[row, column].set_xticks([])
+            if column == 0:
+                axes[row, column].set_ylabel(label, fontsize=7)
+            axes[row, column].set_yticks([])
+            if row == 0:
+                text = entry.get('reference_transcript', '')
+                axes[row, column].set_title((text[:38] + '…') if len(text) > 38 else text, fontsize=8)
+        panel = axes[len(ROWS), column]
+        time = np.arange(len(envelope(waves['original']))) / 100.
+        for name, style in (('original', dict(color='black', lw=1.4)), ('correct', dict(color='tab:red', lw=1.1)), ('zero', dict(color='tab:blue', lw=.9, ls='--'))):
+            values = envelope(waves[name]); values = values / (values.max() + 1e-9)
+            panel.plot(time[:len(values)], values[:len(time)], label=name if column == 0 else None, **style)
+        panel.set_xlabel('seconds', fontsize=7); panel.tick_params(labelsize=6); panel.set_ylim(0, 1.05)
+        if column == 0:
+            panel.set_ylabel('envelope', fontsize=7); panel.legend(fontsize=6, loc='upper right')
+    figure.suptitle('DS004940 validation sentences: mel spectrograms and envelopes by condition', fontsize=10)
+    output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
+    for extension in ('png', 'pdf'):
+        figure.savefig(output / f'audio_comparison.{extension}', dpi=200)
+    print(json.dumps(dict(figure=str(output / 'audio_comparison.png'), examples=[e['trial_id'] for e in chosen])))
+
+
+def main():
+    if '--figure' in sys.argv:
+        figure_main([a for a in sys.argv[1:] if a != '--figure'])
+    else:
+        metrics_main(sys.argv[1:])
 
 
 if __name__ == '__main__':

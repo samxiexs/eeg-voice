@@ -21,12 +21,15 @@ import signal
 import time
 
 os.environ.setdefault('ALIGNED_TARGET_CACHE_NAME', 'targets_adapted.h5')
+import h5py
 import numpy as np
 import torch
 
 import aligned_speech as legacy
-from aligned_recovery_model import (RecoveryEEGModel, augment_eeg, average_eeg, diverse_batches, duration_fraction,
-                                    recovery_loss, same_content_partners, speech_frame_masks)
+from eeg2speech.aligned_data import check_shard, local_path
+from aligned_recovery_model import (RecoveryEEGModel, augment_eeg, average_eeg_many, background_partners, diverse_batches,
+                                    duration_fraction, mix_background, mix_probability, recovery_loss,
+                                    same_content_partners, same_content_pool, speech_frame_masks)
 from aligned_recovery_eval import evaluate_recovery, passes_validation_controls, train_templates
 
 ROOT = legacy.ROOT
@@ -37,6 +40,40 @@ def runtime_hash():
     files = [Path(__file__), Path(__file__).with_name('aligned_recovery_model.py'),
              Path(__file__).with_name('aligned_recovery_eval.py')]
     return hashlib.sha256(json.dumps([legacy.runtime_hash(), *[legacy.sha256(p) for p in files]]).encode()).hexdigest()
+
+
+class EEGBank:
+    """Normalised EEG of every trial of a dataset, held in memory (float16) for augmentation partners.
+
+    The shards are gzip-chunked across trials, so a random single-trial read
+    decompresses 26 trials (about 30 ms); the same-sentence partners and the
+    background trials of one batch would cost more than the update itself.
+    Each shard is therefore read once and kept as float16 (1.6 GB for the
+    5,290 training trials; relative rounding 5e-4, far below the sigma 0.1
+    noise augmentation).  The anchor trial of every sample is still read by
+    the dataset at full precision, so the unaugmented path is unchanged.
+    """
+    def __init__(self, dataset):
+        frame = dataset.frame
+        center = np.asarray(dataset.normalizer['center'], dtype='float32')[:, None]
+        scale = np.asarray(dataset.normalizer['scale'], dtype='float32')[:, None]
+        self.eeg = torch.empty(len(frame), *dataset[0]['eeg'].shape, dtype=torch.float16)
+        self.mask = torch.empty(len(frame), dataset[0]['eeg'].shape[0], dtype=torch.bool)
+        for name, rows in frame.groupby('shard_path'):
+            with h5py.File(local_path(dataset.root, name), 'r') as h5:
+                # Same provenance checks as the dataset, for every trial of the shard.
+                index = np.array([check_shard(h5, rows.iloc[k]) for k in range(len(rows))])
+                if str(h5.attrs['channel_order_hash']) != dataset.normalizer['channel_order_hash']:
+                    raise ValueError('normalizer channel mismatch')
+                eeg = h5['eeg'][:]; valid = h5['channel_valid_mask'][:].astype(bool)
+            eeg = (eeg[index].astype('float32') - center) / scale * valid[index][:, :, None]
+            if not np.isfinite(eeg).all():
+                raise ValueError(f'nonfinite EEG in {name}')
+            self.eeg[rows.index] = torch.from_numpy(eeg).to(torch.float16)
+            self.mask[rows.index] = torch.from_numpy(valid[index])
+
+    def __getitem__(self, index):
+        return self.eeg[index].float(), self.mask[index]
 
 
 def subset(dataset, indices):
@@ -130,6 +167,10 @@ def train(args, cfg):
                      spec=spec, subjects=sorted(subjects), decoder=legacy.sha256(Path(args.decoder)),
                      eval_every=args.eval_every, weights=weights, augment=bool(args.augment),
                      mix_same_content=float(args.mix_same_content),
+                     augmentation=dict(shift_max=int(args.shift_max), channel_gain=float(args.channel_gain),
+                                       background_mix=float(args.background_mix), background_alpha=[float(a) for a in args.background_alpha],
+                                       mix_partners=int(args.mix_partners), mix_start=None if args.mix_start is None else float(args.mix_start),
+                                       mix_anneal_epochs=int(args.mix_anneal_epochs)),
                      mel_warmup=args.mel_warmup, initialize=legacy.sha256(Path(args.initialize)) if args.initialize else None,
                      trunk=legacy.sha256(Path(args.initialize_trunk)) if args.initialize_trunk else None)
     if args.mode == 'full':
@@ -184,6 +225,8 @@ def train(args, cfg):
             print('recovery training already complete'); return
         print(f'resuming recovery update {step}', flush=True)
     fetch = lru_cache(maxsize=256)(data.__getitem__)
+    needs_bank = args.background_mix > 0 or max(args.mix_same_content, args.mix_start or 0.) > 0
+    bank = EEGBank(data) if needs_bank else None
     templates = train_templates(full_train)
     mel_frames = len(model.decoder.mel_times)
     stopping = [False]
@@ -201,20 +244,42 @@ def train(args, cfg):
             python_rng=random.getstate(), mps_rng=torch.mps.get_rng_state() if target.type == 'mps' else None,
             cuda_rng=torch.cuda.get_rng_state_all() if target.type == 'cuda' else None))
     start = time.monotonic(); collected = []
+    print(json.dumps(dict(augmentation=signature['augmentation'], augment=bool(args.augment), throttle=args.throttle)), flush=True)
     try:
         while step < args.updates:
             batches = diverse_batches(data.frame, args.batch_size, args.seed + epoch)
-            partners = same_content_partners(data.frame, args.mix_same_content, np.random.default_rng(args.seed * 7919 + epoch))
+            # Same-sentence averaging plan for this epoch; the probability may follow an SNR curriculum.
+            probability = mix_probability(epoch, args.mix_same_content, args.mix_start, args.mix_anneal_epochs)
+            plan_rng = np.random.default_rng(args.seed * 7919 + epoch)
+            partners = (same_content_pool(data.frame, probability, plan_rng, args.mix_partners) if args.mix_partners > 1
+                        else {i: [j] for i, j in same_content_partners(data.frame, probability, plan_rng).items()})
+            background = background_partners(data.frame, args.background_mix, np.random.default_rng(args.seed * 104729 + epoch))
             while next_batch < len(batches) and step < args.updates:
+                tick = time.monotonic()
                 ids = batches[next_batch]
                 batch = legacy.move(torch.utils.data.default_collate([fetch(i) for i in ids]), target)
                 if any(i in partners for i in ids):
                     # Same-sentence trial averaging: the mixed EEG keeps the
                     # anchor trial's subject index and every other field.
-                    mixed = legacy.move(torch.utils.data.default_collate([fetch(partners.get(i, i)) for i in ids]), target)
+                    # Missing partner slots are the anchor itself with a False mask.
+                    slots = max(len(partners.get(i, [])) for i in ids)
+                    rows = [(partners.get(i, []) + [i] * slots)[:slots] for i in ids]
+                    mixed = torch.stack([torch.stack([bank[j][0] for j in row]) for row in rows]).to(target)
+                    mixed_mask = torch.stack([torch.stack([bank[j][1] for j in row]) for row in rows]).to(target)
+                    mixed_mask = mixed_mask & torch.tensor([[k < len(partners.get(i, [])) for k in range(slots)] for i in ids],
+                                                           device=target)[:, :, None]
                     chosen = torch.tensor([i in partners for i in ids], device=target)[:, None, None]
-                    eeg = average_eeg(batch['eeg'], mixed['eeg'], batch['channel_mask'], mixed['channel_mask'])
+                    eeg = average_eeg_many(batch['eeg'], mixed, batch['channel_mask'], mixed_mask)
                     batch = dict(batch, eeg=torch.where(chosen, eeg, batch['eeg']))
+                if any(i in background for i in ids):
+                    # Real background: a fraction of the participant's own EEG from another sentence.
+                    noise = [bank[background.get(i, i)] for i in ids]
+                    noise_eeg = torch.stack([n[0] for n in noise]).to(target)
+                    noise_mask = torch.stack([n[1] for n in noise]).to(target)
+                    low, high = args.background_alpha
+                    alpha = (low + torch.rand(len(ids), device=target) * (high - low)) * torch.tensor(
+                        [i in background for i in ids], device=target)
+                    batch = dict(batch, eeg=mix_background(batch['eeg'], noise_eeg, batch['channel_mask'], noise_mask, alpha))
                 subject = (torch.tensor([subjects[s] for s in batch['subject']], device=target)
                            if subject_index is not None else None)
                 mel_mask, speech_mask = speech_frame_masks(batch['oracle_duration_frames'], model.decoder.mel_times,
@@ -223,7 +288,8 @@ def train(args, cfg):
                 for group in optimizer.param_groups:
                     group['lr'] = learning_rate(step, args.lr, args.updates, args.warmup)
                 if args.augment:
-                    batch = dict(batch, eeg=augment_eeg(batch['eeg'], batch['channel_mask']))
+                    batch = dict(batch, eeg=augment_eeg(batch['eeg'], batch['channel_mask'],
+                                                        shift_max=args.shift_max, channel_gain=args.channel_gain))
                 state = forward(model, batch, subject)
                 indices = torch.tensor([contents[c] for c in batch['content']], device=target)
                 loss, parts = recovery_loss(state, batch['teacher'], batch['mel'], model.decoder.normalizer,
@@ -235,6 +301,9 @@ def train(args, cfg):
                 parts['grad_norm'] = float(torch.nn.utils.clip_grad_norm_(model.parameters(), 5., error_if_nonfinite=True))
                 parts['lr'] = optimizer.param_groups[0]['lr']
                 optimizer.step(); step += 1; next_batch += 1; collected.append(parts)
+                if args.throttle > 0:
+                    # Thermal duty cycle: idle for a fraction of every update's wall time.
+                    time.sleep(args.throttle * (time.monotonic() - tick))
                 if step % 10 == 0:
                     print(json.dumps(dict(update=step, epoch=epoch + 1, seconds=round(time.monotonic() - start, 2),
                                           **{k: float(np.mean([v[k] for v in collected])) for k in parts})), flush=True)
@@ -242,6 +311,7 @@ def train(args, cfg):
                 if stopping[0]:
                     save(progress); return
                 if step % args.eval_every == 0 or step == args.updates:
+                    tick = time.monotonic()
                     training = metrics(model, probe, full_train, target, args.batch_size, subject_index, templates)
                     report = training if args.mode == 'm0' else metrics(model, validation, full_train, target, args.batch_size, subject_index, templates)
                     row = dict(update=step, train_probe=training, validation=report,
@@ -268,6 +338,8 @@ def train(args, cfg):
                          stop_reason='collapse' if collapsed else ('budget' if step >= args.updates else None))
                     if collapsed:
                         raise RuntimeError('recovery still collapsed at three evaluations; inspect metrics before another run')
+                    if args.throttle > 0:
+                        time.sleep(args.throttle * (time.monotonic() - tick))
                 elif step % 10 == 0:
                     save(progress)
             if next_batch == len(batches):
@@ -308,12 +380,30 @@ def main():
     parser.add_argument('--no-positional', dest='positional', action='store_false')
     parser.add_argument('--mix-same-content', type=float, default=0.,
                         help='probability of averaging a training trial with another trial of the same sentence')
+    parser.add_argument('--mix-partners', type=int, default=1,
+                        help='at most this many same-sentence presentations are averaged into the partner half')
+    parser.add_argument('--mix-start', type=float, default=None,
+                        help='SNR curriculum: initial mixing probability, decaying linearly to --mix-same-content')
+    parser.add_argument('--mix-anneal-epochs', type=int, default=0, help='epochs over which --mix-start decays')
+    parser.add_argument('--background-mix', type=float, default=0.,
+                        help='probability of adding a fraction of the same participant\'s EEG from another sentence')
+    parser.add_argument('--background-alpha', type=float, nargs=2, default=(.2, .8), metavar=('LOW', 'HIGH'),
+                        help='uniform range of the background fraction')
+    parser.add_argument('--shift-max', type=int, default=0, help='response-latency jitter in samples (256 Hz), zero filled')
+    parser.add_argument('--channel-gain', type=float, default=0., help='per-channel gain jitter, 1 +/- this')
+    parser.add_argument('--throttle', type=float, default=0.,
+                        help='sleep this fraction of every update\'s wall time (thermal duty cycle; slower, cooler)')
     parser.add_argument('--device', default='auto')
     args = parser.parse_args()
     if (args.batch_size < 2 or min(args.updates, args.eval_every, args.width, args.mel_warmup) < 1
             or not math.isfinite(args.lr) or args.lr <= 0 or args.temperature <= 0
-            or not 0 <= args.mix_same_content <= 1):
-        parser.error('require batch >= 2, positive sizes/updates, finite positive lr/temperature, mix probability in [0, 1]')
+            or not 0 <= args.mix_same_content <= 1 or not 0 <= args.background_mix <= 1
+            or (args.mix_start is not None and not 0 <= args.mix_start <= 1)
+            or args.mix_partners < 1 or args.mix_anneal_epochs < 0 or args.shift_max < 0
+            or not 0 <= args.channel_gain < 1 or args.throttle < 0
+            or not 0 <= args.background_alpha[0] <= args.background_alpha[1]):
+        parser.error('require batch >= 2, positive sizes/updates, finite positive lr/temperature, probabilities in [0, 1], '
+                     'mix partners >= 1, non-negative shift/anneal/throttle, channel gain in [0, 1), ordered background alpha')
     torch.set_num_threads(4)
     train(args, legacy.config(args.config))
 

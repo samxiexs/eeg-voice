@@ -26,12 +26,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'app')); sys.path.insert(0, str(ROOT / 'app/src'))
 _cache_name = os.environ.get('ALIGNED_TARGET_CACHE_NAME')
 import audio_comparison as audio
-import congruency_probe as congruency
+import content_analysis as congruency
 import aligned_recovery_eval as evaluation
-import unit_ctc
 import envelope_decoder
-import group_content
-# congruency_probe and unit_ctc default the cache name at import time; restore
+import content_analysis as group_content
+# congruency_probe defaults the cache name at import time; restore
 # the caller's environment so other test modules still see the default
 # targets.h5 (importing them later, inside a test, leaks it again).
 if _cache_name is None:
@@ -104,7 +103,7 @@ class PermutationNull(unittest.TestCase):
         both schemes give a chance-level *test* null when train and test
         sentences are disjoint; the difference is in what the null can fit.)
         """
-        from karaone_baselines import ShrinkageLDA, Standardizer
+        from karaone import ShrinkageLDA, Standardizer
         rng = np.random.default_rng(1)
         sentences = [f'c{i}' for i in range(12)]
         codes = {c: rng.standard_normal(8) for c in sentences}
@@ -118,42 +117,6 @@ class PermutationNull(unittest.TestCase):
         trial = np.mean([fit_accuracy(rng.permutation([r['label'] for r in rows])) for _ in range(10)])
         self.assertGreater(sentence, .85)
         self.assertLess(trial, .75)
-
-
-class PriorOnlyDecoding(unittest.TestCase):
-    """The unit-CTC head must be judged by how much the EEG helps, not by its error rate.
-
-    In the 2026-09-16 run the head reached a steadily falling unit error rate
-    while the *same model fed zero EEG* did equally well or better: it had
-    learned the corpus' typical unit sequence.  Selecting on the error rate
-    would have saved that checkpoint and called it progress.
-    """
-    def test_prior_only_gap_is_the_selection_signal(self):
-        prior_only = dict(correct=dict(unit_error_rate=.72), zero=dict(unit_error_rate=.70))
-        informative = dict(correct=dict(unit_error_rate=.80), zero=dict(unit_error_rate=.95))
-        self.assertLess(unit_ctc.prior_only_gap(prior_only), 0)
-        self.assertGreater(unit_ctc.prior_only_gap(informative), 0)
-        # the lower error rate belongs to the run that uses no EEG at all
-        self.assertLess(prior_only['correct']['unit_error_rate'], informative['correct']['unit_error_rate'])
-
-    def test_greedy_decode_collapses_repeats_and_drops_blanks(self):
-        import torch
-        logits = torch.full((6, 4), -10.)
-        for step, unit in enumerate([0, 2, 2, 0, 3, 3]):
-            logits[step, unit] = 0.
-        self.assertEqual(unit_ctc.greedy_decode(logits), [2, 3])
-
-    def test_candidate_scoring_prefers_the_sequence_the_posterior_spells(self):
-        import torch
-        units, frames = 5, 40
-        target = np.array([1, 2, 3, 4], dtype=np.int64)
-        other = np.array([4, 3, 2, 1], dtype=np.int64)
-        posterior = torch.full((frames, units + 1), -20.)
-        posterior[:, 0] = -.01
-        for position, unit in zip(np.linspace(2, frames - 3, len(target)).astype(int), target):
-            posterior[position] = -20.; posterior[position, unit] = 0.
-        scores = unit_ctc.sequence_scores(posterior.log_softmax(-1), [target, other])
-        self.assertGreater(scores[0], scores[1])
 
 
 class ResidualMetrics(unittest.TestCase):

@@ -64,9 +64,32 @@ SUBJECTS="MM05 P02" bash scripts/download_karaone.sh  # a subset
 bash scripts/download_karaone.sh verify
 ```
 
+The raw `.cnt` recordings were deleted on 2026-09-23; `artifacts/karaone/` (2.0 GB) keeps everything the analyses need — the **continuous** 256 Hz signal of all 14 participants (average reference, 0.5-45 Hz, 60 Hz notch), electrode positions, the auxiliary M1/M2/VEO/HEO/EKG/EMG channels used as artifact controls, all four stage boundaries of the 1,913 trials, the BioSemi-128 interpolation map and the normalizer statistics. Because the signal is stored continuously rather than as cut epochs, windows and stages can be re-chosen freely. Only a change to the preprocessing itself (a wider band than 45 Hz, or a rate above 256 Hz) needs the 27 GB re-downloaded with the script above.
+
 ### Broderick 2018 (optional)
 
 Audiobook-listening EEG from 19 participants, used only to pre-train the envelope-tracking trunk (`scripts/prepare_broderick.py`, `app/broderick_pretrain.py`). Pre-training shortens convergence but does not improve the final metrics, so the main pipeline does not depend on it.
+
+### Di Liberto 2020 music EEG (for the subject-free speech + music route)
+
+"Cortical encoding of melodic expectations in human temporal cortex" (eLife 2020), CC0: 20 participants (1-10 non-musicians, 11-20 pianists), 64-channel BioSemi at 512 Hz, 10 monophonic Bach pieces (~150 s) each heard 3 times, in CND format. The DOI is [10.5061/dryad.g1jwstqmh](https://doi.org/10.5061/dryad.g1jwstqmh); Dryad's API now needs a login token, so the script uses the identical [Zenodo record 5083410](https://zenodo.org/records/5083410) with md5 checks. The audio that was played is not included, only the MIDI files; `scripts/render_music_audio.py` re-renders them and aligns each rendering to the envelope vector shipped with the data.
+
+```bash
+bash scripts/download_music.sh data        # 5.98 GB zip + MIDI + README -> data/diliberto2020/ (needs ~14 GB free while extracting)
+bash scripts/download_music.sh models      # MERT-v1-95M, EnCodec 24 kHz, BigVGAN-v2 24 kHz 100-band -> models/
+bash scripts/download_music.sh soundfont   # MuseScore_General.sf2 (216 MB); FluidSynth itself: brew install fluid-synth
+```
+
+### MUSIN-G music EEG (second music set)
+
+OpenNeuro [ds003774](https://openneuro.org/datasets/ds003774/versions/1.0.2), CC0: 20 participants, 128-channel EGI HydroCel at 250 Hz, 12 songs of different genres (~2 min each). Unlike Di Liberto, the presented audio ships with the data (`Code/ESongs`), but at **8 kHz** (nothing above 4 kHz). Stored in `data/ds003774/` (per-song BIDS files only, 10.9 GB; the continuous recordings in `sourcedata/` are the same samples and are not needed).
+
+Checked on 2026-09-23 against the continuous recording: session / run N is song N, and every per-song file is an exact cut from 10.00 s before the song to its end. The annotations inside those files are copied unshifted from the start of the session and are wrong, so `scripts/prepare_musin_g.py` never reads them; it takes the onset at 10 s and checks each file's length against its song (all 24 files of sub-001/002 within 0.06 s). E129 is the flat Cz reference and is kept as zeros through the average reference. The 20 face/neck/eye electrodes further than 15 deg from every DS004940 electrode are dropped (109 kept), which leaves the EGI net on the same scalp region as the BioSemi caps.
+
+```bash
+bash scripts/download_music.sh musin-g                       # needs the aws CLI (no credentials)
+MUSIC_DATASET=musin_g bash app/run_universal.sh prepare      # -> artifacts/music/musin_g (about 4 min)
+```
 
 ## Pipelines
 
@@ -97,6 +120,23 @@ bash app/run_aligned_recovery.sh evaluate   # validation report with bootstrap C
 bash app/run_aligned_recovery.sh sweep      # three seeds and a seed-level summary
 ```
 
+Training-time augmentation beyond the v3 defaults (10 % channel dropout, two ≤250 ms time masks, ±20 % gain, σ = 0.1 white noise) is off unless requested; the ablation queue below runs the variants one at a time, throttled for temperature, against the existing three-seed baseline:
+
+```bash
+bash scripts/run_augmentation_queue.sh                    # robust, pool, both × seeds 322 323 324; skips finished runs
+ALIGNED_TAG=robust ALIGNED_THROTTLE=0.5 \
+  ALIGNED_EXTRA="--shift-max 10 --channel-gain 0.15 --background-mix 0.5 --background-alpha 0.2 0.8" \
+  bash app/run_aligned_recovery.sh full                   # one variant by hand
+```
+
+| variant  | flags | idea |
+|----------|-------|------|
+| `robust` | `--shift-max 10 --channel-gain 0.15 --background-mix 0.5 --background-alpha 0.2 0.8` | ±40 ms response-latency jitter (zero filled, the audio clock is fixed), per-channel gain jitter, and with p = 0.5 a 0.2–0.8 fraction of the participant's own EEG from another sentence added as real background noise |
+| `pool`   | `--mix-partners 3 --mix-start 0.8 --mix-anneal-epochs 12` with `ALIGNED_MIX=0.2` | SNR curriculum: with probability 0.8 → 0.2 (linear over 12 of ~24 epochs) the trial is averaged with up to three other presentations of its sentence; test inputs stay single-trial |
+| `both`   | union of the two | |
+
+`--throttle f` sleeps `f` × the wall time of every update (and evaluation), a duty cycle for laptops. Partner and background trials come from an in-memory float16 copy of the training EEG (`EEGBank`, 1.6 GB), because the gzip-chunked shards make random single-trial reads cost more than the update.
+
 Current checkpoint: `outputs/aligned_recovery_v3/full_seed322_positional/best_passed.pt` (update 1800). All metrics are computed on presented-speech frames only; the `full_*` keys cover the whole 4 s window for comparison with older runs.
 
 ### 3. Generative decoder (diffusion)
@@ -126,26 +166,34 @@ $PY app/generative_recovery.py figures --export-output outputs/generative_recove
 |---|---|
 | `app/linear_envelope_check.py` | Linear envelope gate (feasibility check before encoder training) |
 | `app/envelope_decoder.py` | Network that regresses the speech envelope directly; band-split, per-subject and Broderick-initialised variants |
-| `app/group_decoding.py` | Reconstruction and retrieval with repeated presentations averaged at the encoder input |
-| `app/group_content.py` | Pooled sentence identification fusing the embedding and envelope evidence channels |
-| `app/content_pipeline.py` | Closed-set content decisions with a confidence gate and fixed-voice synthesis |
-| `app/congruency_probe.py` | N400 semantic-congruency probe |
-| `app/unit_ctc.py` | CTC decoding of discrete speech units |
+| `app/content_analysis.py` | The content route in four subcommands: `congruency` (N400 probe), `sentence` (closed-set decisions with a confidence gate), `pooled` (pooled sentence identification fusing embedding and envelope evidence) and `speak` (fixed-voice SpeechT5 synthesis) |
 | `app/broderick_pretrain.py` | Envelope-tracking pre-training on Broderick 2018 |
-| `app/audio_comparison.py`, `app/plot_audio_comparison.py` | Waveform-level metrics, 2AFC, listening-test bundles and spectrogram figures |
-| `app/synthesize_text.py` | SpeechT5 TTS synthesis (output end of the content-first route) |
-| `app/aggregate_recovery_runs.py` | Multi-seed summary |
+| `app/audio_comparison.py` | Waveform-level metrics, 2AFC, listening-test bundles; `--figure` draws the spectrogram panels |
+| `app/recovery_reports.py` | `evaluate` (one checkpoint, bootstrap CIs, waveform export) and `aggregate` (multi-seed summary) |
 | `scripts/technical_report_figures.py` | Figures for the technical report |
 
-### 5. v2 data route
+### 5. Subject-free speech + music route
 
-`app/run_aligned_v2_data.sh` materialises both tasks (Active + Passive) for 22 participants with the sentence split pinned to v1 (`configs/aligned_speech_local_v2.yaml`), reusing the v1 fine-tuned HuBERT and HiFi-GAN and rebuilding only the target cache and the AcousticDecoder. Train with `ALIGNED_CONFIG=configs/aligned_speech_local_v2.yaml ALIGNED_RUN_ROOT=aligned_recovery_v3_data_v2 bash app/run_aligned_recovery.sh ...`. 2.6 times the data lowers the mel error slightly and leaves the EEG-specific gains unchanged.
+`app/universal_model.py` has no participant index at all (v3's per-participant 128 x 128 mixing is gone), so one set of weights serves participants never seen in training; a spatial-attention front end over electrode positions accepts any montage (128-channel DS004940, 64-channel Di Liberto) and is invariant to channel order; per-domain heads keep the v3 alignment chain (speech: HuBERT L9 -> 80-band mel -> SpeechT5 HiFi-GAN; music: MERT or EnCodec -> 100-band mel -> BigVGAN-v2) and a shared head predicts the envelope and onset strength. `app/universal_train.py` holds out 4 DS004940 participants entirely (hash-chosen: sub-004, sub-009, sub-010, sub-020) and selects checkpoints on validation sentences x those unseen participants, with the v3 controls. Spatial augmentation is part 2 of `app/universal_model.py` (cap rotation/shift/jitter by spherical splines, montage dropout, random re-reference, volume-conduction smoothing/sharpening, cross-participant covariance recolouring, two-view consistency); `app/music.py` holds the music file formats, the windowed dataset and the music decoder.
+
+```bash
+bash app/run_universal.sh prepare         # CND -> shards (same harmonisation as DS004940), manifest, piece/participant splits
+bash app/run_universal.sh audio           # MIDI -> 24 kHz audio aligned to the EEG clock (fails below r = 0.5)
+bash app/run_universal.sh targets         # MERT layer 6 (MUSIC_TEACHER=encodec as fallback), BigVGAN mel, envelope/onset
+bash app/run_universal.sh music-decoder   # teacher -> 100-band mel decoder
+bash app/run_universal.sh speech          # A1: DS004940 only, trial + spatial augmentation
+bash app/run_universal.sh pretrain        # stage 1: speech + music, acoustic objectives
+bash app/run_universal.sh joint           # stage 2 (from stage 1)
+bash app/run_universal.sh speech-ft       # stage-2 control without music
+```
+
+Set `MUSIC_DATASET=musin_g` (default `diliberto2020`) to run the music stages and training on MUSIN-G; outputs are kept apart per dataset. All stages are throttled (`UNIVERSAL_THROTTLE=0.5`) and refuse to start while another training process runs.
 
 ### 6. KaraOne
 
 ```bash
 bash app/run_karaone.sh prepare     # .cnt -> artifacts/karaone/shards
-bash app/run_karaone.sh baselines   # 11-way prompt decoding: block-wise CV, permutation tests, artifact controls
+bash app/run_karaone.sh baselines   # app/karaone.py baselines: 11-way prompt decoding: block-wise CV, permutation tests, artifact controls
 bash app/run_karaone.sh transfer    # DS004940 encoder on KaraOne and heard -> imagined generalisation
 ```
 
@@ -181,3 +229,5 @@ The diffusion samples have the spectral texture of real speech, and the real-EEG
 - The DS006104 (TMS phoneme/word perception) data line was removed.
 - The earlier joint / `train_joint` pipeline (MFCC renderer + Griffin-Lim) was removed from this directory; its code snapshot and checkpoint contracts are kept in `../eeg-recon-0809_explore_8h_v1_backup/`.
 - The deterministic route that preceded the diffusion decoder (recovery v3) is kept in full as the encoder and as a baseline.
+- 2026-09-23 consolidation: 25 modules in `app/` became 16. `content_analysis.py` = congruency_probe + synthesize_text + content_pipeline + group_content (subcommands `congruency|speak|sentence|pooled`); `karaone.py` = karaone_baselines + karaone_transfer (`baselines|transfer`); `recovery_reports.py` = evaluate_aligned_recovery + aggregate_recovery_runs (`evaluate|aggregate`); `music.py` = music_io + music_data + music_decoder; `universal_model.py` absorbed `spatial_augment.py`; `audio_comparison.py` absorbed `plot_audio_comparison.py` (`--figure`). Colliding names were renamed rather than allowed to shadow each other: `karaone.transfer_participant` / `transfer_summary`, `music.DECODER_CONTRACT`, `content_analysis.SENTENCE_CONTRACT` / `POOLED_CONTRACT` / `AUDIO_RATE`. `app/aligned_speech.py`, `app/src/eeg2speech/*.py` and the three `aligned_recovery*.py` files were left untouched because they are hashed into every checkpoint.
+- 2026-09-23 script cleanup (restore any file with `git restore <path>`): `app/run_aligned_speech_v1.sh` and `scripts/download_aligned_audio.py` (the v1 AlignedEEGModel EEG route and its LibriSpeech pre-training, superseded by recovery v3; the audio-side stages of `app/run_aligned_local.sh` are unchanged, its v1 EEG stages were removed); `app/group_decoding.py` (encoder-input pooling, superseded by the pooled route that produced the pre-registered test result); `app/unit_ctc.py` and `scripts/build_speech_units.py` (unit-CTC decoding: on 2026-09-16 the same head fed zero EEG matched it, i.e. it learned only the corpus' unit prior). The v1 EEG code inside `app/aligned_speech.py` stays, because that file and every `app/src/eeg2speech/*.py` are part of the checkpoint runtime hash. Also removed: the v2 data route (`app/aligned_prepare_v2.py`, `app/run_aligned_v2_data.sh`, `configs/aligned_speech_local_v2.yaml`, `configs/training_data_aligned_v2.yaml`) and the abandoned joint/OOD configs, with their artifacts and outputs — 2.6 times the data had left every EEG-specific gain unchanged, and the subject-free route reaches more participants through `--heldout-subjects` instead.

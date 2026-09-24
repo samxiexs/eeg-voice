@@ -8,7 +8,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts')); sys.path.insert(0, str(ROOT / 'app'))
 import prepare_karaone as prepare
-import karaone_baselines as baselines
+import karaone as baselines
 
 
 def write_epoch_inds(path, clearing, thinking, mixed):

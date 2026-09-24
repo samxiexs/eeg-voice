@@ -259,24 +259,88 @@ class RecoveryTests(unittest.TestCase):
         mixed = average_eeg(eeg, partner, mask, partner_mask)
         self.assertEqual(mixed[0, :, 0].tolist(), [2., 1., 3.])
 
-    def test_role_pinning_keeps_held_out_contents(self):
-        import aligned_prepare_v2 as prepare
-        frame = pd.DataFrame(dict(trial_id=[f't{i}' for i in range(8)], subject=['s1', 's2'] * 4,
-                                  linguistic_content_id=list('aabbccdd'), audio_sha256=list('11223344'),
-                                  content_group=['a:1', 'a:1', 'a:2', 'a:2', 'a:3', 'a:3', 'a:4', 'a:4'], role='train', fold=0))
-        with tempfile.TemporaryDirectory() as folder:
-            source = Path(folder) / 'assignment.csv'
-            pd.DataFrame(dict(trial_id=['u1', 'u2', 'u3', 'u4'], role=['train', 'validation', 'test', 'validation'], fold=0,
-                              content_group=['a:1', 'a:2', 'a:3', 'a:9'], is_m0=False, audio_key='k')).to_csv(source, index=False)
-            pinned, unpinned, missing = prepare.pin_roles(frame, source)
-        self.assertEqual(pinned.role.tolist(), ['train', 'train', 'validation', 'validation', 'test', 'test', 'train', 'train'])
-        self.assertEqual(unpinned, ['a:4']); self.assertEqual(missing, ['a:9'])
-        with self.assertRaises(ValueError):
-            prepare.tasks_of({'tasks': ['N400Active', 'N400Active']})
-        self.assertEqual(prepare.tasks_of({}), ('N400Active',))
+    def test_new_augmentation_terms_are_off_by_default_and_bounded(self):
+        from aligned_recovery_model import shift_eeg
+        eeg, _, mask, _ = inputs(batch=6, channels=8)
+        mask[:, 5] = False; eeg = eeg * mask[:, :, None]
+
+        def reference(eeg, channel_mask, channel_drop=.1, spans=2, span_max=64, noise=.1, gain=.2):
+            # The augmentation as released with v3: the default call must keep drawing exactly this.
+            batch, channels, samples = eeg.shape
+            keep = (torch.rand(batch, channels) >= channel_drop) & channel_mask
+            keep = torch.where(keep.any(1, keepdim=True), keep, channel_mask)
+            out = eeg * keep[:, :, None]
+            positions = torch.arange(samples)[None, None, :]
+            starts = torch.randint(0, samples, (batch, spans, 1)); lengths = torch.randint(0, span_max + 1, (batch, spans, 1))
+            out = out * (~((positions >= starts) & (positions < starts + lengths)).any(1))[:, None, :]
+            out = out * (1 + (torch.rand(batch, 1, 1) * 2 - 1) * gain)
+            return out + noise * torch.randn_like(out) * channel_mask[:, :, None]
+        torch.manual_seed(5); expected = reference(eeg, mask)
+        torch.manual_seed(5); torch.testing.assert_close(augment_eeg(eeg, mask), expected)
+        # Latency jitter: zero filled, never circular, direction = delay for positive shifts.
+        shifted = shift_eeg(eeg, torch.tensor([3, -2, 0, 0, 0, 0]))
+        torch.testing.assert_close(shifted[0, :, 3:], eeg[0, :, :-3]); self.assertEqual(float(shifted[0, :, :3].abs().sum()), 0.)
+        torch.testing.assert_close(shifted[1, :, :-2], eeg[1, :, 2:]); self.assertEqual(float(shifted[1, :, -2:].abs().sum()), 0.)
+        torch.testing.assert_close(shifted[2:], eeg[2:])
+        out = augment_eeg(eeg, mask, channel_drop=0, spans=0, noise=0, gain=0, shift_max=10)
+        self.assertEqual(float(out[:, 5].abs().sum()), 0.)
+        self.assertTrue(all(any(torch.allclose(out[b], shift_eeg(eeg[b:b + 1], torch.tensor([k]))[0]) for k in range(-10, 11))
+                            for b in range(6)))
+        # Per-channel gain stays inside 1 +/- g and leaves invalid channels at zero.
+        out = augment_eeg(eeg, mask, channel_drop=0, spans=0, noise=0, gain=0, channel_gain=.15)
+        ratio = out[:, :5] / eeg[:, :5]
+        self.assertTrue(bool(((ratio >= .85 - 1e-5) & (ratio <= 1.15 + 1e-5)).all()))
+        self.assertGreater(float((ratio[:, 0, 0] - ratio[:, 1, 0]).abs().max()), 0.)   # differs across channels
+        self.assertEqual(float(out[:, 5].abs().sum()), 0.)
+
+    def test_background_mixing_uses_same_participant_other_sentence(self):
+        from aligned_recovery_model import background_partners, mix_background
+        frame = pd.DataFrame(dict(trial_id=list('abcdefg'), content_group=list('xxyyzzw'),
+                                  subject=['s1', 's2', 's1', 's1', 's2', 's3', 's1'], task=['A'] * 7))
+        self.assertEqual(background_partners(frame, 0., np.random.default_rng(0)), {})
+        plan = background_partners(frame, 1., np.random.default_rng(0))
+        self.assertNotIn(5, plan)                                   # s3 has no other sentence
+        self.assertEqual(sorted(plan), [0, 1, 2, 3, 4, 6])
+        for i, j in plan.items():
+            self.assertEqual(frame.subject[i], frame.subject[j]); self.assertNotEqual(frame.content_group[i], frame.content_group[j])
+        self.assertEqual(background_partners(frame, 1., np.random.default_rng(0)), plan)
+        eeg = torch.ones(2, 3, 4); noise = torch.full((2, 3, 4), 2.)
+        mask = torch.tensor([[True, True, False]] * 2); noise_mask = torch.tensor([[True, False, True]] * 2)
+        mixed = mix_background(eeg, noise, mask, noise_mask, torch.tensor([.5, 0.]))
+        self.assertEqual(mixed[0, :, 0].tolist(), [2., 1., 1.]); torch.testing.assert_close(mixed[1], eeg[1])
+
+    def test_multi_presentation_pool_and_curriculum(self):
+        from aligned_recovery_model import average_eeg, average_eeg_many, mix_probability, same_content_pool
+        frame = pd.DataFrame(dict(trial_id=list('abcdefghi'), content_group=list('xxxxyyyzw'),
+                                  subject=['s1', 's2', 's3', 's4', 's1', 's1', 's2', 's1', 's1'],
+                                  task=['A', 'A', 'A', 'A', 'A', 'P', 'A', 'A', 'A']))
+        self.assertEqual(same_content_pool(frame, 0., np.random.default_rng(0), 3), {})
+        self.assertEqual(same_content_pool(frame, 1., np.random.default_rng(0), 0), {})
+        plan = same_content_pool(frame, 1., np.random.default_rng(0), 3)
+        self.assertNotIn(7, plan); self.assertNotIn(8, plan)          # singleton contents
+        for i, js in plan.items():
+            self.assertTrue(1 <= len(js) <= 3); self.assertEqual(len(set(js)), len(js)); self.assertNotIn(i, js)
+            for j in js:
+                self.assertEqual(frame.content_group[i], frame.content_group[j])
+        self.assertEqual(plan[4][0], 5); self.assertEqual(plan[5][0], 4)   # own other-task presentation first
+        self.assertEqual(same_content_pool(frame, 1., np.random.default_rng(0), 3), plan)
+        sizes = {len(js) for _ in range(20) for js in same_content_pool(frame, 1., np.random.default_rng(_), 3).values()}
+        self.assertEqual(sizes, {1, 2, 3})
+        # One partner reduces to the pairwise average; several average the partners first.
+        eeg = torch.randn(2, 3, 4); partner = torch.randn(2, 3, 4)
+        mask = torch.tensor([[True, True, False]] * 2); partner_mask = torch.tensor([[True, False, True]] * 2)
+        torch.testing.assert_close(average_eeg_many(eeg, partner[:, None], mask, partner_mask[:, None]),
+                                   average_eeg(eeg, partner, mask, partner_mask))
+        partners = torch.stack([torch.ones(2, 3, 4), torch.full((2, 3, 4), 3.)], 1)
+        masks = torch.tensor([[[True, True, False], [True, False, False]]] * 2)
+        many = average_eeg_many(torch.zeros(2, 3, 4), partners, torch.ones(2, 3, dtype=torch.bool), masks)
+        self.assertEqual(many[0, :, 0].tolist(), [1., .5, 0.])       # mean(1, 3) / 2, 1 / 2, anchor only
+        self.assertEqual(mix_probability(3, .2), .2)
+        self.assertAlmostEqual(mix_probability(0, .2, .8, 10), .8); self.assertAlmostEqual(mix_probability(5, .2, .8, 10), .5)
+        self.assertAlmostEqual(mix_probability(30, .2, .8, 10), .2)
 
     def test_pilot_cannot_authorize_test_evaluation(self):
-        from evaluate_aligned_recovery import check_role
+        from recovery_reports import check_role
         report = dict(beats_template=True, beats_wrong_trial=True, beats_chance=True, zero_gain=1,
                       time_block_shuffle_gain=1, envelope_zero_gain=1)
         with self.assertRaises(ValueError):
@@ -319,8 +383,14 @@ class RecoveryTests(unittest.TestCase):
                                       initialize=None, m0_checkpoint=None, output=str(base / 'continuous'),
                                       warmup=1, weight_decay=.05, dropout=.1, mel_warmup=2, temperature=.1,
                                       contrastive_weight=1., sequence_weight=1., delta_weight=.2, duration_weight=.5,
-                                      subject_layer=True, augment=True, positional=True, mix_same_content=1., initialize_trunk=None)
+                                      subject_layer=True, augment=True, positional=True, mix_same_content=.5, initialize_trunk=None,
+                                      mix_partners=2, mix_start=1., mix_anneal_epochs=2, background_mix=.5,
+                                      background_alpha=(.2, .8), shift_max=4, channel_gain=.1, throttle=0.)
+            class Bank:
+                def __init__(self, dataset): self.records = dataset.records
+                def __getitem__(self, i): return self.records[i]['eeg'], self.records[i]['channel_mask']
             with patch.object(runner.legacy, 'dataset_for', return_value=data), \
+                 patch.object(runner, 'EEGBank', Bank), \
                  patch.object(runner.legacy, 'load_payload', return_value=source), \
                  patch.object(runner.legacy, 'check_eeg_artifacts'), \
                  patch.object(runner, 'dataset_signature', return_value=dict(manifest='manifest', cache='cache')), \

@@ -186,20 +186,32 @@ def recovery_loss(state, teacher, mel, normalizer, speech_mask, mel_mask, durati
     return loss, metrics
 
 
-def augment_eeg(eeg, channel_mask, *, channel_drop=.1, spans=2, span_max=64, noise=.1, gain=.2):
+def augment_eeg(eeg, channel_mask, *, channel_drop=.1, spans=2, span_max=64, noise=.1, gain=.2,
+                shift_max=0, channel_gain=0.):
     """Training-only single-trial augmentation in normalized (MAD) units.
 
     Random channel dropout, up to ``spans`` zeroed spans of at most
     ``span_max`` samples (250 ms at 256 Hz), a per-trial gain jitter and
     white noise.  Invalid channels stay zero; shapes and masks are unchanged.
+
+    Two optional terms, off by default so earlier recipes draw the same
+    random numbers: ``shift_max`` delays or advances the whole trial by a
+    uniform integer number of samples (zero filled, never circular), i.e. a
+    response-latency jitter of at most ``shift_max / 256`` s against the
+    fixed audio clock; ``channel_gain`` multiplies every channel by its own
+    ``1 ± channel_gain`` factor (electrode impedance / contact variation),
+    where the existing ``gain`` is one factor per trial.
     """
-    if channel_drop <= 0 and spans <= 0 and noise <= 0 and gain <= 0:
+    if (channel_drop <= 0 and spans <= 0 and noise <= 0 and gain <= 0
+            and shift_max <= 0 and channel_gain <= 0):
         return eeg
     batch, channels, samples = eeg.shape
     keep = (torch.rand(batch, channels, device=eeg.device) >= channel_drop) & channel_mask
     # Never drop every valid channel of a trial.
     keep = torch.where(keep.any(1, keepdim=True), keep, channel_mask)
     out = eeg * keep[:, :, None]
+    if shift_max > 0:
+        out = shift_eeg(out, torch.randint(-int(shift_max), int(shift_max) + 1, (batch,), device=eeg.device))
     if spans > 0 and span_max > 0:
         positions = torch.arange(samples, device=eeg.device)[None, None, :]
         starts = torch.randint(0, samples, (batch, spans, 1), device=eeg.device)
@@ -208,9 +220,51 @@ def augment_eeg(eeg, channel_mask, *, channel_drop=.1, spans=2, span_max=64, noi
         out = out * (~hide)[:, None, :]
     if gain > 0:
         out = out * (1 + (torch.rand(batch, 1, 1, device=eeg.device) * 2 - 1) * gain)
+    if channel_gain > 0:
+        out = out * (1 + (torch.rand(batch, channels, 1, device=eeg.device) * 2 - 1) * channel_gain)
     if noise > 0:
         out = out + noise * torch.randn_like(out) * channel_mask[:, :, None]
     return out
+
+
+def shift_eeg(eeg, shift):
+    """Delay every trial by ``shift[b]`` samples (negative advances); the exposed edge is zero."""
+    batch, channels, samples = eeg.shape
+    source = torch.arange(samples, device=eeg.device)[None, :] - shift.to(eeg.device)[:, None]   # B, T
+    valid = (source >= 0) & (source < samples)
+    gathered = eeg.gather(2, source.clamp(0, samples - 1)[:, None, :].expand(batch, channels, samples))
+    return gathered * valid[:, None, :]
+
+
+def background_partners(frame, probability, rng):
+    """Training-only augmentation plan: for each trial, optionally a same-participant trial of another sentence.
+
+    Returns ``{index: background_index}`` for the trials chosen with
+    ``probability``.  The background trial is that participant's own EEG
+    while listening to a different sentence, so adding a fraction of it
+    (``mix_background``) lowers the single-trial SNR with real, subject-
+    specific noise (1/f spectrum, alpha, ocular activity) and with a competing
+    speech response, while the target stays the anchor's sentence.
+    """
+    if probability <= 0:
+        return {}
+    by_subject = frame.groupby('subject').indices
+    contents = frame.content_group.to_numpy()
+    plan = {}
+    for i in range(len(frame)):
+        if rng.random() >= probability:
+            continue
+        others = [j for j in by_subject[frame.subject.iat[i]] if contents[j] != contents[i]]
+        if not others:
+            continue
+        plan[i] = int(others[rng.integers(len(others))])
+    return plan
+
+
+def mix_background(eeg, background, channel_mask, background_mask, alpha):
+    """``eeg + alpha[b] * background`` on channels valid in both trials; the rest is unchanged."""
+    both = (channel_mask & background_mask)[:, :, None]
+    return eeg + alpha.to(eeg.device)[:, None, None] * background * both
 
 
 def same_content_partners(frame, probability, rng):
@@ -245,6 +299,65 @@ def average_eeg(eeg, partner, channel_mask, partner_mask):
     only_self = (channel_mask & ~partner_mask)[:, :, None]
     only_partner = (~channel_mask & partner_mask)[:, :, None]
     return torch.where(both, .5 * (eeg + partner), torch.where(only_self, eeg, torch.where(only_partner, partner, torch.zeros_like(eeg))))
+
+
+def same_content_pool(frame, probability, rng, max_partners):
+    """Multi-presentation generalisation of :func:`same_content_partners`.
+
+    Returns ``{index: [partner, ...]}`` with one to ``max_partners`` distinct
+    other presentations of the trial's sentence (the participant's own other-
+    task presentation first when it exists, then other participants).  The
+    partners' mean is averaged with the anchor (:func:`average_eeg_many`), a
+    higher-SNR positive for the same target; test-time inputs stay single-trial.
+    """
+    if probability <= 0 or max_partners < 1:
+        return {}
+    groups = frame.groupby('content_group').indices
+    subjects = frame.subject.to_numpy()
+    plan = {}
+    for i in range(len(frame)):
+        if rng.random() >= probability:
+            continue
+        others = [j for j in groups[frame.content_group.iat[i]] if j != i]
+        if not others:
+            continue
+        same = [j for j in others if subjects[j] == subjects[i]]
+        rest = [j for j in others if subjects[j] != subjects[i]]
+        count = min(int(rng.integers(1, max_partners + 1)), len(others))
+        chosen = list(rng.permutation(same)[:count]) if same else []
+        if len(chosen) < count:
+            chosen += list(rng.permutation(rest)[:count - len(chosen)])
+        plan[i] = [int(j) for j in chosen]
+    return plan
+
+
+def average_eeg_many(eeg, partners, channel_mask, partner_masks):
+    """Anchor at weight one half, the partners' valid-channel mean at the other half.
+
+    ``partners`` is (B, K, C, T) with ``partner_masks`` (B, K, C); a channel
+    valid in no partner keeps the anchor's signal, one invalid in the anchor
+    takes the partners' mean.  With one partner this equals :func:`average_eeg`.
+    """
+    valid = partner_masks[:, :, :, None].to(eeg.dtype)
+    count = valid.sum(1)                                                          # B, C, 1
+    mean = (partners * valid).sum(1) / count.clamp_min(1.)
+    has_partner = count > 0
+    anchor = channel_mask[:, :, None]
+    both = anchor & has_partner
+    return torch.where(both, .5 * (eeg + mean), torch.where(anchor, eeg, torch.where(has_partner, mean, torch.zeros_like(eeg))))
+
+
+def mix_probability(epoch, end, start=None, anneal_epochs=0):
+    """Same-sentence mixing probability for an epoch: ``start`` decaying linearly to ``end`` over ``anneal_epochs``.
+
+    A curriculum in single-trial SNR: early epochs learn the alignment from
+    cleaner (averaged) inputs, later epochs match the single-trial test
+    condition.  Without ``start``/``anneal_epochs`` this is the constant ``end``.
+    """
+    if start is None or anneal_epochs <= 0:
+        return float(end)
+    progress = min(1., max(0., epoch / anneal_epochs))
+    return float(start + (end - start) * progress)
 
 
 def apply_tail(mel, duration_frames):
