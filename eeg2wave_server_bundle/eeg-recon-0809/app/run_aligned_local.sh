@@ -65,7 +65,7 @@ case "${1:-status}" in
     for stage in download stimuli prepare references bootstrap-cache hubert hifigan cache audio; do
       bash "$0" "$stage"
     done
-    echo "Audio-side models are ready. Train the EEG encoder with app/run_aligned_recovery.sh (or app/run_universal.sh)."
+    echo "Audio-side models are ready. Train the EEG encoder with scripts/run_mfcc_queue.sh (data, encoder, folds, diffusion)."
     ;;
   status) run readiness; run report --output-root "$ALIGNED_OUTPUT" ;;
   *) echo 'usage: bash app/run_aligned_local.sh all|start|setup|download|stimuli|prepare|references|bootstrap-cache|hubert|hifigan|cache|audio|status' >&2; exit 2 ;;

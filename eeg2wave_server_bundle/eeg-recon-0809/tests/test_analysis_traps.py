@@ -5,14 +5,12 @@ Each test encodes a mistake that produced a wrong number at least once:
 * retrieval scored with the trial's own duration mask (a duration shortcut);
 * forced-choice foils drawn per trial rather than per sentence (the foil is
   then usually the same sentence, so even an oracle looks bad);
-* permutation nulls that shuffle trials rather than sentences, when ~17
-  participants share one sentence's label;
 * an evaluation whose 'no information' reference is the mean rather than the
   L1-optimal median template;
 * pooling repeated presentations *after* the encoder instead of at its input,
   which measures the weaker of the two poolings and hides the signal;
-* combining two evidence channels on their raw scales, so the wider-spread one
-  decides every ranking on its own.
+* scoring against a prior-only prediction, or against the model's own zero-EEG
+  output (which the model can let decay).
 """
 import os
 import sys
@@ -26,11 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'app')); sys.path.insert(0, str(ROOT / 'app/src'))
 _cache_name = os.environ.get('ALIGNED_TARGET_CACHE_NAME')
 import audio_comparison as audio
-import content_analysis as congruency
 import aligned_recovery_eval as evaluation
 import envelope_decoder
-import content_analysis as group_content
-# congruency_probe defaults the cache name at import time; restore
+# Some app modules default the cache name at import time; restore
 # the caller's environment so other test modules still see the default
 # targets.h5 (importing them later, inside a test, leaks it again).
 if _cache_name is None:
@@ -79,44 +75,6 @@ class FoilSelection(unittest.TestCase):
             result = audio.two_alternative(folders, index, ('oracle', 'unrelated'), contents, rng, repeats=2)
         self.assertGreater(result['oracle']['stoi']['accuracy'], .9)
         self.assertLess(result['unrelated']['stoi']['accuracy'], .8)
-
-
-class PermutationNull(unittest.TestCase):
-    def test_sentence_permutation_keeps_one_label_per_sentence(self):
-        rows = [dict(content=f'c{i // 5}', label=(i // 5) % 2) for i in range(40)]
-        rng = np.random.default_rng(0)
-        permuted = congruency.content_permutation(rows, rng)
-        self.assertEqual(len(permuted), len(rows))
-        for content in {r['content'] for r in rows}:
-            values = {int(v) for v, r in zip(permuted, rows) if r['content'] == content}
-            self.assertEqual(len(values), 1, 'a sentence must keep one label under the null')
-        self.assertEqual(sorted(permuted.tolist()), sorted(r['label'] for r in rows))
-
-    def test_sentence_permuted_labels_stay_learnable_while_trial_permuted_labels_do_not(self):
-        """The permutation must keep the structure it is meant to control for.
-
-        With ~17 participants per sentence, permuting trials creates label
-        assignments no sentence-level feature can fit, so the null describes a
-        problem the real data never poses.  Permuting whole sentences keeps
-        every sentence's label consistent, so the null model is as learnable as
-        the real one.  (Note ``evaluate`` permutes only the training labels, so
-        both schemes give a chance-level *test* null when train and test
-        sentences are disjoint; the difference is in what the null can fit.)
-        """
-        from karaone import ShrinkageLDA, Standardizer
-        rng = np.random.default_rng(1)
-        sentences = [f'c{i}' for i in range(12)]
-        codes = {c: rng.standard_normal(8) for c in sentences}
-        rows = [dict(content=c, label=i % 2, x=codes[c] + .01 * rng.standard_normal(8))
-                for i, c in enumerate(sentences) for _ in range(6)]
-        x = np.stack([r['x'] for r in rows]); scaler = Standardizer().fit(x)
-        def fit_accuracy(y):
-            model = ShrinkageLDA(.2).fit(scaler(x), y)
-            return float((model.predict(scaler(x)) == y).mean())
-        sentence = np.mean([fit_accuracy(congruency.content_permutation(rows, rng)) for _ in range(10)])
-        trial = np.mean([fit_accuracy(rng.permutation([r['label'] for r in rows])) for _ in range(10)])
-        self.assertGreater(sentence, .85)
-        self.assertLess(trial, .75)
 
 
 class ResidualMetrics(unittest.TestCase):
@@ -185,28 +143,8 @@ class TemplateAndRetrieval(unittest.TestCase):
                         'the oracle-free retrieval window must fit inside every sentence')
 
 
-class PooledSentenceDecisions(unittest.TestCase):
-    """group_content.py: pooling presentations, combining channels, and the null."""
-
-    def test_zero_eeg_scores_cannot_separate_sentences(self):
-        # With a constant (zero) input every group gets the identical score
-        # vector, so the control can only ever be right by naming one sentence.
-        scores = np.tile(np.array([.9, .1, .2, .3]), (8, 1))
-        truth = np.arange(8) % 4
-        report = group_content.metrics_for(scores, truth)
-        self.assertAlmostEqual(report['accuracy'], .25)
-        null = group_content.permutation_p(scores, truth, np.random.default_rng(0), draws=200)
-        self.assertGreater(null['p_value'], .2)
-
-    def test_combination_is_invariant_to_the_scale_of_either_channel(self):
-        rng = np.random.default_rng(7)
-        a = rng.normal(size=(12, 6)); b = rng.normal(size=(12, 6))
-        base = group_content.zscore(a) + group_content.zscore(b)
-        scaled = group_content.zscore(a * 1e4 + 3.) + group_content.zscore(b)
-        np.testing.assert_allclose(np.argsort(-base, axis=1), np.argsort(-scaled, axis=1))
-        # ... whereas summing the raw scores lets the wide channel decide alone.
-        raw = a * 1e4 + b
-        self.assertTrue((np.argmax(raw, axis=1) == np.argmax(a, axis=1)).all())
+class PoolingAndPriorTraps(unittest.TestCase):
+    """Pooling presentations and scoring against priors."""
 
     def test_a_prior_only_envelope_prediction_discriminates_no_candidate(self):
         # The trap the partial correlation exists to close: scoring candidates by
@@ -228,29 +166,6 @@ class PooledSentenceDecisions(unittest.TestCase):
         raw = envelope_decoder.masked_correlation(expanded, candidates, mask)
         self.assertGreater(float(raw.max() - raw.min()), .2)
 
-    def test_a_degenerate_score_matrix_has_no_assignment_to_report(self):
-        # The zero-EEG control scores every sentence identically for every
-        # query, but the Hungarian solver still returns a full permutation and
-        # its tie-breaking scored 1.000 on an 8-sentence smoke test.  There is
-        # no decision in that permutation.
-        rng = np.random.default_rng(5)
-        row = rng.normal(size=9)
-        constant = np.tile(row, (9, 1)) + rng.normal(scale=1e-7, size=(9, 9))
-        truth = np.arange(9)
-        self.assertIsNone(group_content.assignment_report(constant, truth, np.random.default_rng(0), draws=200))
-        informative = np.eye(9) + .1 * rng.normal(size=(9, 9))
-        report = group_content.assignment_report(informative, truth, np.random.default_rng(0), draws=200)
-        self.assertGreater(report['accuracy'], .8)
-        self.assertLess(report['p_value'], .05)
-
-    def test_hubness_correction_breaks_a_candidate_that_wins_every_query(self):
-        rng = np.random.default_rng(13)
-        scores = rng.normal(size=(20, 6))
-        scores[:, 3] += 5.                       # one candidate is a hub
-        self.assertTrue((np.argmax(scores, axis=1) == 3).all())
-        corrected = group_content.hubness_corrected(scores)
-        self.assertLess((np.argmax(corrected, axis=1) == 3).mean(), .5)
-
     def test_a_gain_measured_against_your_own_no_eeg_output_is_gameable(self):
         """The band-split run scored +0.101 by letting its zero-EEG output rot."""
         rot = dict(correct=dict(raw=.4682), zero=dict(raw=.3671), prior_raw=.4374)
@@ -262,18 +177,10 @@ class PooledSentenceDecisions(unittest.TestCase):
         self.assertGreater(rot['prior_raw'] - rot['zero']['raw'], .05)
         self.assertLess(honest['prior_raw'] - honest['zero']['raw'], .01)
 
-    def test_rank_metrics_agree_with_the_top_one_decision(self):
-        scores = np.array([[.1, .9, .3], [.7, .2, .1], [.2, .3, .9]])
-        truth = np.array([1, 2, 2])
-        report = group_content.metrics_for(scores, truth)
-        self.assertAlmostEqual(report['accuracy'], 2 / 3)
-        self.assertAlmostEqual(report['mrr'], (1 + 1 / 3 + 1) / 3)
-        self.assertEqual(report['risk_coverage'][0]['accepted'], 3)
-
     def test_input_pooling_and_output_pooling_are_not_the_same_measurement(self):
         # A nonlinear encoder: averaging its inputs raises SNR, averaging its
-        # outputs does not.  content_pipeline.pooled() does the latter, which is
-        # why pooled sentence41 looked dead at 4.9% where §4 reports 14.6%.
+        # outputs does not.  Output pooling is why pooled sentence identification
+        # once looked dead at 4.9% where input pooling gave 14.6%.
         rng = np.random.default_rng(11)
         signal = rng.normal(size=32)
         trials = np.stack([signal + 2.5 * rng.normal(size=32) for _ in range(16)])

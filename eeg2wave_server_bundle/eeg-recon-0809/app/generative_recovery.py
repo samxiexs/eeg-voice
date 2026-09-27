@@ -22,7 +22,9 @@ shuffle), with an audio-conditioned ceiling (teacher HuBERT) and a pooled
 
 Stages
   cache    preload EEG/mel/teacher for train+validation into .npy files
-  train    conditional v-prediction diffusion over the 4 s native mel window
+  train    conditional v-prediction diffusion over the 4 s window, in standardised MFCC-80
+           (``--space mfcc``, default: the orthonormal DCT of the native log-mel, exactly
+           invertible, see app/mfcc.py) or in the globally scaled native mel (``--space mel``)
   export   sample validation trials under every control; vocode with the pinned HiFi-GAN
   compare  score the export with app/audio_comparison.py measures and draw the figure
 
@@ -55,6 +57,7 @@ from aligned_recovery_eval import matched_wrong_trial_indices, train_templates
 from envelope_decoder import BANDS, EnvelopeDecoder, envelope_targets, masked_correlation, partial_correlation
 from eeg2speech.aligned import EEG_SAMPLES, EEG_RATE, EEG_START, sample_at
 from eeg2speech.losses import counterfactual_eeg
+from mfcc import LOW, MFCCScaler, mcd, mel_to_mfcc, standardised_mae
 
 legacy = recovery.legacy
 CONTRACT = 'generative_recovery_v1'
@@ -316,6 +319,95 @@ class FrozenConditioner(nn.Module):
         return sample_at(z, speech_times.to(z.device), self.mel_times).transpose(1, 2)
 
 
+class UniversalConditioner(FrozenConditioner):
+    """Frozen subject-free encoder(s) (app/universal_model.py) -> conditioning at mel frame times.
+
+    The same ``compact`` reading as the v3 conditioner - the speech-head output
+    (normalised HuBERT-space prediction) on the top PCs of the train-fold
+    teacher space, and the predicted duration - plus the encoder's own
+    acoustic head (envelope and onset strength) in place of the envelope
+    decoder, which has a participant layer.  No participant index enters:
+    ``subject`` arguments are accepted for the shared API and ignored, and
+    ``mix`` is the identity (pooling averages the masked EEG itself).
+    Cross-fitting: fold f's encoder was trained with ``--content-half f``.
+    """
+    def __init__(self, encoder_paths, mel_times: torch.Tensor, channel_xyz: np.ndarray, *, components: int = 16,
+                 teacher_train: np.ndarray):
+        nn.Module.__init__(self)
+        from universal_train import load_universal
+        self.mode, self.components = 'compact', int(components)
+        self.encoders, self.encoder_sha256 = nn.ModuleList(), []
+        for path in encoder_paths:
+            model, payload = load_universal(Path(path))
+            if payload.get('selection_cohort') is None:
+                raise ValueError(f'{path}: not a trained universal checkpoint')
+            self.encoders.append(model.eval().requires_grad_(False)); self.encoder_sha256.append(legacy.sha256(Path(path)))
+        self.subjects, self.envelopes, self.envelope_sha256 = None, None, []
+        self.register_buffer('mel_times', mel_times.clone())
+        self.register_buffer('channel_xyz', torch.as_tensor(np.asarray(channel_xyz, dtype=np.float32)))
+        teacher = torch.from_numpy(np.asarray(teacher_train, dtype=np.float32))
+        flat = self.encoders[0].decoder.normalizer(teacher).reshape(-1, teacher.shape[-1])
+        mu = flat.mean(0)
+        _, _, basis = torch.pca_lowrank(flat - mu, q=self.components, center=False)
+        self.register_buffer('pca_mean', mu); self.register_buffer('pca_basis', basis[:, :self.components].contiguous())
+        self.dimension = self.components + 1 + 2
+        self.register_buffer('channel_mean', torch.zeros(self.dimension)); self.register_buffer('channel_scale', torch.ones(self.dimension))
+
+    def mix(self, eeg, channel_mask, subject, fold):
+        x = eeg * channel_mask[:, :, None]
+        return x, x
+
+    def _hidden(self, enc, x, channel_mask):
+        n = len(x)
+        return enc.encode(x, self.channel_xyz.expand(n, -1, -1), channel_mask,
+                          torch.ones(n, EEG_SAMPLES, dtype=torch.bool, device=x.device),
+                          torch.ones(n, dtype=torch.bool, device=x.device))                  # DS004940 trials are onset-locked
+
+    @torch.no_grad()
+    def raw(self, eeg, channel_mask, subject, fold, *, premixed=None):
+        a, _ = self.mix(eeg, channel_mask, subject, fold) if premixed is None else premixed
+        out = torch.zeros(len(a), self.dimension, len(self.mel_times), device=a.device)
+        for f in range(self.folds):
+            rows = (fold == f).nonzero().flatten()
+            if not len(rows):
+                continue
+            enc = self.encoders[f]
+            hidden = self._hidden(enc, a[rows], channel_mask[rows])                           # B, T, W
+            z = enc.heads['speech'](hidden.transpose(1, 2)).transpose(1, 2)
+            duration = torch.sigmoid(enc.duration(hidden.mean(1)))                             # B, 1
+            acoustic = enc.acoustic(hidden.transpose(1, 2)).transpose(1, 2)                    # B, T, 2
+            parts = torch.cat([(z - self.pca_mean) @ self.pca_basis, duration[:, None, :].expand(-1, hidden.shape[1], 1), acoustic], -1)
+            c = sample_at(parts, enc.token_times, self.mel_times + enc.lag_ms / 1000.)
+            out[rows] = c.transpose(1, 2)
+        return out
+
+    @torch.no_grad()
+    def regression(self, eeg, channel_mask, fold):
+        """The deterministic route of the same (fold) encoder, cut at its own predicted duration."""
+        out = torch.zeros(len(eeg), MEL_BINS, len(self.mel_times), device=eeg.device)
+        for f in range(self.folds):
+            rows = (fold == f).nonzero().flatten()
+            if not len(rows):
+                continue
+            n = len(rows)
+            state = self.encoders[f](eeg[rows] * channel_mask[rows][:, :, None], self.channel_xyz.expand(n, -1, -1), channel_mask[rows],
+                                     torch.ones(n, EEG_SAMPLES, dtype=torch.bool, device=eeg.device))
+            cut = (state.duration_fraction * MEL_FRAMES).round().long().clamp(1, MEL_FRAMES)
+            frames = torch.arange(MEL_FRAMES, device=eeg.device)[None, None]
+            out[rows] = torch.where(frames < cut[:, None, None], state.native_mel, torch.full_like(state.native_mel, SILENCE_MEL))
+        return out
+
+
+def ds004940_channel_xyz(cfg) -> np.ndarray:
+    """Electrode positions of the DS004940 shards (BioSemi-128, 0.095 m sphere, A1..D32)."""
+    import h5py
+    import pandas as pd
+    _, manifest, _, _ = legacy.artifact_paths(cfg)
+    shard = pd.read_csv(manifest, usecols=['shard_path'], nrows=1).shard_path.iat[0]
+    with h5py.File(ROOT / shard, 'r') as h5:
+        return h5['channel_xyz'][:].astype(np.float32)
+
+
 # ----------------------------------------------------------------------------- diffusion model
 def sinusoidal(timestep: torch.Tensor, dimension: int) -> torch.Tensor:
     half = dimension // 2
@@ -388,6 +480,15 @@ class MelDiffusion(nn.Module):
         alpha_bar = (torch.cos((steps + s) / (1 + s) * math.pi / 2) ** 2)
         alpha_bar = (alpha_bar / alpha_bar[0]).clamp(1e-5, 1.).float()
         self.register_buffer('alpha_bar', alpha_bar)      # index t in [0, T]; alpha_bar[0] = 1
+        # Optional per-channel weights of the v-loss (MFCC space: c0-c12 emphasised); a plain attribute, so
+        # checkpoints and sampling are unaffected.
+        self.coefficient_weights = None
+
+    def _mse(self, prediction, target):
+        if self.coefficient_weights is None:
+            return F.mse_loss(prediction, target)
+        w = self.coefficient_weights.to(prediction)[None, :, None]
+        return ((prediction - target) ** 2 * w).mean()
 
     def condition(self, kind, value):
         if kind == 'null' or value is None:
@@ -412,7 +513,7 @@ class MelDiffusion(nn.Module):
         noise = torch.randn_like(x0)
         xt = ab.sqrt() * x0 + (1 - ab).sqrt() * noise
         v = ab.sqrt() * noise - (1 - ab).sqrt() * x0
-        return F.mse_loss(self(xt, t, c), v)
+        return self._mse(self(xt, t, c), v)
 
     def loss_at(self, x0, c, steps):
         """Denoising loss at fixed timesteps with a fixed noise seed: a low-variance validation quantity."""
@@ -424,7 +525,7 @@ class MelDiffusion(nn.Module):
             ab = self.alpha_bar[t][:, None, None]
             xt = ab.sqrt() * x0 + (1 - ab).sqrt() * noise
             v = ab.sqrt() * noise - (1 - ab).sqrt() * x0
-            total += float(F.mse_loss(self(xt, t, c), v))
+            total += float(self._mse(self(xt, t, c), v))
         return total / len(steps)
 
     @torch.no_grad()
@@ -452,6 +553,8 @@ class MelDiffusion(nn.Module):
 
 class MelScaler:
     """Global affine normalisation of the clamped native mel; silence tail restored on the way back."""
+    kind = 'mel'
+
     def __init__(self, mean: float, scale: float):
         self.mean, self.scale = float(mean), float(scale)
 
@@ -467,8 +570,23 @@ class MelScaler:
         mel = x * self.scale + self.mean
         return mel
 
+    def bounds(self, device):
+        return (-2., 3.)
+
     def state(self):
         return dict(mean=self.mean, scale=self.scale)
+
+
+def make_scaler(space: str, mel: torch.Tensor):
+    """Scaler of the diffusion data space, fitted on train-fold audio."""
+    return MFCCScaler.fit(mel, MEL_FLOOR) if space == 'mfcc' else MelScaler.fit(mel)
+
+
+def scaler_from_state(state: dict):
+    """Checkpoints before the MFCC space carry a plain {mean, scale}: the mel scaler."""
+    if state.get('kind') == 'mfcc':
+        return MFCCScaler(state['mean'], state['scale'], state['low'], state['high'], state['floor'])
+    return MelScaler(state['mean'], state['scale'])
 
 
 def silence_tail(mel: torch.Tensor, threshold: float = -6.):
@@ -677,6 +795,15 @@ def prepare(args, cfg, device):
         val_role.assign_folds({c: int(hashlib.sha256(f'{args.crossfit_seed}:v:{c}'.encode()).hexdigest(), 16) % 2 for c in set(val_role.content)})
     else:
         encoders = [Path(args.encoder)]; envelopes = [Path(args.envelope)] if args.envelope else None
+    if args.conditioner == 'universal':
+        # Subject-free encoders: fold f trained with universal_train --content-half f (same halves, same seed).
+        encoders = [Path(p) for p in args.universal_encoders]
+        if len(encoders) != (2 if args.crossfit else 1) or args.conditioning != 'compact':
+            raise SystemExit('--conditioner universal: give two --universal-encoders with --crossfit (one without), compact conditioning')
+        conditioner = UniversalConditioner(encoders, audio.mel_times, ds004940_channel_xyz(cfg), components=args.components,
+                                           teacher_train=audio.teacher[train_keys]).to(device)
+        conditioner.fit_statistics(train_role, device)
+        return folder, audio, conditioner, train_dataset, train_role, val_role
     conditioner = FrozenConditioner(encoders, envelopes, audio.mel_times, train_dataset, mode=args.conditioning,
                                     components=args.components,
                                     teacher_train=audio.teacher[train_keys] if args.conditioning == 'compact' else None).to(device)
@@ -684,8 +811,10 @@ def prepare(args, cfg, device):
     return folder, audio, conditioner, train_dataset, train_role, val_role
 
 
-def sampled_metrics(model, conditioner, scaler, audio, role: Role, ids, device, *, steps, guidance, templates):
-    """Quick sampled-mel check on a few validation trials: MAE/envelope r on speech frames for correct vs zero EEG."""
+def sampled_metrics(model, conditioner, scaler, audio, role: Role, ids, device, *, steps, guidance, templates, reference):
+    """Quick sampled check on a few validation trials, speech frames only: standardised MFCC-80 MAE (all
+    coefficients and c0-c12, ``reference`` = train-fold MFCC scaler, the same for every data space), mel MAE
+    and envelope r, for correct / zero / wrong-trial EEG."""
     eeg, mask, subject, fold = batch_tensors(role, ids, device)
     generator = torch.Generator(device='cpu').manual_seed(777)
     noise = torch.randn(len(ids), MEL_BINS, MEL_FRAMES, generator=generator).to(device)
@@ -702,21 +831,29 @@ def sampled_metrics(model, conditioner, scaler, audio, role: Role, ids, device, 
             c = conditioner(torch.zeros_like(eeg), mask, subject, fold)
         else:
             c = conditioner(wrong_eeg, wrong_mask, subject, fold)
-        mel = scaler.decode(model.sample(model.condition('eeg', c), null=null, steps=steps, guidance=guidance, noise=noise))
-        maes, corrs = [], []
+        mel = scaler.decode(model.sample(model.condition('eeg', c), null=null, steps=steps, guidance=guidance, noise=noise,
+                                         clamp=scaler.bounds(device)))
+        maes, corrs, mfcc_all, mfcc_low = [], [], [], []
         for i in range(len(ids)):
             m = mel_mask[i]
+            n = int(frames[i])
+            mfcc_all.append(standardised_mae(reference, mel[i], truth[i], n))
+            mfcc_low.append(standardised_mae(reference, mel[i], truth[i], n, slice(0, LOW)))
             maes.append(float((mel[i][:, m] - truth[i][:, m]).abs().mean()))
             a = mel[i][:, m].mean(0); b = truth[i][:, m].mean(0)
             a = a - a.mean(); b = b - b.mean()
             corrs.append(float(a @ b / (a.norm() * b.norm() + 1e-8)))
         per_trial[name] = np.array(corrs)
-        out[name] = dict(mel_mae=float(np.mean(maes)), envelope_corr=float(np.mean(corrs)))
+        out[name] = dict(mfcc_mae=float(np.mean(mfcc_all)), mfcc_low_mae=float(np.mean(mfcc_low)),
+                         mel_mae=float(np.mean(maes)), envelope_corr=float(np.mean(corrs)))
     # Paired against the in-distribution control (same noise seed): the honest sample-level EEG effect.
     out['envelope_gain_over_wrong'] = float(np.mean(per_trial['correct'] - per_trial['wrong_trial']))
     out['fraction_beats_wrong'] = float(np.mean(per_trial['correct'] > per_trial['wrong_trial']))
     template = templates[1].to(device)
-    out['template'] = dict(mel_mae=float(np.mean([float((template[:, mel_mask[i]] - truth[i][:, mel_mask[i]]).abs().mean()) for i in range(len(ids))])))
+    out['template'] = dict(mel_mae=float(np.mean([float((template[:, mel_mask[i]] - truth[i][:, mel_mask[i]]).abs().mean()) for i in range(len(ids))])),
+                           mfcc_mae=float(np.mean([standardised_mae(reference, template, truth[i], int(frames[i])) for i in range(len(ids))])),
+                           mfcc_low_mae=float(np.mean([standardised_mae(reference, template, truth[i], int(frames[i]), slice(0, LOW))
+                                                       for i in range(len(ids))])))
     return out
 
 
@@ -725,9 +862,21 @@ def train(args, cfg):
     folder, audio, conditioner, train_dataset, train_role, val_role = prepare(args, cfg, device)
     train_keys = sorted(set(train_dataset.frame.audio_key))
     key_index = {k: i for i, k in enumerate(audio.keys)}
-    scaler = MelScaler.fit(audio.mel[[key_index[k] for k in train_keys]])
+    train_mel = audio.mel[[key_index[k] for k in train_keys]]
+    scaler = make_scaler(args.space, train_mel)
+    reference = scaler if args.space == 'mfcc' else MFCCScaler.fit(train_mel, MEL_FLOOR)
     templates = train_templates(train_dataset)
     model = MelDiffusion(conditioner.dimension, hidden=args.hidden, blocks=args.blocks, dropout=args.dropout).to(device)
+    if args.coefficient_weights != 'none':
+        if args.space != 'mfcc':
+            raise SystemExit('--coefficient-weights needs --space mfcc')
+        if args.coefficient_weights == 'low':
+            weights = torch.full((MEL_BINS,), args.high_weight); weights[:LOW] = 1.
+        else:
+            # std: weight each standardised coefficient by its standard deviation, i.e. halfway (in log terms)
+            # between plain standardisation (all 1) and the mel objective (variance: c0 ~ 77x the mean).
+            weights = scaler.scale.clone()
+        model.coefficient_weights = (weights / weights.mean()).to(device)       # mean 1: same loss scale as unweighted
     ema = EMA(model, args.ema)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, betas=(.9, .99))
     output = Path(args.output) / args.run; output.mkdir(parents=True, exist_ok=True)
@@ -736,8 +885,11 @@ def train(args, cfg):
                      blocks=args.blocks, dropout=args.dropout, lr=args.lr, updates=args.updates, batch=args.batch_size,
                      p_teacher=args.p_teacher, p_null=args.p_null, p_pool=args.p_pool, pool_max=args.pool_max, augment=args.augment,
                      condition_noise=args.condition_noise, condition_dropout=args.condition_dropout,
-                     conditioning=args.conditioning, components=args.components,
-                     scaler=scaler.state(), conditioning_dimension=conditioner.dimension)
+                     conditioning=args.conditioning, components=args.components, space=args.space,
+                     scaler=scaler.state(), conditioning_dimension=conditioner.dimension,
+                     **(dict(coefficient_weights=args.coefficient_weights, high_weight=args.high_weight)
+                        if args.coefficient_weights != 'none' else {}),
+                     **(dict(conditioner='universal') if args.conditioner == 'universal' else {}))
     print(json.dumps(dict(parameters=sum(p.numel() for p in model.parameters()), **signature)), flush=True)
     rng = np.random.default_rng(args.seed)
     speech_times = audio.speech_times.to(device)
@@ -815,7 +967,8 @@ def train(args, cfg):
                               val_loss_null=shadow.loss_at(val_x0, val_null, fixed))
                 report['val_eeg_advantage'] = report['val_loss_null'] - report['val_loss_eeg']
                 report['sampled'] = sampled_metrics(shadow, conditioner, scaler, audio, val_role, val_ids[:64], device,
-                                                    steps=args.quick_steps, guidance=args.quick_guidance, templates=templates)
+                                                    steps=args.quick_steps, guidance=args.quick_guidance, templates=templates,
+                                                    reference=reference)
             history.append(report)
             print(json.dumps(report), flush=True)
             legacy.atomic_json(output / 'metrics.json', dict(signature=signature, history=history))
@@ -833,7 +986,7 @@ def load_model(path: Path, device):
     payload = torch.load(path, map_location='cpu', weights_only=False)
     model = MelDiffusion(**payload['model_spec']).to(device)
     model.load_state_dict(payload['ema']); model.eval()
-    scaler = MelScaler(**payload['signature']['scaler'])
+    scaler = scaler_from_state(payload['signature']['scaler'])
     return model, scaler, payload
 
 
@@ -846,10 +999,12 @@ def export(args, cfg):
     if ([trained_with] if isinstance(trained_with, str) else list(trained_with)) != conditioner.encoder_sha256:
         raise ValueError('checkpoint was trained with different encoder(s)')
     conditioner.load_statistics(payload['conditioner'])
-    v3 = recovery.load_checkpoint(Path(args.encoder))
-    regression = RecoveryEEGModel(legacy.decoder_from(v3), **v3['signature']['spec']).to(device)
-    regression.load_state_dict(v3['model']); regression.eval()
-    v3_subjects = {s: i for i, s in enumerate(v3['signature']['subjects'])}
+    universal = isinstance(conditioner, UniversalConditioner)
+    if not universal:
+        v3 = recovery.load_checkpoint(Path(args.encoder))
+        regression = RecoveryEEGModel(legacy.decoder_from(v3), **v3['signature']['spec']).to(device)
+        regression.load_state_dict(v3['model']); regression.eval()
+        v3_subjects = {s: i for i, s in enumerate(v3['signature']['subjects'])}
     vocoder = legacy.SpeechT5HiFiGan(Path(args.hifigan), device=device)
     references, source = legacy.official_reference_transcripts(legacy.dataset_for(cfg, 'validation').frame)
     waves = audio.wave(folder)
@@ -876,12 +1031,16 @@ def export(args, cfg):
         null = model.condition('null', torch.zeros(len(chunk), 1, device=device))
         mels = {}
         with torch.no_grad():
-            # The deterministic v3 route on the same trials, for the side-by-side.
-            v3_subject = torch.tensor([v3_subjects[role.rows[i]['subject']] for i in chunk], device=device)
-            state = regression(eeg, torch.zeros(len(chunk), 128, 3, device=device), mask, torch.ones(len(chunk), EEG_SAMPLES, dtype=torch.bool, device=device), v3_subject)
-            cut = (state.duration_fraction * MEL_FRAMES).round().long().clamp(1, MEL_FRAMES)
-            frames = torch.arange(MEL_FRAMES, device=device)[None, None]
-            mels['regression'] = torch.where(frames < cut[:, None, None], state.native_mel, torch.full_like(state.native_mel, SILENCE_MEL))
+            if universal:
+                # The deterministic route of the conditioning (fold) encoder itself.
+                mels['regression'] = conditioner.regression(eeg, mask, fold)
+            else:
+                # The deterministic v3 route on the same trials, for the side-by-side.
+                v3_subject = torch.tensor([v3_subjects[role.rows[i]['subject']] for i in chunk], device=device)
+                state = regression(eeg, torch.zeros(len(chunk), 128, 3, device=device), mask, torch.ones(len(chunk), EEG_SAMPLES, dtype=torch.bool, device=device), v3_subject)
+                cut = (state.duration_fraction * MEL_FRAMES).round().long().clamp(1, MEL_FRAMES)
+                frames = torch.arange(MEL_FRAMES, device=device)[None, None]
+                mels['regression'] = torch.where(frames < cut[:, None, None], state.native_mel, torch.full_like(state.native_mel, SILENCE_MEL))
             for name in conditions:
                 if name == 'correct':
                     c = conditioner(eeg, mask, subject, fold)
@@ -901,7 +1060,8 @@ def export(args, cfg):
                     teacher = torch.from_numpy(np.asarray(audio.teacher[role.audio_index[chunk]], dtype=np.float32)).to(device)
                     c = conditioner.teacher(teacher, speech_times)
                 stream = model.condition('teacher' if name == 'teacher_oracle' else 'eeg', c)
-                mels[name] = silence_tail(scaler.decode(model.sample(stream, null=null, steps=args.steps, guidance=args.guidance, noise=noise)))
+                mels[name] = silence_tail(scaler.decode(model.sample(stream, null=null, steps=args.steps, guidance=args.guidance, noise=noise,
+                                                                     clamp=scaler.bounds(device))))
             mels['native_mel_oracle'] = audio.mel[role.audio_index[chunk]].to(device)
             rendered = {name: vocoder.synthesize(mel).cpu().numpy() for name, mel in mels.items()}
         for j, i in enumerate(chunk):
@@ -936,6 +1096,14 @@ def sharpness(mel: np.ndarray, frames: int) -> dict:
     return dict(spectral_contrast=contrast, temporal_modulation=modulation, frame_flux=flux)
 
 
+def cepstral_scores(reference: np.ndarray, degraded: np.ndarray, frames: int) -> dict:
+    """MFCC-80 agreement on speech frames: MCD over c1-c79 and over c1-c12, and the c0 (loudness) trajectory r."""
+    a = mel_to_mfcc(reference.astype(np.float32)[:, :frames])[0]; b = mel_to_mfcc(degraded.astype(np.float32)[:, :frames])[0]
+    a, b = a - a.mean(), b - b.mean()
+    return dict(mcd80=mcd(reference, degraded, frames), mcd_low=mcd(reference, degraded, frames, slice(1, LOW)),
+                c0_corr=float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8)))
+
+
 def compare(args, cfg):
     import audio_comparison as ac
     import pandas as pd
@@ -945,7 +1113,7 @@ def compare(args, cfg):
     contents = {e['folder']: e['content'] for e in index}
     names = ['native_mel_oracle', 'teacher_oracle', 'regression', 'correct', 'zero', 'wrong_trial', 'time_block_shuffle', 'pooled', 'pooled_wrong']
     rng = np.random.default_rng(args.seed)
-    rows = {n: [] for n in names}; sharp = {n: [] for n in names + ['original']}
+    rows = {n: [] for n in names}; sharp = {n: [] for n in names + ['original']}; cep = {n: [] for n in names}
     for k, entry in enumerate(index, start=1):
         scores = ac.score_trial(folders[entry['folder']], ac.speech_length(entry), names)
         for n, v in scores.items():
@@ -955,6 +1123,7 @@ def compare(args, cfg):
         for n in names:
             if n in mels:
                 sharp[n].append(sharpness(mels[n].astype(np.float32), frames))
+                cep[n].append(cepstral_scores(mels['native_mel_oracle'], mels[n], frames))
         sharp['original'].append(sharpness(mels['native_mel_oracle'].astype(np.float32), frames))
         if k % 50 == 0:
             print(json.dumps(dict(scored=k, total=len(index))), flush=True)
@@ -965,6 +1134,7 @@ def compare(args, cfg):
             summary[n]['stoi_ci95'] = ac.bootstrap_interval([r['stoi'] for r in v], rng)
             summary[n]['envelope_ci95'] = ac.bootstrap_interval([r['envelope_corr'] for r in v], rng)
     sharp_summary = {n: {k: float(np.mean([r[k] for r in v])) for k in v[0]} for n, v in sharp.items() if v}
+    cep_summary = {n: {k: float(np.mean([r[k] for r in v])) for k in v[0]} for n, v in cep.items() if v}
     afc_keys = [e['folder'] for e in index[:args.afc_trials]]
     afc = ac.two_alternative({k: folders[k] for k in afc_keys}, [e for e in index if e['folder'] in afc_keys], names, contents, rng)
     # Paired: does real EEG beat its own zero-EEG sample (same noise) on the same trial?
@@ -977,8 +1147,14 @@ def compare(args, cfg):
             paired[n] = dict(baseline=base, stoi_gain=float(np.nanmean(d)), stoi_gain_ci95=ac.bootstrap_interval(d[np.isfinite(d)], rng),
                              envelope_gain=float(np.nanmean(e)), envelope_gain_ci95=ac.bootstrap_interval(e[np.isfinite(e)], rng),
                              fraction_trials_real_better_stoi=float(np.nanmean(d > 0)))
+            if cep[n] and cep[base]:
+                # MCD: lower is better, so the gain is control minus real.
+                g = np.array([b['mcd80'] - a['mcd80'] for a, b in zip(cep[base], cep[n])])
+                h = np.array([a['c0_corr'] - b['c0_corr'] for a, b in zip(cep[base], cep[n])])
+                paired[n].update(mcd80_gain=float(g.mean()), mcd80_gain_ci95=ac.bootstrap_interval(g, rng),
+                                 c0_gain=float(h.mean()), c0_gain_ci95=ac.bootstrap_interval(h, rng))
     result = dict(contract=CONTRACT, export=str(export_folder), trials=len(index), per_condition=summary,
-                  speech_likeness=sharp_summary, two_alternative_forced_choice=afc, paired_against_controls=paired)
+                  cepstral=cep_summary, speech_likeness=sharp_summary, two_alternative_forced_choice=afc, paired_against_controls=paired)
     (export_folder / 'comparison.json').write_text(json.dumps(result, indent=2) + '\n')
     print(f"\n{'condition':20s} {'STOI':>6s} {'PESQ':>6s} {'MCD':>7s} {'env r':>6s} {'mod r':>6s} | contrast  modul   flux | 2AFC stoi  mcd  env")
     for n in ['original'] + names:
@@ -987,8 +1163,15 @@ def compare(args, cfg):
               f"{s.get('envelope_corr', float('nan')):6.3f} {s.get('modulation_corr', float('nan')):6.3f} | "
               f"{sh.get('spectral_contrast', float('nan')):7.3f} {sh.get('temporal_modulation', float('nan')):6.3f} {sh.get('frame_flux', float('nan')):6.3f} |"
               f" {a.get('stoi', {}).get('accuracy', float('nan')):5.2f} {a.get('mcd', {}).get('accuracy', float('nan')):5.2f} {a.get('envelope_corr', {}).get('accuracy', float('nan')):5.2f}")
+    print(f"\n{'condition':20s} {'MCD-80':>7s} {'MCD-13':>7s} {'c0 r':>6s}   (MFCC-80 of the sample vs the presented sentence, speech frames)")
+    for n in names:
+        c = cep_summary.get(n)
+        if c:
+            print(f"{n:20s} {c['mcd80']:7.2f} {c['mcd_low']:7.2f} {c['c0_corr']:6.3f}")
     for n, p in paired.items():
         print(f"  paired {p['baseline']}-EEG minus {n:14s}: STOI {p['stoi_gain']:+.4f} {p['stoi_gain_ci95']}  envelope r {p['envelope_gain']:+.4f} {p['envelope_gain_ci95']}  real better in {p['fraction_trials_real_better_stoi']:.0%} of trials")
+        if 'mcd80_gain' in p:
+            print(f"  {'':>38s} MCD-80 {p['mcd80_gain']:+.3f} dB {p['mcd80_gain_ci95']}  c0 r {p['c0_gain']:+.4f} {p['c0_gain_ci95']}")
     figure(export_folder, index, args.figure_trials)
 
 
@@ -1235,6 +1418,12 @@ def main():
     parser.add_argument('--run', default='base')
     parser.add_argument('--device', default='auto'); parser.add_argument('--seed', type=int, default=31)
     # train
+    parser.add_argument('--space', choices=['mfcc', 'mel'], default='mfcc',
+                        help='diffusion data space: standardised MFCC-80 (exactly invertible) or the globally scaled native mel')
+    parser.add_argument('--coefficient-weights', choices=['none', 'low', 'std'], default='none',
+                        help='MFCC space v-loss weights (renormalised to mean 1): low = c0-c12 at 1, the rest at --high-weight; '
+                             'std = proportional to each coefficient\'s standard deviation')
+    parser.add_argument('--high-weight', type=float, default=.1)
     parser.add_argument('--hidden', type=int, default=256); parser.add_argument('--blocks', type=int, default=6)
     parser.add_argument('--dropout', type=float, default=.1); parser.add_argument('--ema', type=float, default=.999)
     parser.add_argument('--lr', type=float, default=2e-4); parser.add_argument('--weight-decay', type=float, default=.01)
@@ -1251,6 +1440,10 @@ def main():
     parser.add_argument('--min-updates', type=int, default=1500, help='earliest update eligible for best_advantage.pt')
     parser.add_argument('--crossfit', action='store_true', help='condition on cross-fitted (held-out) encoder features; needs the crossfit stage')
     parser.add_argument('--crossfit-seed', type=int, default=322)
+    parser.add_argument('--conditioner', choices=['v3', 'universal'], default='v3',
+                        help='universal: subject-free encoders from app/universal_train.py (--universal-encoders)')
+    parser.add_argument('--universal-encoders', nargs='+', default=[],
+                        help='universal checkpoints: fold 0 and fold 1 (--content-half 0/1) with --crossfit, else one')
     parser.add_argument('--crossfit-updates', type=int, default=2000, help='encoder updates per fold')
     parser.add_argument('--crossfit-envelope-updates', type=int, default=750)
     parser.add_argument('--broderick-trunk', default=str(ROOT / 'outputs/broderick2018/trunk/best.pt'))

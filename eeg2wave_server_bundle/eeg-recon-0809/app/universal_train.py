@@ -14,16 +14,31 @@ Protocol
   participants (``unseen``); checkpoints are selected on ``unseen`` by
   default, because an encoder feeding a generative decoder must work for
   people it has never seen.  The test partition is never read here.
-* Music (Di Liberto 2020, if given): pieces and participants are split the
-  same way (scripts/prepare_diliberto.py); music metrics are reported for the
-  validation piece, never used for selection.
+* Music (optional, ``--music-targets``; the music preparation scripts were
+  removed on 2026-09-27, the prepared MUSIN-G set stays in artifacts/music):
+  pieces and participants are split the same way; music metrics are reported
+  for the validation piece, never used for selection.
 * Selection rule: lowest speech-frame mel MAE among evaluations that beat
   every same-decoder control (zero EEG, matched wrong trial, time-block
   shuffle, retrieval above chance) - the v3 gate, now on unseen participants.
 
-Stages are flag presets (app/run_universal.sh): acoustic pretraining with
-music (contrastive off, mel + low-level targets on), then joint fine-tuning
-(``--initialize`` from the pretraining checkpoint).
+* Spectral target (``--spectral-space``): ``mfcc`` (default) replaces the
+  mel L1 by a weighted L1 on standardised MFCC-80 (app/mfcc.py; exactly
+  invertible, so nothing is lost for the vocoder): c0-c12 at full weight,
+  c13-c79 at ``--mfcc-high-weight``, because scalp EEG reaches the envelope
+  and spectral tilt but not the harmonic fine structure
+  (app/feature_decodability.py).  Evaluation adds the MFCC metrics with the
+  same controls, and selection (``--select-metric mfcc``) uses the weighted
+  MFCC MAE among evaluations that pass the v3 gate and the MFCC controls.
+* Continuous speech (``--continuous-root/--continuous-targets``, Broderick
+  2018 audiobook, scripts/prepare_broderick_windows.py): 4 s windows through
+  the same speech head and frozen decoder, time-resolved CLIP with windows of
+  the same run and time excluded as negatives, no onset clock (``locked`` 0).
+
+Runs are driven by scripts/run_mfcc_queue.sh (the subject-free speech recipe
+plus the MFCC-80 target and continuous speech; ``--content-half`` builds the
+two cross-fitting encoders of the diffusion decoder, ``--evaluate-only``
+scores checkpoints side by side).
 """
 from __future__ import annotations
 
@@ -51,6 +66,9 @@ from aligned_recovery_model import (augment_eeg, average_eeg_many, background_pa
                                     duration_fraction, mix_background, mix_probability, recovery_loss,
                                     same_content_partners, same_content_pool, speech_frame_masks)
 from eeg2speech.losses import counterfactual_eeg
+from aligned_recovery_eval import CONTROLS
+from eeg2speech.aligned import two_way_bootstrap
+from mfcc import COEFFICIENTS, LOW, MFCCScaler
 from universal_model import (ACOUSTIC_FRAMES, ACOUSTIC_RATE, SpatialAugmenter, SpatialConfig, UniversalEEGModel,
                              acoustic_targets, aligned_loss, consistency_loss, correlation_loss, decoder_from_spec,
                              group_covariances, load_trunk, music_negatives, split_views)
@@ -59,15 +77,24 @@ ROOT = legacy.ROOT
 CONTRACT = 'universal_eeg_v1'
 SPEECH_RATE = 16000
 SPEECH_DATASET = 'ds004940'
-SUMMARY_KEYS = ('native_mel_mae', 'template_mae', 'retrieval_mrr', 'chance_mrr', 'zero_gain', 'wrong_trial_gain',
-                'time_block_shuffle_gain', 'envelope_corr', 'envelope_zero_gain', 'duration_corr')
+SUMMARY_KEYS = ('mfcc_mae', 'mfcc_template_mae', 'mfcc_low_mae', 'mfcc_zero_gain', 'mfcc_wrong_trial_gain',
+                'mfcc_time_block_shuffle_gain', 'native_mel_mae', 'template_mae', 'retrieval_mrr', 'chance_mrr', 'zero_gain',
+                'wrong_trial_gain', 'time_block_shuffle_gain', 'envelope_corr', 'envelope_zero_gain', 'duration_corr')
+MEL_FLOOR = -7.                           # native SpeechT5 log-mel floor used before the MFCC rotation (as in generative_recovery)
 
 
 def runtime_hash():
     here = Path(__file__).resolve().parent
-    files = [Path(__file__)] + [here / n for n in ('universal_model.py', 'music.py',
+    files = [Path(__file__)] + [here / n for n in ('universal_model.py', 'music.py', 'mfcc.py',
                                                    'aligned_recovery_model.py', 'aligned_recovery_eval.py')]
     return hashlib.sha256(json.dumps([legacy.runtime_hash(), *[legacy.sha256(p) for p in files]]).encode()).hexdigest()
+
+
+def content_halves(contents, seed: int):
+    """The cross-fitting halves of app/generative_recovery.py (same hash), so fold f of an encoder here
+    matches fold f of the diffusion decoder's conditioning."""
+    ordered = sorted(contents, key=lambda c: hashlib.sha256(f'{seed}:{c}'.encode()).hexdigest())
+    return ordered[:len(ordered) // 2], ordered[len(ordered) // 2:]
 
 
 def heldout_subjects(subjects, count, salt=SPEECH_DATASET):
@@ -109,11 +136,161 @@ def summarize(report):
     return {k: round(float(report[k]), 4) for k in SUMMARY_KEYS if k in report}
 
 
+# --- MFCC-80 spectral target -----------------------------------------------------------------
+
+def mfcc_weights(low=LOW, high_weight=.1):
+    weights = torch.full((COEFFICIENTS,), float(high_weight)); weights[:low] = 1.
+    return weights
+
+
+def mfcc_loss(prediction, target, mask, scaler, weights):
+    """Weighted L1 on standardised MFCC-80 over masked frames (+ 0.2 x the same on frame differences).
+
+    The coefficient weights are normalised to sum to one, so the value is a
+    per-frame weighted mean absolute error in standard deviations.
+    """
+    zp, zt = scaler.encode(prediction), scaler.encode(target)
+    w = (weights / weights.sum()).to(zp)[None, :, None]
+    m = mask[:, None, :].to(zp.dtype)
+    l1 = ((zp - zt).abs() * w * m).sum() / m.sum().clamp_min(1.)
+    both = (mask[:, 1:] & mask[:, :-1])[:, None, :].to(zp.dtype)
+    delta = ((zp.diff(dim=-1) - zt.diff(dim=-1)).abs() * w * both).sum() / both.sum().clamp_min(1.)
+    return l1 + .2 * delta
+
+
+def target_mels(cfg, keys):
+    """{audio_key: (native mel (80, 251), speech frames)} from the DS004940 target cache."""
+    import h5py
+    _, _, cache, _ = legacy.artifact_paths(cfg)
+    out = {}
+    with h5py.File(cache, 'r') as h5:
+        for k in sorted(set(keys)):
+            g = h5['targets'][k]
+            out[k] = (torch.from_numpy(g['mel'][:].astype(np.float32)), int(g.attrs['source_samples_16k']) // 256 + 1)
+    return out
+
+
+def fit_mfcc_scaler(mels):
+    """Per-coefficient MFCC-80 statistics over the speech frames of the train-fold sentences."""
+    frames = torch.cat([mel[:, :min(n, mel.shape[1])] for mel, n in mels.values()], 1)
+    return MFCCScaler.fit(frames[None], MEL_FLOOR)
+
+
+class Recorder(torch.nn.Module):
+    """Forwards to the model and keeps every native-mel output, so evaluate_recovery's own passes
+    (one per control, in CONTROLS order) also yield the MFCC metrics without extra forward passes."""
+    def __init__(self, model):
+        super().__init__()
+        self.inner = model
+        self.outputs = []
+
+    @property
+    def decoder(self):
+        return self.inner.decoder
+
+    def forward(self, *args, **kwargs):
+        state = self.inner(*args, **kwargs)
+        self.outputs.append(state.native_mel.detach().float().cpu())
+        return state
+
+
+def evaluate_speech(model, dataset, train_dataset, target, batch_size, templates, scaler, weights, mels, *,
+                    bootstrap=False, include_records=False):
+    """evaluate_recovery (mel metrics, v3 gate) plus standardised MFCC-80 metrics under the same controls.
+
+    ``mfcc_mae`` is the training-loss weighting (c0-c12 full, the rest
+    ``--mfcc-high-weight``); ``mfcc_low_mae`` is c0-c12 unweighted;
+    ``mfcc_template_mae`` scores the train-fold speech-median template the
+    same way.  Gains are control minus real (positive = real EEG better).
+    """
+    recorder = Recorder(model)
+    report = evaluate_recovery(recorder, dataset, train_dataset, target, batch_size, None, bootstrap=bootstrap,
+                               templates=templates, include_records=True)
+    records = report.pop('records')
+    outputs, k = recorder.outputs, 0
+    per_control = {c: [] for c in CONTROLS}
+    for offset in range(0, len(dataset), batch_size):
+        for control in CONTROLS:
+            per_control[control].append(outputs[k]); k += 1
+    if k != len(outputs):
+        raise RuntimeError('evaluate_recovery call order changed; MFCC metrics would be misaligned')
+    per_control = {c: torch.cat(v) for c, v in per_control.items()}
+    w = (weights / weights.sum())[:, None]
+    template = templates[1].float().cpu()
+    rows = {c: [] for c in CONTROLS}; low = []; template_rows = []
+    for i, key in enumerate(dataset.frame.audio_key):
+        truth, _ = mels[key]
+        n = int(records[i]['speech_frames'])
+        zt = scaler.encode(truth[:, :n])
+        for c in CONTROLS:
+            diff = (scaler.encode(per_control[c][i][:, :n]) - zt).abs()
+            rows[c].append(float((diff * w).sum(0).mean()))
+            if c == 'correct':
+                low.append(float(diff[:LOW].mean()))
+        template_rows.append(float(((scaler.encode(template[:, :n]) - zt).abs() * w).sum(0).mean()))
+    report['mfcc_mae'] = float(np.mean(rows['correct']))
+    report['mfcc_low_mae'] = float(np.mean(low))
+    report['mfcc_template_mae'] = float(np.mean(template_rows))
+    for c in CONTROLS[1:]:
+        report[f'mfcc_{c}_gain'] = float(np.mean(np.array(rows[c]) - np.array(rows['correct'])))
+    for i, record in enumerate(records):
+        record.update(mfcc_mae=rows['correct'][i], mfcc_low_mae=low[i], mfcc_template_gain=template_rows[i] - rows['correct'][i],
+                      **{f'mfcc_{c}_gain': rows[c][i] - rows['correct'][i] for c in CONTROLS[1:]})
+    if bootstrap:
+        report['mfcc_bootstrap'] = {key: two_way_bootstrap(records, key) for key in MFCC_BOOTSTRAP_KEYS}
+    if include_records:
+        report['records'] = records
+    return report
+
+
+MFCC_BOOTSTRAP_KEYS = ('mfcc_mae', 'mfcc_low_mae', 'mfcc_template_gain', 'mfcc_zero_gain', 'mfcc_wrong_trial_gain',
+                       'mfcc_time_block_shuffle_gain')
+
+
+def evaluate_checkpoints(args, paths, cohorts, full_train, templates, scaler, mels):
+    """--evaluate-only: every checkpoint on every cohort with the MFCC + mel metrics and crossed
+    subject/content bootstrap CIs; with two checkpoints, paired per-trial differences (second minus first,
+    positive MFCC-MAE difference = the second is worse) with the same bootstrap."""
+    target = legacy.device(args.device)
+    weights = mfcc_weights(args.mfcc_low, args.mfcc_high_weight)
+    out = dict(checkpoints=[str(p) for p in paths], mfcc_low=args.mfcc_low, mfcc_high_weight=args.mfcc_high_weight, results={})
+    records = {}
+    for path in paths:
+        model, payload = load_universal(path)
+        model.to(target)
+        entry = dict(update=payload.get('step'), selection_cohort=payload.get('selection_cohort'))
+        for name, cohort in cohorts.items():
+            report = evaluate_speech(model, cohort, full_train, target, args.batch_size, templates, scaler, weights, mels,
+                                     bootstrap=True, include_records=True)
+            records[(str(path), name)] = {r['trial_id']: r for r in report.pop('records')}
+            entry[name] = report
+            print(json.dumps({'checkpoint': str(path), 'cohort': name, **summarize(report)}), flush=True)
+        out['results'][str(path)] = entry
+    if len(paths) == 2:
+        out['paired'] = {}
+        for name in cohorts:
+            first, second = records[(str(paths[0]), name)], records[(str(paths[1]), name)]
+            rows = [dict(subject=a['subject'], content=a['content'],
+                         **{k: second[t][k] - a[k] for k in MFCC_BOOTSTRAP_KEYS + ('native_mel_mae', 'envelope_corr', 'wrong_trial_gain')})
+                    for t, a in first.items()]
+            out['paired'][name] = {k: two_way_bootstrap(rows, k) for k in MFCC_BOOTSTRAP_KEYS + ('native_mel_mae', 'envelope_corr', 'wrong_trial_gain')}
+            print(json.dumps({'paired': name, **{k: round(v['mean'], 4) for k, v in out['paired'][name].items()}}), flush=True)
+    return out
+
+
+def passes_mfcc_controls(report):
+    """The v3 gate plus: real EEG beats zero, matched wrong-trial and time-block-shuffle EEG in MFCC-80."""
+    return bool(passes_validation_controls(report) and all(report[f'mfcc_{c}_gain'] > 0
+                                                          for c in ('zero', 'wrong_trial', 'time_block_shuffle')))
+
+
 # --- music evaluation ------------------------------------------------------------------
 
 @torch.no_grad()
-def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4):
-    """Paired controls on music windows: zero EEG, time-block shuffle, and a wrong window of the same trial.
+def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4, *, domain='music', scaler=None, weights=None):
+    """Paired controls on continuous windows (music, or continuous speech with ``domain='speech'``):
+    zero EEG, time-block shuffle, and a wrong window of the same trial.  With ``scaler`` (speech) the
+    weighted standardised MFCC-80 MAE is reported per control as well.
 
     Mel MAE and low-level correlations per control; time-resolved retrieval
     of each window's teacher sequence among the distinct (piece, time)
@@ -121,9 +298,11 @@ def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4):
     one candidate).
     """
     model.eval()
-    decoder = model.decoders['music']
+    decoder = model.decoders[domain]
     controls = ('correct', 'zero', 'time_block_shuffle', 'wrong_window')
     mae = {c: [] for c in controls}; env = {c: [] for c in controls}; onset = {c: [] for c in controls}
+    cepstral = {c: [] for c in controls}
+    w = None if scaler is None else (weights / weights.sum()).to(target)[None, :, None]
     predictions, identities, targets = [], [], {}
     for offset in range(0, len(keys), batch_size):
         chunk = keys[offset:offset + batch_size]
@@ -137,9 +316,11 @@ def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4):
                 eeg = counterfactual_eeg(eeg, control, time_mask=data['time_mask'], channel_mask=mask)
             elif control == 'wrong_window':
                 eeg, mask = wrong['eeg'], wrong['channel_mask']
-            state = model(eeg, data['channel_xyz'], mask, data['time_mask'], domain='music',
+            state = model(eeg, data['channel_xyz'], mask, data['time_mask'], domain=domain,
                           locked=torch.zeros(len(chunk), dtype=torch.bool, device=target))
             mae[control].append((state.native_mel - data['mel']).abs().mean((1, 2)).cpu())
+            if scaler is not None:
+                cepstral[control].append(((scaler.encode(state.native_mel) - scaler.encode(data['mel'])).abs() * w).sum(1).mean(1).cpu())
             _, r = correlation_loss(state.acoustic, data['acoustic'])
             env[control].append(r[:, 0].cpu()); onset[control].append(r[:, 1].cpu())
             if control == 'correct':
@@ -157,6 +338,11 @@ def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4):
     for control in controls[1:]:
         out[f'{control}_gain'] = out[f'{control}_mel_mae'] - out['correct_mel_mae']
         out[f'{control}_envelope_gain'] = out['correct_envelope_r'] - out[f'{control}_envelope_r']
+    if scaler is not None:
+        for control in controls:
+            out[f'{control}_mfcc_mae'] = float(torch.cat(cepstral[control]).mean())
+        for control in controls[1:]:
+            out[f'{control}_mfcc_gain'] = out[f'{control}_mfcc_mae'] - out['correct_mfcc_mae']
     names = list(targets)
     candidates = torch.stack([targets[n] for n in names])
     similarity = torch.cat(predictions) @ candidates.T
@@ -171,7 +357,7 @@ def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4):
 
 def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, speech_decoder_payload,
           signature_extra, music_train=None, music_cohorts=None, music_decoder_payload=None, bank_factory=EEGBank,
-          evaluate=evaluate_recovery):
+          evaluate=evaluate_recovery, mfcc_scaler=None, mels=None, continuous_train=None, continuous_cohorts=None):
     legacy.seed_all(args.seed)
     target = legacy.device(args.device)
     rng = np.random.default_rng(args.seed)
@@ -193,6 +379,12 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
     if select_on not in speech_cohorts:
         raise ValueError(f'no {select_on} speech cohort (use --heldout-subjects > 0 for unseen)')
     output = Path(args.output); output.mkdir(parents=True, exist_ok=True)
+    use_mfcc = args.spectral_space == 'mfcc'
+    if use_mfcc and (mfcc_scaler is None or mels is None):
+        raise ValueError('the MFCC spectral space needs the train-fold MFCC scaler and target mels')
+    weights = mfcc_weights(args.mfcc_low, args.mfcc_high_weight)
+    if use_mfcc:
+        signature_extra = dict(signature_extra, mfcc_scaler=mfcc_scaler.state())
     signature = dict(signature_extra, contract=CONTRACT, seed=args.seed, args={k: v for k, v in sorted(vars(args).items())
                                                                                 if k not in ('output', 'device', 'throttle')})
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=args.weight_decay)
@@ -235,6 +427,9 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
         if music_train is not None:
             eeg, masks, music_groups = music_train.eeg_bank_sample(40, np.random.default_rng(args.seed + 2))
             covariances.update(group_covariances(eeg, masks, music_groups, np.random.default_rng(args.seed + 3), per_group=40))
+        if continuous_train is not None:
+            eeg, masks, continuous_groups = continuous_train.eeg_bank_sample(40, np.random.default_rng(args.seed + 4))
+            covariances.update(group_covariances(eeg, masks, continuous_groups, np.random.default_rng(args.seed + 5), per_group=40))
     augmenter = SpatialAugmenter(spatial_config(args), covariances)
     speech_decoder = model.decoders['speech']
     music_decoder = model.decoders['music'] if music_train is not None else None
@@ -283,9 +478,12 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
         indices = torch.tensor([contents[c] for c in batch['content']], device=target)
         loss, parts = recovery_loss(state, batch['teacher'], batch['mel'], speech_decoder.normalizer, speech_mask, mel_mask,
                                     duration_fraction(batch['oracle_duration_frames'], mel_frames), indices,
-                                    mel_weight=mel_weight, temperature=args.temperature,
+                                    mel_weight=0. if use_mfcc else mel_weight, temperature=args.temperature,
                                     contrastive_weight=args.contrastive_weight, sequence_weight=args.sequence_weight,
                                     delta_weight=args.delta_weight, duration_weight=args.duration_weight)
+        if use_mfcc:
+            spectral = mfcc_loss(state.native_mel, batch['mel'], mel_mask, mfcc_scaler, weights)
+            loss = loss + mel_weight * spectral; parts['mfcc'] = float(spectral.detach())
         if args.acoustic_weight > 0:
             wanted = acoustic_targets(batch['wave'].float().cpu(), SPEECH_RATE).to(target)
             low, r = correlation_loss(state.acoustic, wanted, acoustic_mask(batch['oracle_duration_frames']))
@@ -332,6 +530,39 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
             parts.update(acoustic=float(low.detach()), envelope_r=float(r[:, 0].mean().detach()), onset_r=float(r[:, 1].mean().detach()))
         return loss, parts
 
+    def continuous_loss(spectral_weight):
+        """Broderick audiobook windows through the speech head: no onset clock, CLIP negatives exclude same run & time."""
+        keys = continuous_train.random_keys(args.continuous_batch, rng)
+        batch = legacy.move(continuous_train.load(keys), target)
+        eeg, mask = batch['eeg'], batch['channel_mask']
+        rows = []
+        for key in keys:
+            if rng.random() < args.continuous_mix:
+                partners = continuous_train.partners(key, int(rng.integers(1, args.continuous_partners + 1)), rng)
+                rows.append([tuple(torch.from_numpy(v) for v in continuous_train.eeg(p)) for p in partners])
+            else:
+                rows.append([])
+        eeg = pool(eeg, mask, rows)
+        eeg, mask = augment(eeg, mask, batch['channel_xyz'], batch['group'])
+        state = model(eeg, batch['channel_xyz'], mask, batch['time_mask'], domain='speech',
+                      locked=torch.zeros(len(keys), dtype=torch.bool, device=target))
+        frames = torch.ones(batch['teacher'].shape[:2], dtype=torch.bool, device=target)
+        mel_frames_mask = torch.ones(len(keys), batch['mel'].shape[-1], dtype=torch.bool, device=target)
+        negatives = music_negatives(batch['piece'], batch['start'], speech_decoder.normalizer(batch['teacher']),
+                                    similarity=args.continuous_false_negative)
+        loss, parts = aligned_loss(state, batch['teacher'], batch['mel'], speech_decoder.normalizer, frames, mel_frames_mask,
+                                   negatives, temperature=args.temperature, contrastive_weight=args.contrastive_weight,
+                                   sequence_weight=args.sequence_weight, delta_weight=args.delta_weight,
+                                   mel_weight=0. if use_mfcc else spectral_weight)
+        if use_mfcc:
+            spectral = mfcc_loss(state.native_mel, batch['mel'], mel_frames_mask, mfcc_scaler, weights)
+            loss = loss + spectral_weight * spectral; parts['mfcc'] = float(spectral.detach())
+        if args.acoustic_weight > 0:
+            low, r = correlation_loss(state.acoustic, batch['acoustic'])
+            loss = loss + args.acoustic_weight * low
+            parts.update(acoustic=float(low.detach()), envelope_r=float(r[:, 0].mean().detach()), onset_r=float(r[:, 1].mean().detach()))
+        return loss, parts
+
     def save(path, evaluation=None, complete=False, stop_reason=None):
         legacy.atomic_save(path, dict(
             contract=CONTRACT, runtime_hash=runtime_hash(), signature=signature, model_spec=model_spec(args),
@@ -345,6 +576,8 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
     probe = training_probe(speech_train)
     music_eval_keys = {name: windows.grid_keys(limit=args.music_eval_windows, rng=np.random.default_rng(7))
                        for name, windows in (music_cohorts or {}).items()}
+    continuous_eval_keys = {name: windows.grid_keys(limit=args.continuous_eval_windows, rng=np.random.default_rng(11))
+                            for name, windows in (continuous_cohorts or {}).items()}
     stopping = [False]
     old_handler = signal.getsignal(signal.SIGINT)
     def interrupt(signum, frame):
@@ -352,7 +585,9 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
         print('Finishing this update and saving universal progress.', flush=True)
     signal.signal(signal.SIGINT, interrupt)
     print(json.dumps(dict(select_on=select_on, speech_train_trials=len(speech_train), cohorts={k: len(v) for k, v in speech_cohorts.items()},
-                          music=music_train is not None, spatial=spatial_config(args).as_dict(),
+                          music=music_train is not None, spectral_space=args.spectral_space, select_metric=args.select_metric,
+                          continuous_train_trials=len(continuous_train) if continuous_train is not None else 0,
+                          spatial=spatial_config(args).as_dict(),
                           heldout_subjects=signature_extra.get('heldout_subjects'))), flush=True)
     start, collected = time.monotonic(), []
     try:
@@ -375,6 +610,10 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
                     music, music_parts = music_loss(mel_weight)
                     loss = loss + args.music_weight * music
                     parts.update({f'music_{k}': v for k, v in music_parts.items()})
+                if continuous_train is not None and args.continuous_weight > 0:
+                    continuous, continuous_parts = continuous_loss(mel_weight)
+                    loss = loss + args.continuous_weight * continuous
+                    parts.update({f'continuous_{k}': v for k, v in continuous_parts.items()})
                 if not bool(torch.isfinite(loss)):
                     raise RuntimeError('nonfinite universal loss')
                 loss.backward()
@@ -392,14 +631,23 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
                     save(progress); return
                 if step % args.eval_every == 0 or step == args.updates:
                     tick = time.monotonic()
-                    reports = {name: evaluate(model, cohort, speech_full_train, target, args.batch_size, None,
-                                              bootstrap=False, templates=templates) for name, cohort in speech_cohorts.items()}
+                    if use_mfcc:
+                        reports = {name: evaluate_speech(model, cohort, speech_full_train, target, args.batch_size, templates,
+                                                         mfcc_scaler, weights, mels) for name, cohort in speech_cohorts.items()}
+                    else:
+                        reports = {name: evaluate(model, cohort, speech_full_train, target, args.batch_size, None,
+                                                  bootstrap=False, templates=templates) for name, cohort in speech_cohorts.items()}
                     training = evaluate(model, probe, speech_full_train, target, args.batch_size, None, bootstrap=False, templates=templates)
                     music_reports = {name: evaluate_music(model, windows, music_eval_keys[name], target)
                                      for name, windows in (music_cohorts or {}).items()}
+                    continuous_reports = {name: evaluate_music(model, windows, continuous_eval_keys[name], target, domain='speech',
+                                                               scaler=mfcc_scaler if use_mfcc else None, weights=weights)
+                                          for name, windows in (continuous_cohorts or {}).items()}
                     report = reports[select_on]
-                    score = report['native_mel_mae']; eligible = passes_validation_controls(report)
-                    row = dict(update=step, selection=select_on, eligible=eligible, speech=reports, train_probe=training, music=music_reports)
+                    score = report['mfcc_mae'] if args.select_metric == 'mfcc' else report['native_mel_mae']
+                    eligible = passes_mfcc_controls(report) if use_mfcc else passes_validation_controls(report)
+                    row = dict(update=step, selection=select_on, select_metric=args.select_metric, eligible=eligible, speech=reports,
+                               train_probe=training, music=music_reports, continuous=continuous_reports)
                     history.append(row)
                     if score < best:
                         best = score; save(output / 'best_metric.pt', row)
@@ -409,7 +657,9 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
                     print(json.dumps(dict(update=step, eligible=eligible, selection=select_on, best=round(best, 4),
                                           **{name: summarize(r) for name, r in reports.items()},
                                           **{f'music_{name}': {k: round(v, 4) for k, v in r.items() if isinstance(v, float)}
-                                             for name, r in music_reports.items()})), flush=True)
+                                             for name, r in music_reports.items()},
+                                          **{f'continuous_{name}': {k: round(v, 4) for k, v in r.items() if isinstance(v, float)}
+                                             for name, r in continuous_reports.items()})), flush=True)
                     collapsed = len(history) >= 5 and all(
                         h['train_probe']['prediction_variance_ratio'] < .001 and
                         h['train_probe']['retrieval_r1'] <= h['train_probe']['chance_r1'] + .02 for h in history[-3:])
@@ -430,6 +680,10 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
         if music_train is not None:
             music_train.close()
         for windows in (music_cohorts or {}).values():
+            windows.close()
+        if continuous_train is not None:
+            continuous_train.close()
+        for windows in (continuous_cohorts or {}).values():
             windows.close()
         if stopping[0]:
             raise SystemExit(130)
@@ -470,9 +724,20 @@ def parser():
     p.add_argument('--mel-warmup', type=int, default=100)
     p.add_argument('--acoustic-weight', type=float, default=.5, help='envelope + onset correlation loss (shared head)')
     p.add_argument('--consistency-weight', type=float, default=0., help='two disjoint electrode halves must agree (2 extra passes)')
+    p.add_argument('--spectral-space', choices=['mfcc', 'mel'], default='mfcc',
+                   help='spectral target of --mel-weight: weighted standardised MFCC-80 (default) or the v3 mel L1')
+    p.add_argument('--mfcc-low', type=int, default=LOW, help='MFCC coefficients at full weight (c0 .. c{low-1})')
+    p.add_argument('--mfcc-high-weight', type=float, default=.1, help='weight of the higher MFCC coefficients')
+    p.add_argument('--select-metric', choices=['auto', 'mfcc', 'mel'], default='auto', help='auto = the spectral space')
     # participants
     p.add_argument('--heldout-subjects', type=int, default=4, help='DS004940 participants removed from training entirely')
     p.add_argument('--select-on', choices=['auto', 'seen', 'unseen'], default='auto')
+    p.add_argument('--content-half', type=int, choices=[0, 1], default=None,
+                   help='cross-fitting: train on this half of the DS004940 training sentences only (content_halves)')
+    p.add_argument('--crossfit-seed', type=int, default=322)
+    p.add_argument('--evaluate-only', nargs='+', default=None,
+                   help='no training: evaluate these universal checkpoints (MFCC + mel metrics, bootstrap CIs, paired if two); '
+                        'writes <output>/evaluation.json')
     # temporal / trial-level augmentation (same meaning as app/aligned_recovery.py)
     p.add_argument('--no-augment', dest='augment', action='store_false')
     p.add_argument('--shift-max', type=int, default=0)
@@ -504,20 +769,35 @@ def parser():
     p.add_argument('--music-background', type=float, default=0.)
     p.add_argument('--music-false-negative', type=float, default=.8, help='teacher similarity above which two windows are not negatives')
     p.add_argument('--music-eval-windows', type=int, default=192)
+    # continuous speech (Broderick 2018 audiobook; scripts/prepare_broderick_windows.py + cache_broderick_targets.py)
+    p.add_argument('--continuous-root', default=None, help='e.g. artifacts/speech_continuous/broderick2018; enables the domain')
+    p.add_argument('--continuous-targets', default=None, help='targets_hubert.h5 of that root (default: <root>/targets_hubert.h5)')
+    p.add_argument('--continuous-weight', type=float, default=.5)
+    p.add_argument('--continuous-batch', type=int, default=16)
+    p.add_argument('--continuous-mix', type=float, default=0., help='probability of averaging a window with other listeners at the same time')
+    p.add_argument('--continuous-partners', type=int, default=3)
+    p.add_argument('--continuous-false-negative', type=float, default=.8)
+    p.add_argument('--continuous-eval-windows', type=int, default=192)
     return p
 
 
 def check_args(p, args):
-    probabilities = [args.background_mix, args.mix_same_content, args.music_mix, args.music_background, args.spatial_geometry,
+    probabilities = [args.background_mix, args.mix_same_content, args.music_mix, args.music_background, args.continuous_mix, args.spatial_geometry,
                      args.spatial_mirror, args.spatial_subset, args.spatial_regional, args.spatial_reference,
                      args.spatial_conduction, args.spatial_recolour] + ([args.mix_start] if args.mix_start is not None else [])
     if (args.batch_size < 2 or args.music_batch < 2 or min(args.updates, args.eval_every, args.width, args.virtual) < 1
             or not all(0 <= v <= 1 for v in probabilities) or args.mix_partners < 1 or args.music_partners < 1
             or args.heldout_subjects < 0 or args.throttle < 0 or not 0 <= args.channel_gain < 1 or args.shift_max < 0
             or not 0 <= args.background_alpha[0] <= args.background_alpha[1] or not math.isfinite(args.lr) or args.lr <= 0
-            or (args.initialize and args.initialize_trunk) or bool(args.music_targets) != bool(args.music_decoder)):
+            or (args.initialize and args.initialize_trunk) or bool(args.music_targets) != bool(args.music_decoder)
+            or args.continuous_batch < 2 or args.continuous_partners < 1 or not 0 < args.mfcc_low <= COEFFICIENTS
+            or args.mfcc_high_weight < 0 or (args.continuous_targets and not args.continuous_root)
+            or (args.select_metric == 'mfcc' and args.spectral_space != 'mfcc')):
         p.error('invalid arguments: check batch sizes, probabilities in [0, 1], ranges, one initialisation, '
-                'and give --music-targets with --music-decoder')
+                'give --music-targets with --music-decoder, --continuous-targets needs --continuous-root, '
+                'and --select-metric mfcc needs --spectral-space mfcc')
+    if args.select_metric == 'auto':
+        args.select_metric = args.spectral_space
 
 
 def main():
@@ -527,7 +807,9 @@ def main():
     full_train = legacy.dataset_for(cfg, 'train')
     validation = legacy.dataset_for(cfg, 'validation')
     held = heldout_subjects(full_train.frame.subject, args.heldout_subjects)
-    speech_train = subset(full_train, [i for i, s in enumerate(full_train.frame.subject) if s not in held])
+    keep = set(content_halves(set(full_train.frame.content_group), args.crossfit_seed)[args.content_half]) if args.content_half is not None else None
+    speech_train = subset(full_train, [i for i, (s, c) in enumerate(zip(full_train.frame.subject, full_train.frame.content_group))
+                                       if s not in held and (keep is None or c in keep)])
     cohorts = {'seen': subset(validation, [i for i, s in enumerate(validation.frame.subject) if s not in held])}
     if held:
         cohorts['unseen'] = subset(validation, [i for i, s in enumerate(validation.frame.subject) if s in held])
@@ -536,7 +818,8 @@ def main():
     if source['stage'] != 'adapt' or source['teacher_sha256'] != full_train.teacher_sha256:
         raise ValueError('matching train-fold adapted speech decoder required')
     signature_extra = dict(dataset_signature(cfg, full_train), speech_decoder=legacy.sha256(Path(args.decoder)),
-                           heldout_subjects=held)
+                           heldout_subjects=held, content_half=args.content_half,
+                           content_half_sentences=len(keep) if keep is not None else None)
     music_train = music_cohorts = music_payload = None
     if args.music_targets:
         from music import MusicWindows, load_music_decoder
@@ -552,9 +835,36 @@ def main():
                                                 subject_roles=('heldout',))}
         signature_extra.update(music_manifest=legacy.sha256(manifest), music_targets=music_payload['targets_sha256'],
                                music_normalizer=legacy.sha256(normalizer), music_decoder=legacy.sha256(Path(args.music_decoder)))
+    mfcc_scaler = mels = None
+    if args.evaluate_only:
+        mels = target_mels(cfg, list(full_train.frame.audio_key) + list(validation.frame.audio_key))
+        mfcc_scaler = fit_mfcc_scaler({k: mels[k] for k in set(full_train.frame.audio_key)})
+        result = evaluate_checkpoints(args, [Path(p) for p in args.evaluate_only], cohorts, full_train, train_templates(full_train),
+                                      mfcc_scaler, mels)
+        Path(args.output).mkdir(parents=True, exist_ok=True)
+        legacy.atomic_json(Path(args.output) / 'evaluation.json', result)
+        print(f'wrote {Path(args.output) / "evaluation.json"}'); return
+    if args.spectral_space == 'mfcc':
+        mels = target_mels(cfg, list(full_train.frame.audio_key) + list(validation.frame.audio_key))
+        mfcc_scaler = fit_mfcc_scaler({k: mels[k] for k in set(full_train.frame.audio_key)})
+    continuous_train = continuous_cohorts = None
+    if args.continuous_root:
+        from music import MusicWindows
+        root = Path(args.continuous_root)
+        manifest, normalizer = root / 'manifest.csv', root / 'normalizer.json'
+        targets = Path(args.continuous_targets) if args.continuous_targets else root / 'targets_hubert.h5'
+        continuous_train = MusicWindows(ROOT, manifest, targets, normalizer, content_roles=('train',), subject_roles=('train',))
+        continuous_cohorts = {'seen': MusicWindows(ROOT, manifest, targets, normalizer, content_roles=('validation',), subject_roles=('train',)),
+                              'unseen': MusicWindows(ROOT, manifest, targets, normalizer, content_roles=('validation',),
+                                                     subject_roles=('heldout',))}
+        if continuous_train.targets.teacher_dimension != source['decoder_spec'].get('speech_dimension', 768):
+            raise ValueError('continuous-speech teacher does not match the speech decoder')
+        signature_extra.update(continuous_manifest=legacy.sha256(manifest), continuous_targets=legacy.sha256(targets),
+                               continuous_normalizer=legacy.sha256(normalizer))
     train(args, speech_train=speech_train, speech_full_train=full_train, speech_cohorts=cohorts,
           templates=train_templates(full_train), speech_decoder_payload=source, signature_extra=signature_extra,
-          music_train=music_train, music_cohorts=music_cohorts, music_decoder_payload=music_payload)
+          music_train=music_train, music_cohorts=music_cohorts, music_decoder_payload=music_payload,
+          mfcc_scaler=mfcc_scaler, mels=mels, continuous_train=continuous_train, continuous_cohorts=continuous_cohorts)
 
 
 if __name__ == '__main__':

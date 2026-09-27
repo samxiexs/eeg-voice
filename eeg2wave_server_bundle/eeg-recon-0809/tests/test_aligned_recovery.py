@@ -18,9 +18,8 @@ import aligned_recovery as runner
 from aligned_recovery_model import (RecoveryEEGModel, apply_tail, augment_eeg, diverse_batches,
                                     duration_fraction, recovery_loss, speech_frame_masks)
 import aligned_recovery_eval as evaluation
-import linear_envelope_check as linear
 from eeg2speech.aligned import AcousticDecoder
-# aligned_recovery and linear_envelope_check default the cache name at import;
+# aligned_recovery defaults the cache name at import;
 # restore the caller's environment so other test modules keep targets.h5.
 if _cache_name is None:
     os.environ.pop('ALIGNED_TARGET_CACHE_NAME', None)
@@ -211,38 +210,6 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             evaluation.evaluate_recovery(model, data, data, torch.device('cpu'), 4, {'s1': 0}, bootstrap=False, templates=templates)
 
-    def test_linear_check_recovers_planted_envelope_and_rejects_noise(self):
-        rng = np.random.default_rng(3)
-        mel_times = np.linspace(0, 4, 251, dtype=np.float32)
-
-        def rows(count, subject, planted):
-            out = []
-            for i in range(count):
-                frames = int(rng.integers(110, 240)); grid = np.arange(0, float(mel_times[frames - 1]), 1 / linear.RATE)
-                envelope = np.convolve(rng.standard_normal(len(grid)), np.ones(5) / 5, 'same').astype(np.float32)
-                low = rng.standard_normal((6, 1178 // 8)).astype(np.float32)
-                if planted:
-                    # Channel 0 carries the envelope 125 ms after the acoustic frame.
-                    index = np.clip(np.round((grid + .125 - linear.EEG_START) * linear.RATE).astype(int), 0, low.shape[1] - 1)
-                    low[0, index] += 3 * envelope
-                out.append(dict(subject=subject, content=f'{subject}-{i}', trial_id=f'{subject}-{i}',
-                                low=low, y=envelope, grid=grid.astype(np.float32)))
-            return out
-        for planted in (True, False):
-            train = rows(60, 'a', planted) + rows(60, 'b', planted)
-            held = rows(20, 'a', planted) + rows(20, 'b', planted)
-            result = linear.run_check(train, held, linear.wrong_indices(held), alphas=(1e1, 1e3), seed=1)
-            pooled = result['pooled']
-            if planted:
-                self.assertGreater(pooled['r_model'], .5)
-                self.assertGreater(pooled['gain_over_prior_subject_mean'], .4)
-                self.assertGreater(pooled['r_residual'], pooled['r_residual_shift_null'] + .3)
-                self.assertLess(pooled['r_wrong_trial'], pooled['r_model'] - .3)
-                self.assertEqual(result['best_single_lag_ms'], 125)
-            else:
-                self.assertLess(abs(pooled['r_model'] - pooled['r_prior']), .15)
-                self.assertLess(abs(pooled['r_residual'] - pooled['r_residual_shift_null']), .15)
-
     def test_same_content_partners_and_averaging(self):
         from aligned_recovery_model import average_eeg, same_content_partners
         frame = pd.DataFrame(dict(trial_id=list('abcdefg'), content_group=list('xxyyzzw'),
@@ -338,18 +305,6 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(mix_probability(3, .2), .2)
         self.assertAlmostEqual(mix_probability(0, .2, .8, 10), .8); self.assertAlmostEqual(mix_probability(5, .2, .8, 10), .5)
         self.assertAlmostEqual(mix_probability(30, .2, .8, 10), .2)
-
-    def test_pilot_cannot_authorize_test_evaluation(self):
-        from recovery_reports import check_role
-        report = dict(beats_template=True, beats_wrong_trial=True, beats_chance=True, zero_gain=1,
-                      time_block_shuffle_gain=1, envelope_zero_gain=1)
-        with self.assertRaises(ValueError):
-            check_role(dict(signature={'mode': 'pilot'}, evaluation=report), 'test')
-        with self.assertRaises(ValueError):
-            check_role(dict(signature={'mode': 'full'}, evaluation=dict(report, envelope_zero_gain=-1)), 'test')
-        with self.assertRaises(ValueError):
-            check_role(dict(signature={'mode': 'm0'}, evaluation=report), 'validation')
-        check_role(dict(signature={'mode': 'full'}, evaluation=report), 'test')
 
     def test_resume_matches_uninterrupted_updates(self):
         decoder = tiny_decoder()

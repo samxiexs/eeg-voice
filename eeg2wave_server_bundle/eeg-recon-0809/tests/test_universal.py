@@ -75,7 +75,7 @@ class FakeSpeech:
                     oracle_duration_frames=torch.tensor(frames), wave=torch.from_numpy(wave.astype(np.float32)),
                     content=c, subject=s, trial_id=f'{s}-{c}'))
                 rows.append(dict(trial_id=f'{s}-{c}', subject=s, content_group=c, stimulus_duration_seconds=frames * 256 / 16000,
-                                 task='N400Active', rid=rid))
+                                 task='N400Active', rid=rid, audio_key=c))
         self.frame = pd.DataFrame(rows)
 
     def __len__(self):
@@ -100,8 +100,10 @@ def templates():
 
 # --- synthetic prepared music dataset --------------------------------------------------------
 
-def make_music(folder, pieces=(1, 2, 3), subjects=('sub-01', 'sub-02', 'sub-03'), duration=12., channels=8):
-    """Shards whose EEG value = seconds since piece onset + 100 * channel, and targets whose first dimension = time."""
+def make_music(folder, pieces=(1, 2, 3), subjects=('sub-01', 'sub-02', 'sub-03'), duration=12., channels=8, *, speech=False):
+    """Shards whose EEG value = seconds since piece onset + 100 * channel, and targets whose first dimension = time.
+
+    ``speech``: continuous-speech targets on the DS004940 speech grids (12-d teacher at 50 Hz, 80-bin mel at 62.5 Hz)."""
     folder = Path(folder); (folder / 'shards').mkdir(parents=True)
     xyz = montage_xyz('biosemi64')[:channels].astype(np.float32)
     names = [f'E{i}' for i in range(channels)]
@@ -128,14 +130,20 @@ def make_music(folder, pieces=(1, 2, 3), subjects=('sub-01', 'sub-02', 'sub-03')
     targets = folder / 'targets.h5'
     with h5py.File(targets, 'w') as h5:
         h5.attrs.update(contract=md.TARGET_CONTRACT, teacher='toy', teacher_layer=-1)
-        h5.create_dataset('grid/teacher_times', data=((np.arange(299) + .5) * 320 / 24000).astype(np.float32))
-        h5.create_dataset('grid/mel_times', data=mio.bigvgan_mel_times(375).astype(np.float32))
+        if speech:
+            decoder = tiny_decoder()
+            h5.create_dataset('grid/teacher_times', data=decoder.speech_times.numpy())
+            h5.create_dataset('grid/mel_times', data=decoder.mel_times.numpy())
+        else:
+            h5.create_dataset('grid/teacher_times', data=((np.arange(299) + .5) * 320 / 24000).astype(np.float32))
+            h5.create_dataset('grid/mel_times', data=mio.bigvgan_mel_times(375).astype(np.float32))
+        teacher_rate, teacher_dim, mel_rate, mel_bins = (50, 12, 62.5, 80) if speech else (75, 8, 93.75, 100)
         for piece in pieces:
             g = h5.create_group(f'pieces/{piece}')
-            teacher_times = (np.arange(int(duration * 75)) + .5) / 75
-            teacher = np.random.default_rng(piece).normal(size=(len(teacher_times), 8)); teacher[:, 0] = teacher_times
-            mel_times = mio.bigvgan_mel_times(int(duration * 93.75))
-            mel = np.random.default_rng(10 + piece).normal(size=(100, len(mel_times))); mel[0] = mel_times
+            teacher_times = (np.arange(int(duration * teacher_rate)) + .5) / teacher_rate
+            teacher = np.random.default_rng(piece).normal(size=(len(teacher_times), teacher_dim)); teacher[:, 0] = teacher_times
+            mel_times = np.arange(int(duration * mel_rate)) / mel_rate if speech else mio.bigvgan_mel_times(int(duration * 93.75))
+            mel = np.random.default_rng(10 + piece).normal(size=(mel_bins, len(mel_times))); mel[0] = mel_times
             acoustic = np.random.default_rng(20 + piece).normal(size=(2, int(duration * 64))); acoustic[0] = np.arange(acoustic.shape[1]) / 64
             g.create_dataset('teacher', data=teacher.astype(np.float32)); g.create_dataset('teacher_times', data=teacher_times)
             g.create_dataset('mel', data=mel.astype(np.float32)); g.create_dataset('mel_times', data=mel_times)
@@ -399,36 +407,13 @@ class MusicIOTests(unittest.TestCase):
         self.assertAlmostEqual(float(mio.bigvgan_mel_times(375)[0]), 128 / 24000)
 
 
-class MusinGPrepareTests(unittest.TestCase):
-    def setUp(self):
-        sys.path.insert(0, str(ROOT / 'scripts'))
-        import prepare_musin_g
-        self.prep = prepare_musin_g
-
-    def test_egi_net_is_trimmed_to_the_biosemi_coverage_on_one_sphere(self):
-        import mne
-        names = mne.channels.make_standard_montage('GSN-HydroCel-129').ch_names[:-1] + ['E129']
-        xyz = self.prep.montage_positions(names)
-        np.testing.assert_allclose(np.linalg.norm(xyz, axis=1), .095, atol=1e-9)
-        kept = self.prep.coverage_distance(xyz) <= 15.
-        self.assertEqual(int(kept.sum()), 109)
-        self.assertTrue(kept[names.index('E129')])                                   # Cz (the reference) stays
-        self.assertFalse(any(kept[names.index(n)] for n in ('E125', 'E126', 'E127', 'E128')))   # eye electrodes go
-
-    def test_reference_channel_is_never_flagged_and_ratings_parse(self):
+class BadChannelTests(unittest.TestCase):
+    def test_reference_channel_is_never_flagged(self):
+        """music.bad_channels, also used by scripts/prepare_broderick_windows.py."""
         rng = np.random.default_rng(0)
         data = rng.normal(scale=1e-5, size=(8, 2500)); data[3] = 0.; data[5] *= 40
         self.assertEqual(mio.bad_channels(data, 250., exclude=[3]).tolist(), [5])
         self.assertEqual(sorted(mio.bad_channels(data, 250.).tolist()), [3, 5])
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / 'Behavioural_data'
-            path.write_text('Subject\t\tSong_ID\t\tEnjoyment\tFamiliarity\n1\t\t1\t\t2\t\t3\n20\t\t12\t\t5\t\t1\n')
-            self.assertEqual(self.prep.behaviour(path), {(1, 1): (2, 3), (20, 12): (5, 1)})
-
-    def test_splits_do_not_depend_on_what_is_downloaded(self):
-        held = sorted(mio.ranked(self.prep.PARTICIPANTS, 'musin_g-subject')[:4])
-        self.assertEqual(held, [2, 6, 7, 14])
-        self.assertEqual(mio.ranked(list(range(1, 13)), 'musin_g-song')[:2], [11, 1])
 
 
 class MusicWindowTests(unittest.TestCase):
@@ -482,9 +467,74 @@ class TrainingTests(unittest.TestCase):
             '--mix-start', '1', '--mix-anneal-epochs', '2', '--spatial-geometry', '.5', '--spatial-subset', '.5',
             '--spatial-reference', '.5', '--spatial-conduction', '.5', '--spatial-recolour', '.5', '--consistency-weight', '.1',
             '--music-targets', str(music_targets), '--music-decoder', str(music_decoder), '--music-mix', '.5',
-            '--music-background', '.5', '--music-eval-windows', '6'])
+            '--music-background', '.5', '--music-eval-windows', '6', '--spectral-space', 'mel'])
         ut.check_args(p, args)
         return args
+
+    def test_mfcc_space_with_continuous_speech(self):
+        """MFCC-80 loss/evaluation/selection and the continuous-speech domain run end to end; the MFCC
+        evaluation reuses evaluate_recovery's own forward passes and leaves its mel metrics unchanged."""
+        train = FakeSpeech(['s1', 's2', 's3'], ['a', 'b', 'c', 'd'])
+        validation = FakeSpeech(['s1', 's2', 's4', 's5'], ['e', 'f'], seed=1)
+        cohorts = {'seen': ut.subset(validation, [0, 1, 2, 3]), 'unseen': ut.subset(validation, [4, 5, 6, 7])}
+        mels = {r['content']: (r['mel'], int(r['oracle_duration_frames'])) for d in (train, validation) for r in d.records}
+        scaler = ut.fit_mfcc_scaler({k: mels[k] for k in 'abcd'})
+        speech_payload = decoder_payload(tiny_decoder())
+        p = ut.parser()
+        with tempfile.TemporaryDirectory() as folder:
+            manifest, targets, normalizer = make_music(Path(folder) / 'speech', speech=True)
+            args = p.parse_args(['--output', str(Path(folder) / 'run'), '--device', 'cpu', '--updates', '4', '--eval-every', '2',
+                                 '--batch-size', '3', '--virtual', '8', '--width', '16', '--harmonics', '4', '--warmup', '1',
+                                 '--mel-warmup', '2', '--continuous-root', str(Path(folder) / 'speech'), '--continuous-targets', str(targets),
+                                 '--continuous-batch', '3', '--continuous-mix', '.5', '--continuous-eval-windows', '6'])
+            ut.check_args(p, args)
+            self.assertEqual((args.spectral_space, args.select_metric), ('mfcc', 'mfcc'))
+            windows = lambda **kw: md.MusicWindows('/', manifest, targets, normalizer, **kw)
+            ut.train(args, speech_train=train, speech_full_train=train, speech_cohorts=cohorts, templates=templates(),
+                     speech_decoder_payload=speech_payload, signature_extra=dict(heldout_subjects=['s4', 's5']),
+                     bank_factory=FakeBank, mfcc_scaler=scaler, mels=mels, continuous_train=windows(),
+                     continuous_cohorts={'seen': windows(content_roles=('validation',)),
+                                         'unseen': windows(content_roles=('validation',), subject_roles=('heldout',))})
+            row = json.loads((Path(folder) / 'run/metrics.json').read_text())['history'][-1]
+            self.assertEqual(row['select_metric'], 'mfcc'); self.assertEqual(set(row['continuous']), {'seen', 'unseen'})
+            for key in ('mfcc_mae', 'mfcc_low_mae', 'mfcc_template_mae', 'mfcc_zero_gain', 'mfcc_wrong_trial_gain', 'native_mel_mae'):
+                self.assertTrue(np.isfinite(row['speech']['unseen'][key]), key)
+            self.assertTrue(np.isfinite(row['continuous']['unseen']['correct_mfcc_mae']))
+            model, payload = ut.load_universal(Path(folder) / 'run/best_metric.pt')
+            self.assertIn('mfcc_scaler', payload['signature'])
+            weights = ut.mfcc_weights(args.mfcc_low, args.mfcc_high_weight)
+            with_mfcc = ut.evaluate_speech(model, cohorts['unseen'], train, torch.device('cpu'), 3, templates(), scaler, weights, mels)
+            plain = evaluate_recovery(model, cohorts['unseen'], train, torch.device('cpu'), 3, None, bootstrap=False, templates=templates())
+            for key in ('native_mel_mae', 'zero_gain', 'wrong_trial_gain', 'retrieval_mrr'):
+                self.assertAlmostEqual(with_mfcc[key], plain[key], places=5)
+            model.eval(); w = (weights / weights.sum())[:, None]; manual = []
+            for i in range(len(cohorts['unseen'])):
+                record = cohorts['unseen'][i]; n = int(record['oracle_duration_frames'])
+                with torch.no_grad():
+                    state = model(record['eeg'][None], record['channel_xyz'][None], record['channel_mask'][None], record['time_mask'][None])
+                manual.append(float(((scaler.encode(state.native_mel[0][:, :n]) - scaler.encode(record['mel'][:, :n])).abs() * w).sum(0).mean()))
+            self.assertAlmostEqual(with_mfcc['mfcc_mae'], float(np.mean(manual)), places=4)
+            best = Path(folder) / 'run/best_metric.pt'
+            result = ut.evaluate_checkpoints(args, [best, best], cohorts, train, templates(), scaler, mels)
+            self.assertAlmostEqual(result['results'][str(best)]['unseen']['mfcc_mae'], with_mfcc['mfcc_mae'], places=5)
+            self.assertIn('mfcc_wrong_trial_gain', result['results'][str(best)]['unseen']['mfcc_bootstrap'])
+            for stats in result['paired']['unseen'].values():                     # a checkpoint paired with itself
+                self.assertAlmostEqual(stats['mean'], 0., places=6)
+
+    def test_mfcc_loss(self):
+        mel = torch.randn(2, 80, 30) - 3.
+        scaler = ut.MFCCScaler.fit(mel, ut.MEL_FLOOR)
+        mask = torch.ones(2, 30, dtype=torch.bool)
+        weights = ut.mfcc_weights(13, .1)
+        self.assertAlmostEqual(float(ut.mfcc_loss(mel, mel, mask, scaler, weights)), 0., places=5)
+        tilt = mel + torch.linspace(0, .5, 80)[None, :, None]        # changes low coefficients: fully weighted
+        ripple = mel + .5 * torch.cos(torch.arange(80) * 3.)[None, :, None]   # high quefrency: down-weighted
+        self.assertGreater(float(ut.mfcc_loss(tilt, mel, mask, scaler, weights)), 0.)
+        masked = mask.clone(); masked[:, 10:] = False
+        changed = mel.clone(); changed[..., 10:] += 5.
+        self.assertAlmostEqual(float(ut.mfcc_loss(changed, mel, masked, scaler, weights)), 0., places=5)
+        self.assertGreater(float(ut.mfcc_loss(ripple, mel, mask, scaler, ut.mfcc_weights(13, 1.))),
+                           float(ut.mfcc_loss(ripple, mel, mask, scaler, weights)))
 
     def test_joint_training_evaluates_checkpoints_and_resumes_exactly(self):
         train = FakeSpeech(['s1', 's2', 's3'], ['a', 'b', 'c', 'd'])
