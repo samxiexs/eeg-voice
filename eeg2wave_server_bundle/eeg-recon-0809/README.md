@@ -36,7 +36,7 @@ Raw downloads are deleted after conversion. Rebuild them with `scripts/download.
 
 | Store | Role | People | Content | Size |
 |---|---|---|---|---|
-| `sparrkulee` | listen | 85 | Dutch audiobooks/podcasts, 64-ch, 168 h (Accou et al. 2024) | ~5 GB |
+| `sparrkulee` | listen | 85 | Dutch audiobooks/podcasts, 64-ch, 159 h (Accou et al. 2024) | 4.8 GB |
 | `broderick2018` | listen | 19 | English audiobook, 128-ch, 19 h | 2.3 GB |
 | `ds004940` | listen | 22 | English sentences (N400), 128-ch | 2.7 GB |
 | `marion2021` | listen + imagine | 21 | 4 Bach melodies heard and imagined with a metronome, 64-ch | 0.4 GB |
@@ -44,7 +44,7 @@ Raw downloads are deleted after conversion. Rebuild them with `scripts/download.
 | `cpseed` | spoken / mouthed / imagined | 13 | 10 Mandarin Pinyin syllables, 32-ch (Ma et al. 2025) | 0.4 GB |
 | `karaone` | cue / spoken / imagined | 14 | 7 phonemes + 4 words, 62-ch | 0.4 GB |
 | `bci2020` | imagined | 15 | 5 English phrases, 64-ch (BCI Competition 2020, Track 3) | 0.2 GB |
-| `chisco` | imagined | 5 | ~6,600 Chinese sentences, 39 semantic categories, 122-ch (Zhang et al. 2024) | ~3 GB |
+| `chisco` | imagined | 5 | ~12,600 imagined sentences each, 39 semantic categories, 122-ch (Zhang et al. 2024) | ~8 GB |
 
 Stimulus audio for re-computing listening features stays in `data/ds004940`, `data/ds004408` and `data/marion2021`.
 
@@ -52,6 +52,7 @@ Excluded subjects:
 - cpseed: sub-02 (duplicated session files) and sub-10 (no epoched data).
 - cpseed: sub-16..20. Their files hold 32 unnamed channels whose order matches no known layout.
 - thinking_out_loud: inner and visualised trials that the authors flag for EMG.
+- chisco: 7 of 122 channels (P11/P12, PO11/PO12, POO11h/POO12h, TPP5h) are masked; they have no standard position.
 
 ## Usage
 

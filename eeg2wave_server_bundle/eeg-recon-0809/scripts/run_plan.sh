@@ -22,13 +22,19 @@ listen() {
 }
 
 imagery() {
+  run() {            # one variant of one fold; a failure is logged and the queue moves on
+    local name=$1 f=$2; shift 2
+    [ -f "outputs/imagery/${name}_f$f/evaluation.json" ] && return 0
+    $PY scripts/train.py imagery --fold "$f" --out "outputs/imagery/${name}_f$f" "$@" 2>&1 \
+      | tee "logs/imagery_${name}_f$f.log" || echo "FAILED imagery ${name} fold $f"
+  }
   for f in $FOLDS; do
-    run() { local name=$1; shift; [ -f "outputs/imagery/${name}_f$f/evaluation.json" ] ||
-            $PY scripts/train.py imagery --fold "$f" --out "outputs/imagery/${name}_f$f" "$@" 2>&1 | tee "logs/imagery_${name}_f$f.log"; }
-    run scratch                                         # all modalities, random init
-    run pretrained --init outputs/listen/model.pt      # H1: listening pretraining helps imagery
-    run imagined_only --only-target                     # H2: spoken / heard trials help imagery
-    run person --set person_dim=32                      # P1: person vector from the person's own unlabelled EEG
+    run scratch "$f"                                       # all modalities, random init
+    if [ -f outputs/listen/model.pt ]; then                # H1: listening pretraining helps imagery
+      run pretrained "$f" --init outputs/listen/model.pt
+    fi
+    run imagined_only "$f" --only-target                   # H2: spoken / heard trials help imagery
+    run person "$f" --set person_dim=32                    # P1: person vector from the person's own unlabelled EEG
   done
 }
 
