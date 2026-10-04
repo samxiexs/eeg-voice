@@ -475,9 +475,16 @@ class MusicWindows:
             self.handles[path] = h5py.File(self.root / path, 'r')
         return self.handles[path]
 
+    @staticmethod
+    def _rate(row):
+        """Shard sampling rate of a manifest row (``sfreq`` column; 256 Hz = EEG_RATE when absent)."""
+        value = getattr(row, 'sfreq', None) if not isinstance(row, pd.Series) else row.get('sfreq', None)
+        return float(value) if value is not None and value == value and float(value) > 0 else float(EEG_RATE)
+
     def _max_start(self, row):
         """Largest window start (s) with both the 4 s audio window and the 4.6 s EEG window inside the trial."""
-        by_eeg = (int(row.n_samples) - EEG_SAMPLES - int(row.onset_sample)) / EEG_RATE - EEG_START
+        rate = self._rate(row)
+        by_eeg = (int(row.n_samples) - int(row.onset_sample)) / rate - EEG_SAMPLES / EEG_RATE - EEG_START
         by_audio = float(row.stimulus_duration_s) - WINDOW_S
         by_targets = self.targets.pieces[int(row.piece)]['duration'] - WINDOW_S
         return min(by_eeg, by_audio, by_targets)
@@ -541,12 +548,31 @@ class MusicWindows:
 
     # --- loading ---
     def eeg(self, key):
+        """(C, EEG_SAMPLES) normalised EEG at 256 Hz; shards stored at an integer fraction of 256 Hz
+        (``sfreq`` column, e.g. Broderick at its native 128 Hz) are upsampled per window with a padded
+        polyphase filter, on the exact 256 Hz sample grid."""
         row, start = key
         record = self.frame.iloc[row]
         h5 = self._file(record)
-        first = int(record.onset_sample) + int(round((start + EEG_START) * EEG_RATE))
         trial = f'{int(record.trial):02d}'
-        x = h5['trials'][trial][:, first:first + EEG_SAMPLES].astype(np.float32)
+        rate = self._rate(record)
+        if rate == EEG_RATE:
+            first = int(record.onset_sample) + int(round((start + EEG_START) * EEG_RATE))
+            x = h5['trials'][trial][:, first:first + EEG_SAMPLES].astype(np.float32)
+        else:
+            from scipy.signal import resample_poly
+            factor = int(round(EEG_RATE / rate))
+            if factor * rate != EEG_RATE:
+                raise ValueError(f'shard rate {rate} Hz is not an integer fraction of {EEG_RATE} Hz')
+            first = int(record.onset_sample) * factor + int(round((start + EEG_START) * EEG_RATE))   # on the 256 Hz grid
+            pad = 32
+            low = max(0, first // factor - pad)
+            high = min(int(record.n_samples), -(-(first + EEG_SAMPLES) // factor) + pad)
+            source = h5['trials'][trial][:, low:high].astype(np.float32)
+            level = source.mean(1, keepdims=True)                  # the polyphase branches differ in DC gain by ~5e-4
+            up = (resample_poly(source - level, factor, 1, axis=1) + level).astype(np.float32)
+            offset = first - low * factor
+            x = up[:, offset:offset + EEG_SAMPLES] if offset >= 0 else up[:, :0]
         if x.shape[1] != EEG_SAMPLES:
             raise ValueError(f'window outside trial: {record.subject} trial {trial} start {start:.3f}')
         valid = h5['trials_valid'][trial][:].astype(bool)

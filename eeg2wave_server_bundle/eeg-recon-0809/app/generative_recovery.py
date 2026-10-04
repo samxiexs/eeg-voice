@@ -105,8 +105,13 @@ def cache(args, cfg):
         print('cache already complete'); return
     import h5py
     train = legacy.dataset_for(cfg, 'train')
-    encoder_payload = recovery.load_checkpoint(Path(args.encoder))
-    subjects = {s: i for i, s in enumerate(encoder_payload['signature']['subjects'])}
+    if args.conditioner == 'v3':
+        # The v3 encoder's participant table (its subject layer indexes it).
+        subjects = {s: i for i, s in enumerate(recovery.load_checkpoint(Path(args.encoder))['signature']['subjects'])}
+    else:
+        # Subject-free conditioning never reads the index; it is stored for bookkeeping only.
+        validation = legacy.dataset_for(cfg, 'validation')
+        subjects = {s: i for i, s in enumerate(sorted(set(train.frame.subject) | set(validation.frame.subject)))}
     _, manifest, target_cache, _ = legacy.artifact_paths(cfg)
     with h5py.File(target_cache, 'r') as h5:
         keys = sorted(h5['targets'])
@@ -123,7 +128,8 @@ def cache(args, cfg):
     for role in ('train', 'validation'):
         cache_role(cfg, role, folder, subjects, audio_index)
     legacy.atomic_json(marker, dict(contract=CONTRACT, manifest_sha256=legacy.sha256(manifest),
-                                    cache_sha256=legacy.sha256(target_cache), encoder=legacy.sha256(Path(args.encoder)),
+                                    cache_sha256=legacy.sha256(target_cache),
+                                    encoder=legacy.sha256(Path(args.encoder)) if args.conditioner == 'v3' else None,
                                     subjects=sorted(subjects), roles=['train', 'validation']))
     print('cache complete')
 
@@ -352,16 +358,54 @@ class UniversalConditioner(FrozenConditioner):
         self.register_buffer('pca_mean', mu); self.register_buffer('pca_basis', basis[:, :self.components].contiguous())
         self.dimension = self.components + 1 + 2
         self.register_buffer('channel_mean', torch.zeros(self.dimension)); self.register_buffer('channel_scale', torch.ones(self.dimension))
+        self.personal = any(getattr(e, 'person_dim', 0) for e in self.encoders)
+
+    @torch.no_grad()
+    def attach_persons(self, train_role, roles, device, count: int = 32):
+        """Data-derived person vectors for encoders with a person encoder (no participant index is an input).
+
+        Each person's train-role trials are split by sentence (hash parity) into two calibration sets of
+        ``count`` trials; a train-role trial is conditioned with the person vector of the OTHER parity, so its
+        own sentence is never in its calibration, and validation sentences never occur in the train role.
+        ``role.subject_index`` is replaced by the index of the calibration set each trial uses."""
+        if not self.personal:
+            return
+        def parity(content):
+            return int(hashlib.sha256(f'person:{content}'.encode()).hexdigest(), 16) % 2
+        sets = {}
+        for i, r in enumerate(train_role.rows):
+            sets.setdefault((r['subject'], parity(r['content'])), []).append(i)
+        keys = sorted(sets)
+        for key in keys:
+            sets[key].sort(key=lambda i: hashlib.sha256(f'calibration:{train_role.rows[i]["trial_id"]}'.encode()).hexdigest())
+            sets[key] = np.array(sets[key][:count])
+        tables = []
+        for enc in self.encoders:
+            vectors = []
+            for key in keys:
+                ids = sets[key]
+                eeg = torch.from_numpy(np.asarray(train_role.eeg[ids], dtype=np.float32)).to(device)
+                mask = torch.from_numpy(train_role.channel_mask[ids]).to(device)
+                vectors.append(enc.person_embedding(eeg, self.channel_xyz, mask, [len(ids)])[0])
+            tables.append(torch.stack(vectors))
+        self.register_buffer('person_table', torch.stack(tables))                          # folds, calibration sets, dim
+        index = {key: k for k, key in enumerate(keys)}
+        for role in roles:
+            own = role is train_role
+            role.subject_index = np.array([index[(r['subject'], 1 - parity(r['content']) if own else 0)] for r in role.rows])
+
+    def _person(self, f, subject, rows):
+        return self.person_table[f][subject[rows]] if self.personal else None
 
     def mix(self, eeg, channel_mask, subject, fold):
         x = eeg * channel_mask[:, :, None]
         return x, x
 
-    def _hidden(self, enc, x, channel_mask):
+    def _hidden(self, enc, x, channel_mask, person=None):
         n = len(x)
         return enc.encode(x, self.channel_xyz.expand(n, -1, -1), channel_mask,
                           torch.ones(n, EEG_SAMPLES, dtype=torch.bool, device=x.device),
-                          torch.ones(n, dtype=torch.bool, device=x.device))                  # DS004940 trials are onset-locked
+                          torch.ones(n, dtype=torch.bool, device=x.device), person)          # DS004940 trials are onset-locked
 
     @torch.no_grad()
     def raw(self, eeg, channel_mask, subject, fold, *, premixed=None):
@@ -372,7 +416,7 @@ class UniversalConditioner(FrozenConditioner):
             if not len(rows):
                 continue
             enc = self.encoders[f]
-            hidden = self._hidden(enc, a[rows], channel_mask[rows])                           # B, T, W
+            hidden = self._hidden(enc, a[rows], channel_mask[rows], self._person(f, subject, rows))   # B, T, W
             z = enc.heads['speech'](hidden.transpose(1, 2)).transpose(1, 2)
             duration = torch.sigmoid(enc.duration(hidden.mean(1)))                             # B, 1
             acoustic = enc.acoustic(hidden.transpose(1, 2)).transpose(1, 2)                    # B, T, 2
@@ -382,7 +426,7 @@ class UniversalConditioner(FrozenConditioner):
         return out
 
     @torch.no_grad()
-    def regression(self, eeg, channel_mask, fold):
+    def regression(self, eeg, channel_mask, fold, subject=None):
         """The deterministic route of the same (fold) encoder, cut at its own predicted duration."""
         out = torch.zeros(len(eeg), MEL_BINS, len(self.mel_times), device=eeg.device)
         for f in range(self.folds):
@@ -391,7 +435,8 @@ class UniversalConditioner(FrozenConditioner):
                 continue
             n = len(rows)
             state = self.encoders[f](eeg[rows] * channel_mask[rows][:, :, None], self.channel_xyz.expand(n, -1, -1), channel_mask[rows],
-                                     torch.ones(n, EEG_SAMPLES, dtype=torch.bool, device=eeg.device))
+                                     torch.ones(n, EEG_SAMPLES, dtype=torch.bool, device=eeg.device),
+                                     person=self._person(f, subject, rows) if subject is not None else None)
             cut = (state.duration_fraction * MEL_FRAMES).round().long().clamp(1, MEL_FRAMES)
             frames = torch.arange(MEL_FRAMES, device=eeg.device)[None, None]
             out[rows] = torch.where(frames < cut[:, None, None], state.native_mel, torch.full_like(state.native_mel, SILENCE_MEL))
@@ -802,6 +847,7 @@ def prepare(args, cfg, device):
             raise SystemExit('--conditioner universal: give two --universal-encoders with --crossfit (one without), compact conditioning')
         conditioner = UniversalConditioner(encoders, audio.mel_times, ds004940_channel_xyz(cfg), components=args.components,
                                            teacher_train=audio.teacher[train_keys]).to(device)
+        conditioner.attach_persons(train_role, [train_role, val_role], device)
         conditioner.fit_statistics(train_role, device)
         return folder, audio, conditioner, train_dataset, train_role, val_role
     conditioner = FrozenConditioner(encoders, envelopes, audio.mel_times, train_dataset, mode=args.conditioning,
@@ -867,9 +913,9 @@ def train(args, cfg):
     reference = scaler if args.space == 'mfcc' else MFCCScaler.fit(train_mel, MEL_FLOOR)
     templates = train_templates(train_dataset)
     model = MelDiffusion(conditioner.dimension, hidden=args.hidden, blocks=args.blocks, dropout=args.dropout).to(device)
+    if args.space == 'mel':
+        args.coefficient_weights = 'none'                                  # coefficient weights exist in the MFCC space only
     if args.coefficient_weights != 'none':
-        if args.space != 'mfcc':
-            raise SystemExit('--coefficient-weights needs --space mfcc')
         if args.coefficient_weights == 'low':
             weights = torch.full((MEL_BINS,), args.high_weight); weights[:LOW] = 1.
         else:
@@ -920,6 +966,7 @@ def train(args, cfg):
                                       extra=extra))
 
     while step < args.updates:
+        tick = time.monotonic()
         ids = rng.choice(len(train_role), size=args.batch_size, replace=False)
         eeg, mask, subject, fold = batch_tensors(train_role, ids, device)
         x0 = scaler.encode(audio.mel[train_role.audio_index[ids]].to(device))
@@ -955,6 +1002,8 @@ def train(args, cfg):
         grad = float(torch.nn.utils.clip_grad_norm_(model.parameters(), 1.))
         optimizer.step(); ema.update(model); step += 1
         collected.append(float(loss))
+        if args.throttle > 0:
+            time.sleep(args.throttle * (time.monotonic() - tick))      # duty cycle: cooler and quieter, slower
         if step % 50 == 0:
             print(json.dumps(dict(update=step, loss=round(float(np.mean(collected)), 4), grad=round(grad, 3), lr=round(lr, 6),
                                   seconds=round(time.monotonic() - started, 1))), flush=True); collected = []
@@ -1033,7 +1082,7 @@ def export(args, cfg):
         with torch.no_grad():
             if universal:
                 # The deterministic route of the conditioning (fold) encoder itself.
-                mels['regression'] = conditioner.regression(eeg, mask, fold)
+                mels['regression'] = conditioner.regression(eeg, mask, fold, subject)
             else:
                 # The deterministic v3 route on the same trials, for the side-by-side.
                 v3_subject = torch.tensor([v3_subjects[role.rows[i]['subject']] for i in chunk], device=device)
@@ -1420,7 +1469,8 @@ def main():
     # train
     parser.add_argument('--space', choices=['mfcc', 'mel'], default='mfcc',
                         help='diffusion data space: standardised MFCC-80 (exactly invertible) or the globally scaled native mel')
-    parser.add_argument('--coefficient-weights', choices=['none', 'low', 'std'], default='none',
+    parser.add_argument('--throttle', type=float, default=0., help='train: sleep this fraction of every update\'s wall time')
+    parser.add_argument('--coefficient-weights', choices=['none', 'low', 'std'], default='std',
                         help='MFCC space v-loss weights (renormalised to mean 1): low = c0-c12 at 1, the rest at --high-weight; '
                              'std = proportional to each coefficient\'s standard deviation')
     parser.add_argument('--high-weight', type=float, default=.1)
@@ -1440,8 +1490,9 @@ def main():
     parser.add_argument('--min-updates', type=int, default=1500, help='earliest update eligible for best_advantage.pt')
     parser.add_argument('--crossfit', action='store_true', help='condition on cross-fitted (held-out) encoder features; needs the crossfit stage')
     parser.add_argument('--crossfit-seed', type=int, default=322)
-    parser.add_argument('--conditioner', choices=['v3', 'universal'], default='v3',
-                        help='universal: subject-free encoders from app/universal_train.py (--universal-encoders)')
+    parser.add_argument('--conditioner', choices=['universal', 'v3'], default='universal',
+                        help='universal (default): subject-free encoders from app/universal_train.py (--universal-encoders); '
+                             'v3: the participant-layer recovery-v3 encoders (needs participant indices, not for new people)')
     parser.add_argument('--universal-encoders', nargs='+', default=[],
                         help='universal checkpoints: fold 0 and fold 1 (--content-half 0/1) with --crossfit, else one')
     parser.add_argument('--crossfit-updates', type=int, default=2000, help='encoder updates per fold')

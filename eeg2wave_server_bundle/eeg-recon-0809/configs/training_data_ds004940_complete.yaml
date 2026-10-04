@@ -1,0 +1,16 @@
+# Archive of every DS004940 recording in the aligned_v1 harmonisation, so the raw
+# BDF files can be deleted: the N400Passive task of all 22 participants and the
+# five N400Active participants that aligned_v1 left out (bad-channel fraction
+# above 0.15: sub-006, sub-007, sub-014, sub-017, sub-019).  Nothing is
+# excluded for bad channels here (max_bad_fraction 1.0); every shard keeps its
+# bad / interpolated / zero-filled channel masks, so a consumer can apply any
+# threshold.  The 17 aligned_v1 Active participants stay in aligned_v1 (their
+# manifest is hash-locked into existing checkpoints) and are not duplicated.
+extends: training_data_aligned_v1.yaml
+schema_version: training-data-ds004940-complete
+output_root: artifacts/training_data/ds004940_complete
+split_seed: eeg-recon-0809-aligned-v1
+
+harmonized:
+  interpolation:
+    max_bad_fraction: 1.0

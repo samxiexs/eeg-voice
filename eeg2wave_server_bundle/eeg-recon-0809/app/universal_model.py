@@ -105,10 +105,45 @@ class SpatialAttention(nn.Module):
         return torch.einsum('bcv,bct->bvt', weights, eeg)
 
 
+class PersonEncoder(nn.Module):
+    """A person vector from a set of that person's own EEG windows - never from a participant index.
+
+    Each window's virtual channels (the model's spatial attention, so any montage)
+    give per-channel log-power plus a strided temporal summary; the window vectors
+    of one set are averaged and projected.  Trained with a person-contrastive loss
+    (two disjoint sets of the same person agree, different people differ: the
+    intra-individual consistency / inter-individual difference of Zhang et al. 2026,
+    with the participant id used only to say which windows share a person) and
+    through the decoding losses; at inference a new person's calibration EEG gives
+    the vector.
+    """
+    def __init__(self, virtual, dim=32, hidden=64):
+        super().__init__()
+        self.temporal = nn.Sequential(nn.Conv1d(virtual, hidden, 15, stride=8, padding=7), nn.GELU(),
+                                      nn.Conv1d(hidden, hidden, 9, stride=4, padding=4), nn.GELU())
+        self.window = nn.Sequential(nn.Linear(virtual + hidden, 128), nn.GELU(), nn.Linear(128, 128))
+        self.out = nn.Sequential(nn.GELU(), nn.Linear(128, dim))
+
+    def forward(self, virtual_eeg, counts):
+        """virtual_eeg (N, V, T) of all windows; counts = windows per set (sum N) -> (sets, dim)."""
+        power = torch.log(virtual_eeg.square().mean(-1) + 1e-6)
+        summary = self.temporal(virtual_eeg).mean(-1)
+        per_window = self.window(torch.cat([power, summary], -1))
+        return self.out(torch.stack([part.mean(0) for part in torch.split(per_window, list(counts))]))
+
+
+def person_contrastive(view_a, view_b, temperature=.1):
+    """Symmetric InfoNCE over people: row i of both views is the same person (needs >= 2 people)."""
+    a, b = F.normalize(view_a, dim=-1), F.normalize(view_b, dim=-1)
+    logits = a @ b.T / temperature
+    labels = torch.arange(len(a), device=a.device)
+    return .5 * (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels))
+
+
 class UniversalEEGModel(nn.Module):
     """EEG (any montage, any participant) -> per-domain teacher sequence -> frozen decoder -> mel."""
     def __init__(self, decoders: dict, *, virtual=128, width=128, dropout=.1, positional=True, lag_ms=0,
-                 harmonics=12, input_norm='trial_rms'):
+                 harmonics=12, input_norm='trial_rms', person_dim=0, person_rank=8):
         super().__init__()
         if lag_ms not in LAGS_MS:
             raise ValueError('unregistered lag')
@@ -136,6 +171,17 @@ class UniversalEEGModel(nn.Module):
         self.positional = bool(positional)
         if self.positional:
             self.position = nn.Parameter(torch.zeros(1, width, count))
+        # Data-derived personalisation (person_dim > 0): a low-rank virtual-channel mixing and a FiLM of the
+        # temporal stem, both driven by the person vector and zero at initialisation (= the plain model).
+        self.person_dim, self.person_rank = int(person_dim), int(person_rank)
+        if self.person_dim:
+            self.person_encoder = PersonEncoder(virtual, self.person_dim)
+            self.person_u = nn.Parameter(torch.randn(virtual, self.person_rank) * .02)
+            self.person_v = nn.Parameter(torch.randn(virtual, self.person_rank) * .02)
+            self.person_gain = nn.Linear(self.person_dim, self.person_rank)
+            self.person_film = nn.Linear(self.person_dim, 2 * width)
+            for layer in (self.person_gain, self.person_film):
+                nn.init.zeros_(layer.weight); nn.init.zeros_(layer.bias)
 
     @property
     def decoder(self):
@@ -147,7 +193,22 @@ class UniversalEEGModel(nn.Module):
         self.decoders.eval()                          # frozen, always in inference mode
         return self
 
-    def encode(self, eeg, channel_xyz, channel_mask, time_mask, locked):
+    def _virtual(self, eeg, channel_xyz, channel_mask):
+        x = eeg * channel_mask[:, :, None]
+        if self.input_norm == 'trial_rms':
+            power = x.square().sum((1, 2)) / (channel_mask.sum(1) * x.shape[-1]).clamp_min(1)
+            x = x / (power.sqrt() + 1e-6)[:, None, None]
+        if channel_xyz.ndim == 2:
+            channel_xyz = channel_xyz.expand(len(eeg), -1, -1)
+        return self.spatial_attention(x, channel_xyz.to(x.dtype), channel_mask)
+
+    def person_embedding(self, eeg, channel_xyz, channel_mask, counts):
+        """Person vectors (sets, person_dim) from calibration windows (N, C, T) grouped by ``counts``."""
+        if not self.person_dim:
+            raise ValueError('this model has no person encoder (person_dim = 0)')
+        return self.person_encoder(self._virtual(eeg, channel_xyz, channel_mask), counts)
+
+    def encode(self, eeg, channel_xyz, channel_mask, time_mask, locked, person=None):
         if eeg.ndim != 3 or eeg.shape[-1] != EEG_SAMPLES or time_mask.shape != (len(eeg), EEG_SAMPLES):
             raise ValueError('physical 4.6 s EEG window required')
         if channel_mask.shape != eeg.shape[:2] or not bool(time_mask.all()) or not bool(channel_mask.any(1).all()):
@@ -158,24 +219,28 @@ class UniversalEEGModel(nn.Module):
             channel_xyz = channel_xyz.expand(len(eeg), -1, -1)
         if channel_xyz.shape != (*eeg.shape[:2], 3):
             raise ValueError('channel_xyz must be (C, 3) or (B, C, 3)')
-        x = eeg * channel_mask[:, :, None]
-        if self.input_norm == 'trial_rms':
-            power = x.square().sum((1, 2)) / (channel_mask.sum(1) * x.shape[-1]).clamp_min(1)
-            x = x / (power.sqrt() + 1e-6)[:, None, None]
-        x = self.spatial_attention(x, channel_xyz.to(x.dtype), channel_mask)
+        x = self._virtual(eeg, channel_xyz, channel_mask)
+        personal = person is not None and self.person_dim
+        if personal:
+            gain = self.person_gain(person.to(x.dtype))                                       # B, r
+            mixing = torch.einsum('vr,br,ur->bvu', self.person_u, gain, self.person_v)       # B, V, V (low rank)
+            x = x + torch.einsum('bvu,but->bvt', mixing, x)
         x = F.gelu(self.temporal(self.spatial(x)))
+        if personal:
+            scale, shift = self.person_film(person.to(x.dtype)).chunk(2, -1)
+            x = x * (1 + scale[:, :, None]) + shift[:, :, None]
         if self.positional:
             x = x + self.position * locked.to(x.dtype)[:, None, None]
         return self.output_norm(self.blocks(x).transpose(1, 2))           # B, T, W
 
-    def forward(self, eeg, channel_xyz, channel_mask, time_mask, subject=None, *, domain='speech', locked=None):
+    def forward(self, eeg, channel_xyz, channel_mask, time_mask, subject=None, *, domain='speech', locked=None, person=None):
         if subject is not None:
             raise ValueError('subject-free model: participant indices are not an input')
         if domain not in self.heads:
             raise ValueError(f'unknown domain {domain!r}')
         if locked is None:
             locked = torch.full((len(eeg),), domain == 'speech', dtype=torch.bool, device=eeg.device)
-        hidden = self.encode(eeg, channel_xyz, channel_mask, time_mask, locked)
+        hidden = self.encode(eeg, channel_xyz, channel_mask, time_mask, locked, person)
         lag = self.lag_ms / 1000.
         decoder = self.decoders[domain]
         duration = torch.sigmoid(self.duration(hidden.mean(1))).squeeze(-1)

@@ -2,7 +2,10 @@
 """Which speech representation can scalp EEG actually encode?  (Broderick 2018 audiobook.)
 
 19 participants x 20 runs (~3 min) of "The Old Man and the Sea", 128-ch BioSemi.
-EEG comes from the Broderick CND release (128 Hz, time-locked to run onset);
+EEG comes from the harmonised Broderick shards (scripts/prepare_broderick_windows.py:
+128 Hz, bad electrodes interpolated, average reference, 0.5-45 Hz; sample 0 =
+run onset), or from the raw CND release (128 Hz, time-locked to run onset) if
+the shards are absent;
 the audio is the identical wav in OpenNeuro ds004408 (the CND envelope of run r
 correlates 1.000 with the Hilbert envelope of ds004408 audio<r>.wav at lag 0).
 
@@ -35,6 +38,7 @@ from scipy.signal import butter, hilbert, resample_poly, sosfiltfilt
 
 ROOT = Path(__file__).resolve().parents[1]
 CND = ROOT / 'data/broderick2018/Natural Speech'
+SHARDS = ROOT / 'artifacts/speech_continuous/broderick2018/shards'
 AUDIO = ROOT / 'data/ds004408/stimuli'
 HUBERT = ROOT / 'models/aligned_local_base/hubert'
 EEG_RATE, RATE, AUDIO_RATE = 128, 32, 16000
@@ -145,12 +149,22 @@ def build_targets(device, use_hubert=True, partial=False):
     return matrices, slices, variance
 
 
+def raw_run(subject, r):
+    """(T, 128) at 128 Hz from run onset, average referenced: the harmonised shard, else the raw CND file."""
+    shard = SHARDS / f'Subject{subject}.h5'
+    if shard.exists():
+        import h5py
+        with h5py.File(shard, 'r') as h5:
+            return h5['trials'][f'{r - 1:02d}'][:].astype(np.float64).T
+    eeg = sio.loadmat(CND / f'EEG/Subject{subject}/Subject{subject}_Run{r}.mat')['eegData'].astype(np.float64)
+    return eeg - eeg.mean(1, keepdims=True)
+
+
 def load_eeg(subject, frames_per_run):
     sos = butter(4, (.5, 8.), 'bandpass', fs=EEG_RATE, output='sos')
     runs = []
     for r in range(1, RUNS + 1):
-        eeg = sio.loadmat(CND / f'EEG/Subject{subject}/Subject{subject}_Run{r}.mat')['eegData'].astype(np.float64)
-        eeg = eeg - eeg.mean(1, keepdims=True)                       # average reference
+        eeg = raw_run(subject, r)
         eeg = sosfiltfilt(sos, eeg, axis=0)[::EEG_RATE // RATE]
         eeg = np.pad(eeg, ((0, max(0, frames_per_run[r - 1] + LAGS[-1] - len(eeg))), (0, 0)))
         eeg = eeg[:frames_per_run[r - 1] + LAGS[-1]]

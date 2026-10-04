@@ -71,7 +71,7 @@ from eeg2speech.aligned import two_way_bootstrap
 from mfcc import COEFFICIENTS, LOW, MFCCScaler
 from universal_model import (ACOUSTIC_FRAMES, ACOUSTIC_RATE, SpatialAugmenter, SpatialConfig, UniversalEEGModel,
                              acoustic_targets, aligned_loss, consistency_loss, correlation_loss, decoder_from_spec,
-                             group_covariances, load_trunk, music_negatives, split_views)
+                             group_covariances, load_trunk, music_negatives, person_contrastive, split_views)
 
 ROOT = legacy.ROOT
 CONTRACT = 'universal_eeg_v1'
@@ -117,8 +117,37 @@ def spatial_config(args):
 
 
 def model_spec(args):
-    return dict(virtual=args.virtual, width=args.width, dropout=args.dropout, positional=bool(args.positional),
+    spec = dict(virtual=args.virtual, width=args.width, dropout=args.dropout, positional=bool(args.positional),
                 lag_ms=args.lag_ms, harmonics=args.harmonics, input_norm=args.input_norm)
+    if args.person_dim:
+        spec.update(person_dim=args.person_dim, person_rank=args.person_rank)
+    return spec
+
+
+def calibration_rows(frame, subject, count, exclude_contents=(), salt=''):
+    """``count`` trial indices of one person, deterministic (hash order), avoiding the given sentences."""
+    rows = [i for i, (s, c) in enumerate(zip(frame.subject, frame.content_group)) if s == subject and c not in exclude_contents]
+    rows.sort(key=lambda i: hashlib.sha256(f'calibration:{salt}:{frame.trial_id.iat[i]}'.encode()).hexdigest())
+    return rows[:count]
+
+
+class SpeechCalibration:
+    """Fixed calibration windows of every person of the speech cohorts: their training-sentence trials
+    (never a validation sentence), loaded once (float16), turned into person vectors by the current model."""
+    def __init__(self, full_train, subjects, count):
+        self.windows = {}
+        for subject in sorted(subjects):
+            rows = calibration_rows(full_train.frame, subject, count)
+            items = [full_train[i] for i in rows]
+            self.windows[subject] = (torch.stack([item['eeg'] for item in items]).half(),
+                                     torch.stack([item['channel_mask'] for item in items]), items[0]['channel_xyz'])
+
+    @torch.no_grad()
+    def vectors(self, model, target):
+        out = {}
+        for subject, (eeg, mask, xyz) in self.windows.items():
+            out[subject] = model.person_embedding(eeg.float().to(target), xyz.to(target), mask.to(target), [len(eeg)])[0]
+        return out
 
 
 def load_universal(path):
@@ -178,24 +207,35 @@ def fit_mfcc_scaler(mels):
 
 class Recorder(torch.nn.Module):
     """Forwards to the model and keeps every native-mel output, so evaluate_recovery's own passes
-    (one per control, in CONTROLS order) also yield the MFCC metrics without extra forward passes."""
-    def __init__(self, model):
+    (one per control, in CONTROLS order) also yield the MFCC metrics without extra forward passes.
+
+    With ``persons`` ({subject: vector}) every call also receives the person vector of each row: the calls
+    arrive batch by batch (``batch_size`` rows of ``frame`` in order), one per control, and every control of
+    a row (zero, within-person wrong trial, shuffles) keeps that row's person - the calibration EEG is
+    separate data, the controls only replace the trial's own EEG."""
+    def __init__(self, model, persons=None, frame=None, batch_size=None):
         super().__init__()
         self.inner = model
         self.outputs = []
+        self.persons, self.frame, self.batch_size = persons, frame, batch_size
 
     @property
     def decoder(self):
         return self.inner.decoder
 
     def forward(self, *args, **kwargs):
+        if self.persons is not None:
+            batch = len(self.outputs) // len(CONTROLS)
+            first = batch * self.batch_size
+            subjects = self.frame.subject.iloc[first:first + len(args[0])]
+            kwargs['person'] = torch.stack([self.persons[s] for s in subjects])
         state = self.inner(*args, **kwargs)
         self.outputs.append(state.native_mel.detach().float().cpu())
         return state
 
 
 def evaluate_speech(model, dataset, train_dataset, target, batch_size, templates, scaler, weights, mels, *,
-                    bootstrap=False, include_records=False):
+                    bootstrap=False, include_records=False, persons=None):
     """evaluate_recovery (mel metrics, v3 gate) plus standardised MFCC-80 metrics under the same controls.
 
     ``mfcc_mae`` is the training-loss weighting (c0-c12 full, the rest
@@ -203,7 +243,7 @@ def evaluate_speech(model, dataset, train_dataset, target, batch_size, templates
     ``mfcc_template_mae`` scores the train-fold speech-median template the
     same way.  Gains are control minus real (positive = real EEG better).
     """
-    recorder = Recorder(model)
+    recorder = Recorder(model, persons, dataset.frame, batch_size)
     report = evaluate_recovery(recorder, dataset, train_dataset, target, batch_size, None, bootstrap=bootstrap,
                                templates=templates, include_records=True)
     records = report.pop('records')
@@ -257,11 +297,15 @@ def evaluate_checkpoints(args, paths, cohorts, full_train, templates, scaler, me
     records = {}
     for path in paths:
         model, payload = load_universal(path)
-        model.to(target)
-        entry = dict(update=payload.get('step'), selection_cohort=payload.get('selection_cohort'))
+        model.to(target).eval()
+        persons = None
+        if model.person_dim:
+            persons = SpeechCalibration(full_train, {s for c in cohorts.values() for s in c.frame.subject},
+                                        args.person_eval_windows).vectors(model, target)
+        entry = dict(update=payload.get('step'), selection_cohort=payload.get('selection_cohort'), personal=bool(model.person_dim))
         for name, cohort in cohorts.items():
             report = evaluate_speech(model, cohort, full_train, target, args.batch_size, templates, scaler, weights, mels,
-                                     bootstrap=True, include_records=True)
+                                     bootstrap=True, include_records=True, persons=persons)
             records[(str(path), name)] = {r['trial_id']: r for r in report.pop('records')}
             entry[name] = report
             print(json.dumps({'checkpoint': str(path), 'cohort': name, **summarize(report)}), flush=True)
@@ -287,7 +331,8 @@ def passes_mfcc_controls(report):
 # --- music evaluation ------------------------------------------------------------------
 
 @torch.no_grad()
-def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4, *, domain='music', scaler=None, weights=None):
+def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4, *, domain='music', scaler=None, weights=None,
+                   person_fn=None):
     """Paired controls on continuous windows (music, or continuous speech with ``domain='speech'``):
     zero EEG, time-block shuffle, and a wrong window of the same trial.  With ``scaler`` (speech) the
     weighted standardised MFCC-80 MAE is reported per control as well.
@@ -308,6 +353,7 @@ def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4, *,
         chunk = keys[offset:offset + batch_size]
         data = legacy.move(windows.load(chunk), target)
         wrong = legacy.move(windows.load([windows.shifted(k) for k in chunk]), target)
+        person = person_fn(chunk) if person_fn is not None else None
         for control in controls:
             eeg, mask = data['eeg'], data['channel_mask']
             if control == 'zero':
@@ -317,7 +363,7 @@ def evaluate_music(model, windows, keys, target, batch_size=32, frame_step=4, *,
             elif control == 'wrong_window':
                 eeg, mask = wrong['eeg'], wrong['channel_mask']
             state = model(eeg, data['channel_xyz'], mask, data['time_mask'], domain=domain,
-                          locked=torch.zeros(len(chunk), dtype=torch.bool, device=target))
+                          locked=torch.zeros(len(chunk), dtype=torch.bool, device=target), person=person)
             mae[control].append((state.native_mel - data['mel']).abs().mean((1, 2)).cpu())
             if scaler is not None:
                 cepstral[control].append(((scaler.encode(state.native_mel) - scaler.encode(data['mel'])).abs() * w).sum(1).mean(1).cpu())
@@ -418,8 +464,52 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
             fetch_cache[i] = speech_train[i]
         return fetch_cache[i]
     contents = {c: i for i, c in enumerate(sorted(set(speech_full_train.frame.content_group)))}
-    needs_bank = (args.background_mix > 0 or max(args.mix_same_content, args.mix_start or 0.) > 0 or args.spatial_recolour > 0)
+    personal = args.person_dim > 0
+    needs_bank = (args.background_mix > 0 or max(args.mix_same_content, args.mix_start or 0.) > 0 or args.spatial_recolour > 0
+                  or personal)
     bank = bank_factory(speech_train) if needs_bank else None
+    by_subject = speech_train.frame.groupby('subject').indices
+    train_contents = speech_train.frame.content_group.to_numpy()
+    calibration = (SpeechCalibration(speech_full_train, {s for cohort in speech_cohorts.values() for s in cohort.frame.subject},
+                                     args.person_eval_windows) if personal else None)
+
+    def person_views(sets, xyz):
+        """sets = [(view_a windows, view_b windows)] of (eeg, mask) pairs -> (person vectors, contrastive loss)."""
+        eeg = torch.stack([w[0] for pair in sets for view in pair for w in view]).to(target)
+        mask = torch.stack([w[1] for pair in sets for view in pair for w in view]).to(target)
+        counts = [len(view) for pair in sets for view in pair]
+        vectors = model.person_embedding(eeg, xyz, mask, counts)
+        a, b = vectors[0::2], vectors[1::2]
+        loss = person_contrastive(a, b, args.person_temperature) if len(sets) > 1 else vectors.sum() * 0.
+        return (a + b) / 2, loss
+
+    def speech_persons(subjects, batch_contents, xyz):
+        """Two disjoint calibration sets per person of the batch, from their other sentences only."""
+        order = list(dict.fromkeys(subjects))
+        sets = []
+        for subject in order:
+            pool = [j for j in by_subject[subject] if train_contents[j] not in batch_contents]
+            picks = rng.choice(pool, size=2 * args.person_windows, replace=len(pool) < 2 * args.person_windows)
+            windows = [bank[int(j)] for j in picks]
+            sets.append((windows[:args.person_windows], windows[args.person_windows:]))
+        vectors, loss = person_views(sets, xyz)
+        return vectors[torch.tensor([order.index(s) for s in subjects], device=target)], loss
+
+    def continuous_persons(windows, keys, xyz, generator, count):
+        """Calibration windows from the same listener's other runs (never the run of the window)."""
+        order, sets = [], []
+        for row, _ in keys:
+            subject = windows.frame.subject.iat[row]
+            if subject in order:
+                continue
+            order.append(subject)
+            others = [int(j) for j in windows.by_subject[subject] if int(j) != row] or [row]
+            picks = [(int(others[generator.integers(len(others))]), None) for _ in range(2 * count)]
+            picks = [(j, float(generator.uniform(0., windows.limits[j]))) for j, _ in picks]
+            loaded = [tuple(torch.from_numpy(v) for v in windows.eeg(k)) for k in picks]
+            sets.append((loaded[:count], loaded[count:]))
+        vectors, loss = person_views(sets, xyz)
+        return vectors[torch.tensor([order.index(windows.frame.subject.iat[r]) for r, _ in keys], device=target)], loss
     covariances = {}
     if args.spatial_recolour > 0:
         groups = [f'{SPEECH_DATASET}:{s}' for s in speech_train.frame.subject]
@@ -472,7 +562,10 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
         eeg = pool(eeg, mask, [[bank[j] for j in partners.get(i, [])] for i in ids])
         eeg = background_mix(eeg, mask, [bank[background[i]] if i in background else None for i in ids])
         eeg, mask = augment(eeg, mask, batch['channel_xyz'], [f'{SPEECH_DATASET}:{s}' for s in batch['subject']])
-        state = model(eeg, batch['channel_xyz'], mask, batch['time_mask'], domain='speech')
+        person = person_loss = None
+        if personal:
+            person, person_loss = speech_persons(list(batch['subject']), set(batch['content']), batch['channel_xyz'][0])
+        state = model(eeg, batch['channel_xyz'], mask, batch['time_mask'], domain='speech', person=person)
         mel_mask, speech_mask = speech_frame_masks(batch['oracle_duration_frames'], speech_decoder.mel_times,
                                                    speech_decoder.speech_times)
         indices = torch.tensor([contents[c] for c in batch['content']], device=target)
@@ -491,10 +584,12 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
             parts.update(acoustic=float(low.detach()), envelope_r=float(r[:, 0].mean().detach()), onset_r=float(r[:, 1].mean().detach()))
         if args.consistency_weight > 0:
             first, second = split_views(mask, rng)
-            a = model(eeg * first[:, :, None], batch['channel_xyz'], first, batch['time_mask'], domain='speech')
-            b = model(eeg * second[:, :, None], batch['channel_xyz'], second, batch['time_mask'], domain='speech')
+            a = model(eeg * first[:, :, None], batch['channel_xyz'], first, batch['time_mask'], domain='speech', person=person)
+            b = model(eeg * second[:, :, None], batch['channel_xyz'], second, batch['time_mask'], domain='speech', person=person)
             agree = consistency_loss(a, b, speech_decoder.normalizer, speech_mask)
             loss = loss + args.consistency_weight * agree; parts['consistency'] = float(agree.detach())
+        if personal:
+            loss = loss + args.person_weight * person_loss; parts['person'] = float(person_loss.detach())
         return loss, parts
 
     def music_loss(mel_weight):
@@ -544,8 +639,11 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
                 rows.append([])
         eeg = pool(eeg, mask, rows)
         eeg, mask = augment(eeg, mask, batch['channel_xyz'], batch['group'])
+        person = person_loss = None
+        if personal:
+            person, person_loss = continuous_persons(continuous_train, keys, batch['channel_xyz'][0], rng, args.person_windows)
         state = model(eeg, batch['channel_xyz'], mask, batch['time_mask'], domain='speech',
-                      locked=torch.zeros(len(keys), dtype=torch.bool, device=target))
+                      locked=torch.zeros(len(keys), dtype=torch.bool, device=target), person=person)
         frames = torch.ones(batch['teacher'].shape[:2], dtype=torch.bool, device=target)
         mel_frames_mask = torch.ones(len(keys), batch['mel'].shape[-1], dtype=torch.bool, device=target)
         negatives = music_negatives(batch['piece'], batch['start'], speech_decoder.normalizer(batch['teacher']),
@@ -561,6 +659,8 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
             low, r = correlation_loss(state.acoustic, batch['acoustic'])
             loss = loss + args.acoustic_weight * low
             parts.update(acoustic=float(low.detach()), envelope_r=float(r[:, 0].mean().detach()), onset_r=float(r[:, 1].mean().detach()))
+        if personal:
+            loss = loss + args.person_weight * person_loss; parts['person'] = float(person_loss.detach())
         return loss, parts
 
     def save(path, evaluation=None, complete=False, stop_reason=None):
@@ -631,17 +731,29 @@ def train(args, *, speech_train, speech_full_train, speech_cohorts, templates, s
                     save(progress); return
                 if step % args.eval_every == 0 or step == args.updates:
                     tick = time.monotonic()
+                    model.eval()
+                    persons = calibration.vectors(model, target) if personal else None
                     if use_mfcc:
                         reports = {name: evaluate_speech(model, cohort, speech_full_train, target, args.batch_size, templates,
-                                                         mfcc_scaler, weights, mels) for name, cohort in speech_cohorts.items()}
+                                                         mfcc_scaler, weights, mels, persons=persons)
+                                   for name, cohort in speech_cohorts.items()}
                     else:
                         reports = {name: evaluate(model, cohort, speech_full_train, target, args.batch_size, None,
                                                   bootstrap=False, templates=templates) for name, cohort in speech_cohorts.items()}
                     training = evaluate(model, probe, speech_full_train, target, args.batch_size, None, bootstrap=False, templates=templates)
                     music_reports = {name: evaluate_music(model, windows, music_eval_keys[name], target)
                                      for name, windows in (music_cohorts or {}).items()}
+                    def continuous_person_fn(windows):
+                        if not personal:
+                            return None
+                        def fn(chunk):
+                            with torch.no_grad():
+                                return continuous_persons(windows, chunk, torch.from_numpy(windows.channel_xyz).to(target),
+                                                          np.random.default_rng(13), args.person_eval_windows // 2)[0]
+                        return fn
                     continuous_reports = {name: evaluate_music(model, windows, continuous_eval_keys[name], target, domain='speech',
-                                                               scaler=mfcc_scaler if use_mfcc else None, weights=weights)
+                                                               scaler=mfcc_scaler if use_mfcc else None, weights=weights,
+                                                               person_fn=continuous_person_fn(windows))
                                           for name, windows in (continuous_cohorts or {}).items()}
                     report = reports[select_on]
                     score = report['mfcc_mae'] if args.select_metric == 'mfcc' else report['native_mel_mae']
@@ -732,6 +844,14 @@ def parser():
     # participants
     p.add_argument('--heldout-subjects', type=int, default=4, help='DS004940 participants removed from training entirely')
     p.add_argument('--select-on', choices=['auto', 'seen', 'unseen'], default='auto')
+    p.add_argument('--person-dim', type=int, default=0,
+                   help='data-derived person vector (0 = off): a person encoder over the person\'s own calibration EEG '
+                        'drives a low-rank channel mixing and a FiLM; participant ids only label which windows share a person')
+    p.add_argument('--person-rank', type=int, default=8)
+    p.add_argument('--person-windows', type=int, default=8, help='calibration windows per view during training')
+    p.add_argument('--person-weight', type=float, default=.1, help='person-contrastive loss weight')
+    p.add_argument('--person-temperature', type=float, default=.1)
+    p.add_argument('--person-eval-windows', type=int, default=32, help='calibration trials per person at evaluation')
     p.add_argument('--content-half', type=int, choices=[0, 1], default=None,
                    help='cross-fitting: train on this half of the DS004940 training sentences only (content_halves)')
     p.add_argument('--crossfit-seed', type=int, default=322)

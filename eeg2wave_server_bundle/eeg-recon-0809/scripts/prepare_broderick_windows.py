@@ -11,16 +11,19 @@ EEG onset is sample 0 of every run.
 The EEG window of a 4 s audio window starts 0.25 s before it (EEG_START), and
 there is no EEG before the audio onset, so stimulus time 0 is defined as
 ``AUDIO_OFFSET_S`` = 0.25 s into the audio: the targets
-(scripts/cache_broderick_targets.py) start there and ``onset_sample`` is 0.5 s,
-which puts the EEG of stimulus time t at sample (0.25 + t) * 256 exactly.
+(scripts/cache_broderick_targets.py) start there and ``onset_sample`` is 0.5 s
+(in shard samples), which puts the EEG of stimulus time t at (0.25 + t) s exactly.
 
 The output uses the continuous-window format of app/music.py (MusicWindows):
 the audiobook run plays the role of a "piece", every participant heard every
 run once.  Harmonisation matches the DS004940 shards: 50 Hz notch (Dublin),
 bad electrodes (judged in 1-45 Hz) interpolated with spherical splines,
-average reference, 0.5-45 Hz band-pass, resampled to 256 Hz, volts; the cap
-and channel order (A1..D32) are DS004940's, so the electrode positions are
-copied from a DS004940 shard.
+average reference, 0.5-45 Hz band-pass; the cap and channel order (A1..D32)
+are DS004940's, so the electrode positions are copied from a DS004940 shard.
+Storage is compact so the shards can replace the raw release: the native
+128 Hz rate (all content is below 45 Hz) in float16 microvolts, about 2.2 GB
+for all 19 participants; MusicWindows upsamples each window to 256 Hz
+(manifest column ``sfreq``).
 
 Splits: runs 19-20 are validation, runs 1-18 training, and there is no
 Broderick test role (the protocol test set stays DS004940's).  Runs 19-20 are
@@ -48,13 +51,14 @@ from music import bad_channels, channel_order_hash, ranked
 
 CONTRACT = 'music_eeg_v1'              # the MusicWindows shard layout
 DATASET = 'broderick2018'
-SOURCE_RATE, TARGET_RATE, AUDIO_RATE = 128, 256, 16000
+SOURCE_RATE, AUDIO_RATE = 128, 16000
+STORED_RATE = SOURCE_RATE                # kept native; MusicWindows upsamples windows to 256 Hz
 RUNS = tuple(range(1, 21))
 VALIDATION_RUNS = (19, 20)             # held out by the Broderick trunk pretraining as well
 PARTICIPANTS = tuple(range(1, 20))
 BIOSEMI128 = [f'{bank}{i}' for bank in 'ABCD' for i in range(1, 33)]
 AUDIO_OFFSET_S = .25                    # = -EEG_START: stimulus time 0 is this far into the audio
-ONSET_SAMPLE = int(round(2 * AUDIO_OFFSET_S * TARGET_RATE))
+ONSET_SAMPLE = int(round(2 * AUDIO_OFFSET_S * STORED_RATE))
 DS004940_SHARD = ROOT / 'artifacts/training_data/aligned_v1/shards/aligned_v1/ds004940/sub-001/task-N400Active.h5'
 
 
@@ -67,7 +71,7 @@ def positions():
 
 
 def harmonise(eeg, xyz):
-    """(T, 128) CND samples -> (128, N) float32 volts at 256 Hz, interpolated channel indices."""
+    """(T, 128) CND samples -> (128, T) float16 microvolts at the native 128 Hz, interpolated channel indices."""
     import mne
     data = eeg.T.astype(np.float64)
     if np.median(np.abs(data - np.median(data, 1, keepdims=True))) > 1e-3:
@@ -81,8 +85,7 @@ def harmonise(eeg, xyz):
         raw.interpolate_bads(reset_bads=True, verbose='ERROR')
     raw.set_eeg_reference('average', projection=False, verbose='ERROR')
     raw.filter(.5, 45., verbose='ERROR')
-    raw.resample(TARGET_RATE, npad='auto', verbose='ERROR')
-    return raw.get_data().astype(np.float32), [int(i) for i in bads]
+    return (raw.get_data() * 1e6).astype(np.float16), [int(i) for i in bads]
 
 
 def main():
@@ -109,7 +112,7 @@ def main():
         record = qc.setdefault(f'Subject{subject}', {})
         if not shard.exists():
             with h5py.File(shard.with_suffix('.partial'), 'w') as h5:
-                h5.attrs.update(contract=CONTRACT, dataset=DATASET, subject=f'Subject{subject}', sfreq=TARGET_RATE, unit='V',
+                h5.attrs.update(contract=CONTRACT, dataset=DATASET, subject=f'Subject{subject}', sfreq=STORED_RATE, unit='uV',
                                 reference='average', bandpass_hz=json.dumps([.5, 45.]), montage='biosemi128',
                                 channel_order_hash=channel_order_hash(BIOSEMI128), source=str(cnd))
                 h5.create_dataset('channel_xyz', data=xyz.astype(np.float32))
@@ -129,12 +132,13 @@ def main():
                 k = r - 1
                 bads = json.loads(h5[f'trials/{k:02d}'].attrs['interpolated'])
                 n = h5[f'trials/{k:02d}'].shape[1]
-                record[r] = dict(interpolated=len(bads), eeg_s=round(n / TARGET_RATE, 2), audio_s=round(durations[r], 2))
+                record[r] = dict(interpolated=len(bads), eeg_s=round(n / STORED_RATE, 2), audio_s=round(durations[r], 2))
                 if len(bads) > args.max_bad_fraction * 128:
                     record[r]['excluded'] = 'too many bad electrodes'
                     continue
                 rows.append(dict(dataset=DATASET, subject=f'Subject{subject}', group='all', trial=k, piece=r, repeat=1,
                                  presentation=-1, shard_path=str(shard.relative_to(ROOT)), onset_sample=ONSET_SAMPLE, n_samples=n,
+                                 sfreq=STORED_RATE,
                                  stimulus_duration_s=durations[r] - AUDIO_OFFSET_S, n_bad=len(bads), content_role=content_role[r],
                                  subject_role='heldout' if subject in heldout else 'train'))
         print(f'Subject{subject}: {sum(1 for v in record.values() if "excluded" not in v)}/20 runs, '
@@ -146,7 +150,7 @@ def main():
     samples = []
     for row in fit.itertuples():
         with h5py.File(ROOT / row.shard_path, 'r') as h5:
-            samples.append(h5['trials'][f'{row.trial:02d}'][:, ::64])
+            samples.append(h5['trials'][f'{row.trial:02d}'][:, ::32].astype(np.float32))
     values = np.concatenate(samples, axis=1)
     center = np.median(values, axis=1)
     scale = np.maximum(1.4826 * np.median(np.abs(values - center[:, None]), axis=1), 1e-9)
