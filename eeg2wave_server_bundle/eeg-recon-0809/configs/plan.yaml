@@ -1,0 +1,53 @@
+# Experiment plan.  Windows in seconds; weights = how often a dataset is drawn for a batch.
+# Subjects are split by eegspeech.data.subject_folds (deterministic); nothing uses subject ids as input.
+
+model:
+  virtual: 64            # virtual channels of the spatial attention
+  width: 128
+  dim: 128               # embedding size for the contrastive objectives
+  dropout: 0.1
+  branches: both         # both | phase | power
+
+listen:                  # stage 1: listening EEG -> speech (match-mismatch + cross-person agreement)
+  sources:
+    sparrkulee:    {window: 5.0, weight: 3}
+    broderick2018: {window: 5.0, weight: 1}
+    ds004940:      {window: 3.0, weight: 1}
+  folds: 7               # fold 0 of each dataset is held out for evaluation
+  steps: 8000
+  batch: 32
+  mismatches: 4          # 5-way match-mismatch, chance 20 %
+  partner_fraction: 0.5  # anchors that also get another person's window at the same stimulus time
+  pair_weight: 0.5
+  temperature: 0.1
+  lr: 0.0003
+  weight_decay: 0.05
+  align: true            # Euclidean alignment from each person's own unlabelled EEG
+
+imagery:                 # stage 2: item decoding; heard / spoken / mouthed trials supervise the imagined ones
+  sources:
+    thinking_out_loud: {window: 2.0, modalities: [overt, imagine, visual], target: imagine, weight: 1.0}
+    cpseed:            {window: 2.0, modalities: [overt, mouthed, imagine], target: imagine, weight: 1.0}
+    karaone:           {window: 2.0, modalities: [cue, overt, imagine], target: imagine, weight: 1.0}
+    bci2020:           {window: 2.0, modalities: [imagine], target: imagine, weight: 1.0}
+    chisco:            {window: 2.0, modalities: [imagine], target: imagine, weight: 1.0}
+    marion2021:        {window: 4.0, modalities: [listen, imagine], target: imagine, weight: 0.5}
+  folds: 5               # --fold k holds out fold k of every dataset at once
+  steps: 6000
+  batch: 48
+  aux_weight: 0.5        # loss weight of non-target modalities (spoken, mouthed, heard, visualised)
+  supcon_weight: 0.5
+  temperature: 0.1
+  lr: 0.0003
+  weight_decay: 0.05
+  align: true
+  person_dim: 0          # > 0: person vector from the person's own unlabelled EEG (gated FiLM)
+  person_windows: 4      # windows per calibration set (two disjoint sets per person and step)
+  person_weight: 0.1
+  shots: [1, 5, 10]      # few-shot prototypes from the held-out person's own labelled trials
+
+render:                  # item -> text for the speech rendering of decoded items (macOS `say`)
+  thinking_out_loud: {voice: Mónica, text: {arriba: arriba, abajo: abajo, derecha: derecha, izquierda: izquierda}}
+  karaone: {voice: Samantha, text: {/iy/: ee, /uw/: oo, /piy/: pee, /tiy/: tee, /diy/: dee, /m/: mmm, /n/: nnn,
+                                     pat: pat, pot: pot, knew: knew, gnaw: gnaw}}
+  bci2020: {voice: Samantha, text: {hello: hello, help me: help me, stop: stop, thank you: thank you, yes: yes}}

@@ -1,0 +1,11 @@
+# Python 3.12; the project venv (.venv-aligned-local) sits on the conda env `eegvoice`.
+numpy>=1.26
+scipy>=1.13
+pandas>=2.2
+h5py>=3.11
+torch>=2.5
+mne>=1.8
+PyYAML>=6
+soundfile>=0.12
+requests>=2.31
+openpyxl>=3.1      # BCI 2020 answer sheet

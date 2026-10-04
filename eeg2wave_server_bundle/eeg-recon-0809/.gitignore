@@ -1,48 +1,10 @@
-# Raw dataset trees and user-supplied audio stay local.
-data/ds004940/*
-data/ds006104/*
-!data/ds006104/audio_internal/
-data/ds006104/audio_internal/*
-!data/ds006104/audio_internal/README.md
-!data/ds006104/audio_internal/.gitkeep
-
-# Generated bundle state.
+# Data, stores, runs and environments stay local.
+data/
 artifacts/
-reports/generated/
 outputs/
-checkpoints/
 models/
 logs/
-runs/
-wandb/
+.venv*/
 __pycache__/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 .DS_Store
-
-# EEG/audio and large scientific files (including files nested under data/).
-*.edf
-*.bdf
-*.set
-*.fdt
-*.eeg
-*.vhdr
-*.vmrk
-*.cnt
-*.fif
-*.wav
-*.mp3
-*.flac
-*.ogg
-*.mat
-*.npy
-*.npz
-*.pkl
-*.pt
-*.pth
-*.ckpt
-*.safetensors
-
-# Project-local training environment.
-.venv-aligned-local/
+*.part

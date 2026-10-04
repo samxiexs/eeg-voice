@@ -1,117 +1,97 @@
 # eeg-recon-0809
 
-Experimental code for reconstructing speech from scalp EEG. The goal is imagined speech; perceived-speech EEG is the pre-training stage, and a listen/imagine music set measures how much of it transfers to imagery.
+Decoding **imagined speech** from scalp EEG. Listening EEG, which is plentiful, is the stepping stone:
+an encoder is pretrained on people listening to speech, then trained on items that people hear, speak,
+mouth and imagine, and evaluated on the **imagined trials of people it has never seen**. The output
+waveform is the decoded item rendered as speech.
 
-- **DS004940** (perceived sentences, 128-channel BioSemi): encoder training and the main validation/test protocol.
-- **Broderick 2018** (continuous audiobook, same cap): additional perceived speech without a sentence-onset clock.
-- **Marion 2021** (musicians listening to and imagining the same Bach melodies): the listen -> imagine transfer measurement.
+Earlier work here regressed 4-s spectrograms from listening EEG and generated audio with diffusion.
+Retrieval stayed at chance and the decoder learned to ignore the EEG, while linear analyses showed that
+listening EEG carries little beyond the loudness envelope. That pipeline is in the git history before
+this rewrite.
 
+## Plan
+
+| Step | What | Script |
+|---|---|---|
+| 0. Gates | Linear floor per dataset (alignment + band log-variance + logistic regression). Then a check of whether imagery has stimulus-locked activity that a listening decoder could transfer: inter-subject and split-half correlation, with item-common activity removed | `baseline.py`, `isc.py` |
+| 1. Listen | Match-mismatch (EEG vs 1 matched + 4 mismatched speech segments) plus agreement between two people hearing the same stimulus window. Data: SparrKULee, Broderick, DS004940 | `train.py listen` |
+| 2. Imagery | Item cross-entropy per dataset (non-imagined trials at half weight) plus supervised contrast across modalities: heard, spoken, mouthed and imagined trials of the same item are positives | `train.py imagery --fold k` |
+| 3. Personalisation | No subject ids anywhere. Euclidean alignment uses the person's own unlabelled EEG (always on). Optional person vector from unlabelled calibration windows (gated FiLM, Zhang et al. 2026). Few-shot prototypes from k labelled trials of the new person | `--set person_dim=32`, evaluation |
+| 4. Speech | Decoded item rendered with a macOS `say` voice | `render.py` |
+
+Hypotheses tested by `scripts/run_plan.sh` (paired over the same held-out people):
+- **H1**: listening pretraining helps imagery (`pretrained` vs `scratch`).
+- **H2**: spoken and heard trials help imagery (`scratch` vs `imagined_only`).
+- **P1**: a person vector helps (`person` vs `scratch`).
+
+The encoder is montage-agnostic: spatial attention over electrode positions. It has a phase branch for
+stimulus-locked listening responses and a band-power branch for the non-phase-locked activity of
+imagery (`eegspeech/model.py`).
+
+## Data
+
+All datasets are converted to one HDF5 layout in `artifacts/store/` (`eegspeech/store.py`).
+Raw downloads are deleted after conversion. Rebuild them with `scripts/download.py` and `scripts/prepare.py`.
+
+| Store | Role | People | Content | Size |
+|---|---|---|---|---|
+| `sparrkulee` | listen | 85 | Dutch audiobooks/podcasts, 64-ch, 168 h (Accou et al. 2024) | ~5 GB |
+| `broderick2018` | listen | 19 | English audiobook, 128-ch, 19 h | 2.3 GB |
+| `ds004940` | listen | 22 | English sentences (N400), 128-ch | 2.7 GB |
+| `marion2021` | listen + imagine | 21 | 4 Bach melodies heard and imagined with a metronome, 64-ch | 0.4 GB |
+| `thinking_out_loud` | spoken / inner / visualised | 10 | 4 Spanish words, 128-ch (Nieto et al. 2022) | 0.5 GB |
+| `cpseed` | spoken / mouthed / imagined | 13 | 10 Mandarin Pinyin syllables, 32-ch (Ma et al. 2025) | 0.4 GB |
+| `karaone` | cue / spoken / imagined | 14 | 7 phonemes + 4 words, 62-ch | 0.4 GB |
+| `bci2020` | imagined | 15 | 5 English phrases, 64-ch (BCI Competition 2020, Track 3) | 0.2 GB |
+| `chisco` | imagined | 5 | ~6,600 Chinese sentences, 39 semantic categories, 122-ch (Zhang et al. 2024) | ~3 GB |
+
+Stimulus audio for re-computing listening features stays in `data/ds004940`, `data/ds004408` and `data/marion2021`.
+
+Excluded subjects:
+- cpseed: sub-02 (duplicated session files) and sub-10 (no epoched data).
+- cpseed: sub-16..20. Their files hold 32 unnamed channels whose order matches no known layout.
+- thinking_out_loud: inner and visualised trials that the authors flag for EMG.
+
+## Usage
+
+```bash
+.venv-aligned-local/bin/python -m unittest discover -s tests     # synthetic tests
+python scripts/download.py <dataset>                              # thinking_out_loud | cpseed | bci2020 | sparrkulee | chisco
+python scripts/prepare.py <dataset>                               # -> artifacts/store/<dataset>.h5
+bash scripts/run_plan.sh gates | listen | imagery | report | all  # the plan, finished steps skipped
+python scripts/render.py items thinking_out_loud
+python scripts/render.py decode thinking_out_loud --run outputs/imagery/pretrained_f0 --subject sub-03 --shots 5
 ```
-EEG (128 × 1178, 256 Hz) ─► subject-free encoder ─► compact conditioning ─► conditional diffusion ─► MFCC-80 (80 × 251) ─► inverse DCT ─► log-mel ─► HiFi-GAN ─► 4 s waveform
-                              ▲ CLIP to HuBERT L9, weighted MFCC-80 loss, envelope/onset head
-audio ─► HuBERT layer 9 (fine-tuned) ─► AcousticDecoder ─► mel   (teacher target / decoder ceiling)
-```
 
-MFCC-80 is the orthonormal DCT of the native SpeechT5 log-mel (`app/mfcc.py`). With all 80 coefficients it is exactly invertible, so the audio ceiling is the log-mel one (oracle STOI 0.976, PESQ 3.80); truncating to 13 coefficients drops the pitch harmonics (STOI 0.715, PESQ 1.40), so nothing truncates. What changes against log-mel is only how a loss weights the coefficients.
+`configs/plan.yaml` holds windows, weights, folds, steps and the TTS vocabularies. Use `python` from
+`.venv-aligned-local`, which runs on MPS. Run one heavy process at a time on a 16 GB machine.
 
 ## Layout
 
 ```
-app/                      training, evaluation and analysis (table below)
-app/src/eeg2speech/       shared modules: aligned model, dataset, losses, SpeechT5 front end
-scripts/                  data download/preparation, target caching, run_mfcc_queue.sh
-configs/                  data and experiment configs (aligned_* inherit training_data_v4 → v3 → v2)
-tests/                    unit and regression tests
-data/                     raw datasets (not in git)
-artifacts/                preprocessed shards, target caches, splits (not in git)
-outputs/                  checkpoints, evaluations, exported audio (not in git)
-models/                   HuBERT / HiFi-GAN / SpeechT5 base weights (not in git)
-logs/                     run logs (not in git)
+eegspeech/   store.py signal.py data.py model.py losses.py evaluation.py metrics.py
+scripts/     download.py prepare.py baseline.py isc.py train.py report.py render.py run_plan.sh
+configs/     plan.yaml
+tests/       test_core.py
 ```
 
-| File | Purpose |
-|---|---|
-| `app/aligned_speech.py`, `app/aligned_recovery*.py`, `app/src/eeg2speech/*` | DS004940 dataset, the v3 encoder and its evaluation; hashed into every checkpoint, so left untouched |
-| `app/universal_model.py`, `app/universal_train.py` | subject-free encoder (no participant index): MFCC-80 loss, continuous-speech domain, `--content-half` cross-fitting, `--evaluate-only` |
-| `app/generative_recovery.py` | diffusion decoder: `cache`, `crossfit` (v3), `train` (`--space mfcc|mel`, `--coefficient-weights none|low|std`, `--conditioner v3|universal`), `export`, `compare`, `figures` |
-| `app/mfcc.py` | MFCC-80 transform, per-coefficient scaler, MCD |
-| `app/music.py` | continuous-window loader (`MusicWindows`, used for Broderick) and music utilities |
-| `app/envelope_decoder.py`, `app/broderick_pretrain.py` | envelope decoder (v3 conditioning) and the Broderick envelope trunk used to initialise encoders |
-| `app/audio_comparison.py` | STOI / PESQ / MCD / envelope metrics, 2AFC |
-| `app/marion_imagery_gate.py` | listen -> imagine gate on Marion 2021 (raw EEG, or `--features encoder` for a trained encoder) |
-| `app/feature_decodability.py` | which speech representation EEG can encode (Broderick; `--partial-envelope`) |
-| `app/adapt_local_audio.py`, `app/run_aligned_local.sh` | audio side: HuBERT / HiFi-GAN fine-tuning, AcousticDecoder |
-| `scripts/prepare_broderick_windows.py`, `scripts/cache_broderick_targets.py` | Broderick shards and HuBERT / mel / acoustic targets |
-| `scripts/prepare_training_data.py`, `scripts/convert_marion.py` | DS004940 harmonisation (audit / splits / build), Marion release to HDF5 |
-| `app/marion_transfer.py` | decoders trained on Marion listening, tested on imagery (scratch vs speech-pretrained encoders, linear reference) |
-| `scripts/run_mfcc_queue.sh` | the subject-free generation route, one heavy process at a time |
+## Results so far
 
-## Environment
+Linear floor (accuracy on imagined trials; cross = held-out people, 5 subject folds):
 
-The venv sits on top of the conda environment `eegvoice` (Python 3.12; `requirements-preprocess.txt`):
-
-```bash
-bash app/run_aligned_local.sh setup      # creates .venv-aligned-local and pins transformers 4.57.6
-```
-
-All commands use `.venv-aligned-local/bin/python`; on Apple Silicon the scripts select MPS. On a 16 GB machine run one training process at a time (`run_mfcc_queue.sh` refuses to overlap).
-
-## Data
-
-Only preprocessed EEG is kept on disk (2026-09-27); the raw releases were deleted after every recording was harmonised and checked. Stimulus audio and small metadata stay in `data/` (about 0.9 GB), because targets are recomputed from audio whenever a teacher changes.
-
-| Dataset | Preprocessed EEG | What it holds | Raw release (re-download to rebuild) |
+| Dataset | Chance | Within person | Across people |
 |---|---|---|---|
-| DS004940, N400Active, 17 participants | `artifacts/training_data/aligned_v1` (3.2 GB) | the training / validation / test data of every model; manifest hash-locked into the checkpoints | OpenNeuro ds004940 v1.0.1, `scripts/download_ds004940.sh` |
-| DS004940, N400Passive × 22 + the 5 Active participants above 15 % bad channels | `artifacts/training_data/ds004940_complete` (5.5 GB) | same harmonisation (`configs/training_data_ds004940_complete.yaml`, bad-channel limit 1.0, masks stored per trial) | same |
-| Broderick 2018, 19 × 20 runs | `artifacts/speech_continuous/broderick2018` (2.4 GB shards + 0.6 GB targets) | 128 Hz float16 µV (upsampled to 256 Hz per window by `MusicWindows`); all runs stored, 12 runs of Subject9 flagged in the manifest | Dryad doi:10.5061/dryad.070jc (CND); audio in `data/ds004408/stimuli` |
-| Marion 2021 | `artifacts/marion2021/imagery.h5` (0.8 GB) | the authors' preprocessed release (64 Hz), float32, lossless (`scripts/convert_marion.py`) | Zenodo (Marion et al. 2021) |
-| KaraOne, MUSIN-G | `artifacts/karaone`, `artifacts/music/musin_g` | kept, no longer used | — |
+| thinking_out_loud | 0.250 | 0.276 | 0.264 |
+| cpseed | 0.100 | 0.127 | 0.109 |
+| karaone | 0.091 | 0.120 | 0.118 |
+| bci2020 | 0.200 | 0.302 | 0.198 |
+| marion2021 (music) | 0.250 | 0.402 | 0.273 (0.301 when listening trials join training) |
 
-- DS004940: split by sentence 320 / 41 / 41 with all participants in every split; the test partition is read only under a pre-registered protocol. Rebuilding shards (`prepare_training_data.py audit|build`) needs the raw release again.
-- Broderick: runs 19-20 are validation (never seen by the envelope trunk), 3 participants are held out. `scripts/prepare_broderick_windows.py` and `app/broderick_pretrain.py` need the raw CND; `app/feature_decodability.py` reads the shards.
-- Marion: 21 musicians × {listen, imagine} × 4 Bach chorales × 11 repetitions, 64-channel BioSemi, with a metronome shared by all melodies.
+Stimulus-locking gate on Marion (1-8 Hz, `outputs/isc_marion2021.json`):
+- **Listening**: melody-specific activity is shared across people (ISC 0.28, p = 0.005).
+- **Imagery**: shared activity is entirely melody-common, i.e. metronome or task (ISC 0.19 raw, 0.00 melody-specific).
+- **Imagery within a person**: melody-specific split-half reliability is weak but positive (0.012, above the null in 15/21 people).
 
-## Pipelines
-
-### 1. Audio side (done once)
-
-```bash
-bash app/run_aligned_local.sh download | prepare | references | bootstrap-cache | hubert | hifigan | cache | audio
-```
-
-### 2. Subject-free generation (MFCC-80)
-
-```bash
-bash scripts/run_mfcc_queue.sh tonight     # cache -> two cross-fitting encoders -> MFCC-80 diffusion -> export + compare (~8 h, throttled)
-```
-
-No participant index anywhere: not a model input, and no participant-keyed augmentation; participant ids only split training people from the 4 held-out people. The encoders (CLIP to HuBERT L9 + std-weighted MFCC-80 + envelope/onset head, DS004940 + Broderick) are trained on one half of the training sentences each, so every diffusion training trial is conditioned by an encoder that never saw its sentence. Evaluation is paired against controls on the same trial and noise seed (zero, duration-matched wrong-trial, time-block shuffle, pooled vs pooled-wrong). `python app/universal_train.py --evaluate-only A.pt B.pt --output DIR` compares two encoders on the same trials.
-
-### 3. Analyses
-
-```bash
-python app/marion_imagery_gate.py [--features encoder --encoder CKPT] [--skip-subject-free]
-python app/feature_decodability.py [--partial-envelope]
-```
-
-## Results so far (validation)
-
-- **MFCC-80 vs log-mel diffusion** (same conditioning): plain per-coefficient standardisation loses (decoder ceiling STOI 0.58 vs 0.89) because c0, 96 % of the variance, gets 1/80 of the loss; weighting coefficients by their standard deviation (`--coefficient-weights std`, now the default) matches log-mel (ceiling 0.89, EEG-vs-wrong-trial envelope gain +0.062 vs +0.057). These runs used the participant-layer v3 conditioning and were deleted; the subject-free run is `scripts/run_mfcc_queue.sh tonight`.
-- **Subject-free encoder** (`outputs/universal/mfcc_broderick_seed322`): Broderick held-out runs and people, 3 s retrieval MRR 0.170 vs chance 0.058; on DS004940 no better than the mel-loss baseline in EEG-specific gains (`outputs/universal/compare_mfcc_broderick_vs_speech`).
-- **Listen -> imagine** (Marion, 4-way, chance 25 %): linear raw EEG 30-32 %; encoder features 28-29 %; decoders trained on listening and initialised from either speech encoder 27 % vs 27.5 % from scratch (`outputs/marion2021/transfer.json`) - perceived-speech pre-training does not help the transfer.
-- **What EEG encodes** (Broderick, linear): mel / MFCC ~ the loudness envelope only; HuBERT L9 keeps 0.5 % of variance beyond it.
-
-## Tests
-
-```bash
-.venv-aligned-local/bin/python -m unittest discover -s tests -p "test_*.py"
-```
-
-`tests/test_analysis_traps.py` pins down evaluation mistakes made earlier (oracle-duration shortcut, same-sentence foils, mean vs median template, output-side pooling, gains against a model's own zero-EEG output).
-
-## History
-
-- 2026-09-27: raw EEG replaced by preprocessed shards (DS004940 Active + Passive for all 22 participants, Broderick, Marion); 17,489 DS004940 trials, 380 Broderick runs and the Marion release checked before deletion (the Broderick decodability and the Marion gate reproduce).
-- 2026-09-27: MFCC-80 route added (`app/mfcc.py`, MFCC space in the diffusion decoder and the subject-free encoder, Broderick continuous speech, subject-free conditioner, cross-fitting halves, Marion and feature-decodability analyses). Removed as superseded: KaraOne code, the music preparation route (MUSIN-G / Di Liberto) and `run_universal.sh`, the v3 drivers (`run_aligned_recovery.sh`, `recovery_reports.py`, `linear_envelope_check.py`, augmentation queue), the content analyses (`content_analysis.py`), the 2026-09-19 technical report and its figure script, the old outputs and logs, the MUSIN-G raw data and the ds004408 EEG. Everything tracked can be restored with `git restore <path>`.
-- Earlier: the DS006104 line, the joint MFCC-renderer pipeline, unit-CTC decoding and the v2 data route were removed; the v3 encoder (`outputs/aligned_recovery_v3/full_seed322_positional`) stays as the conditioning of the mel baseline.
+Imagery therefore offers no shared stimulus clock for a listening decoder to lock onto. Transfer has to go
+through representations (spatial and spectral front end, cross-modal item codes) and through per-person calibration.

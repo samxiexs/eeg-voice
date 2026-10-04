@@ -50,15 +50,14 @@ server_bundle/paper-ref/
 # Server bundle: keep code/config/docs, keep data/models/generated outputs local.
 eeg2wave_server_bundle/**
 !eeg2wave_server_bundle/
-# Keep the audited DS004940/DS006104 implementation deliverable while raw EEG,
-# derived artifacts, checkpoints, and local audio remain ignored.
+# Keep the eeg-recon-0809 code while raw EEG, stores, checkpoints and local audio remain ignored.
 !eeg2wave_server_bundle/eeg-recon-0809/
 eeg2wave_server_bundle/eeg-recon-0809/**
 !eeg2wave_server_bundle/eeg-recon-0809/README.md
-!eeg2wave_server_bundle/eeg-recon-0809/app/
-!eeg2wave_server_bundle/eeg-recon-0809/app/**/
-!eeg2wave_server_bundle/eeg-recon-0809/app/**/*.py
-!eeg2wave_server_bundle/eeg-recon-0809/app/*.txt
+!eeg2wave_server_bundle/eeg-recon-0809/.gitignore
+!eeg2wave_server_bundle/eeg-recon-0809/requirements.txt
+!eeg2wave_server_bundle/eeg-recon-0809/eegspeech/
+!eeg2wave_server_bundle/eeg-recon-0809/eegspeech/*.py
 !eeg2wave_server_bundle/eeg-recon-0809/configs/
 !eeg2wave_server_bundle/eeg-recon-0809/configs/*.yaml
 !eeg2wave_server_bundle/eeg-recon-0809/docs/
@@ -68,7 +67,6 @@ eeg2wave_server_bundle/eeg-recon-0809/**
 !eeg2wave_server_bundle/eeg-recon-0809/scripts/*.sh
 !eeg2wave_server_bundle/eeg-recon-0809/tests/
 !eeg2wave_server_bundle/eeg-recon-0809/tests/*.py
-!eeg2wave_server_bundle/eeg-recon-0809/requirements-preprocess.txt
 !eeg2wave_server_bundle/paper-ref/
 !eeg2wave_server_bundle/paper-ref/**/
 !eeg2wave_server_bundle/paper-ref/**/*.md
