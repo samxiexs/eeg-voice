@@ -10,11 +10,14 @@ Every vocabulary item is synthesised with several voices and speaking rates (mac
     mcd      mel-cepstral distance (dB) along a dynamic-time-warping path between two log-mels
     listener Whisper-small: forced choice among the vocabulary (what a listener who knows the
              words would pick) and a free transcription
+    speaker  WavLM speaker-verification embedding (x-vector: timbre, gender) and median F0 (pitch):
+             the voice traits that condition the generator and are checked in its output
 
 Synthesis needs macOS (``say``); everything else runs anywhere (CUDA, MPS or CPU).
 """
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 import shutil
 import subprocess
@@ -38,6 +41,12 @@ VOICES = {                       # natural voices only (no novelty voices); seve
            'Reed (Chinese (China mainland))', 'Sandy (Chinese (China mainland))', 'Shelley (Chinese (China mainland))'],
 }
 RATES_WPM = (150, 185, 220)
+FEMALE = {'Samantha', 'Karen', 'Moira', 'Tessa', 'Mónica', 'Paulina', 'Tingting', 'Meijia', 'Flo', 'Sandy', 'Shelley'}
+
+
+def sex_of(voice):
+    """'F' or 'M' for a synthetic voice (by the first word of its name)."""
+    return 'F' if voice.split()[0] in FEMALE else 'M'
 
 
 def synthesize(text, voice, wpm, path):
@@ -72,6 +81,13 @@ def voiced_span(wave, threshold_db=-35., frame=320, margin=2):
 def trim(wave, threshold_db=-35.):
     a, b = voiced_span(wave, threshold_db)
     return wave[a:b]
+
+
+def level(wave, rms=.05):
+    """Scale a (trimmed) waveform to a common loudness: room recordings and synthetic voices alike."""
+    w = np.asarray(wave, np.float32) - np.mean(wave)
+    r = float(np.sqrt(np.mean(np.square(w)))) if len(w) else 0.
+    return w * (rms / r) if r > 0 else w
 
 
 _EXTRACTOR = None
@@ -177,14 +193,18 @@ class Listener:
 
     ``choose`` scores each item by the log-likelihood of its text given the audio (the best of a few
     spellings: capitalisation and final punctuation, as Whisper writes them), like a listener who
-    knows the vocabulary; ``transcribe`` says what was heard.
+    knows the vocabulary; ``transcribe`` says what was heard.  Whisper pads every clip to 30 s, so
+    its encoder attention costs ~0.1 GB per clip and layer: batches stay small (32 clips swapped a
+    16 GB Mac to a standstill).  On a GPU the model runs in half precision, as Whisper usually does.
     """
 
     def __init__(self, language, device='cpu', path=MODELS / 'whisper_small'):
         from transformers import WhisperForConditionalGeneration, WhisperProcessor
         self.device, self.language = torch.device(device), language
+        self.dtype = torch.float16 if self.device.type in ('cuda', 'mps') else torch.float32
         self.processor = WhisperProcessor.from_pretrained(str(path), local_files_only=True)
-        self.model = WhisperForConditionalGeneration.from_pretrained(str(path), local_files_only=True).to(self.device).eval()
+        self.model = WhisperForConditionalGeneration.from_pretrained(str(path), local_files_only=True).to(
+            device=self.device, dtype=self.dtype).eval()
         tokenizer = self.processor.tokenizer
         self.prefix = tokenizer.convert_tokens_to_ids(['<|startoftranscript|>', f'<|{language}|>', '<|transcribe|>',
                                                        '<|notimestamps|>'])
@@ -203,33 +223,89 @@ class Listener:
     def _encode(self, waves):
         features = self.processor.feature_extractor([np.asarray(w, np.float32) for w in waves], sampling_rate=SAMPLE_RATE,
                                                      return_tensors='pt').input_features
-        return self.model.model.encoder(features.to(self.device)).last_hidden_state
+        return self.model.model.encoder(features.to(self.device, self.dtype)).last_hidden_state
 
     @torch.no_grad()
-    def choose(self, waves, texts, batch=32):
-        """Log-likelihood (n, K) that each text is what the waveform says."""
+    def choose(self, waves, texts, batch=4):
+        """Log-likelihood (n, K) that each text is what the waveform says.
+
+        The task prefix runs once per batch; its cache, whose cross-attention keys and values over the
+        1500 encoder frames are most of the decoder's cost, is shared by every spelling of every text.
+        """
+        from transformers.cache_utils import DynamicCache, EncoderDecoderCache
+        decoder, head = self.model.model.decoder, self.model.proj_out
         variants = [(k, ids) for k, text in enumerate(texts) for ids in self.spellings(text)]
         scores = np.full((len(waves), len(texts)), -np.inf)
         for i in range(0, len(waves), batch):
             encoded = self._encode(waves[i:i + batch])
             n = len(encoded)
+            prefix = decoder(input_ids=torch.tensor([self.prefix] * n, device=self.device), encoder_hidden_states=encoded,
+                             past_key_values=EncoderDecoderCache(DynamicCache(), DynamicCache()), use_cache=True)
+            first = head(prefix.last_hidden_state[:, -1]).float().log_softmax(-1)    # predicts each text's first token
+            cache = prefix.past_key_values
             for k, ids in variants:
-                tokens = torch.tensor([self.prefix + ids] * n, device=self.device)
-                hidden = self.model.model.decoder(input_ids=tokens, encoder_hidden_states=encoded).last_hidden_state
-                start = len(self.prefix) - 1
-                log_prob = self.model.proj_out(hidden[:, start:]).log_softmax(-1)          # predicts ids + <|endoftext|>
-                target = torch.tensor(ids + [self.end], device=self.device)
-                ll = log_prob.gather(-1, target[None, :, None].expand(n, -1, 1)).squeeze(-1).sum(-1)
+                own = EncoderDecoderCache(copy.deepcopy(cache.self_attention_cache), cache.cross_attention_cache)
+                hidden = decoder(input_ids=torch.tensor([ids] * n, device=self.device), encoder_hidden_states=encoded,
+                                 past_key_values=own, use_cache=True).last_hidden_state
+                log_prob = head(hidden).float().log_softmax(-1)                       # predicts ids[1:] + <|endoftext|>
+                target = torch.tensor(ids[1:] + [self.end], device=self.device)
+                ll = first[:, ids[0]] + log_prob.gather(-1, target[None, :, None].expand(n, -1, 1)).squeeze(-1).sum(-1)
                 scores[i:i + n, k] = np.maximum(scores[i:i + n, k], ll.float().cpu().numpy())
         return scores
 
     @torch.no_grad()
-    def transcribe(self, waves, batch=32):
+    def transcribe(self, waves, batch=4):
         out = []
         for i in range(0, len(waves), batch):
             features = self.processor.feature_extractor([np.asarray(w, np.float32) for w in waves[i:i + batch]],
                                                          sampling_rate=SAMPLE_RATE, return_tensors='pt').input_features
-            ids = self.model.generate(features.to(self.device), language=self.language, task='transcribe',
+            ids = self.model.generate(features.to(self.device, self.dtype), language=self.language, task='transcribe',
                                       max_new_tokens=24)
             out += [t.strip() for t in self.processor.batch_decode(ids, skip_special_tokens=True)]
         return out
+
+
+class Speaker:
+    """WavLM speaker-verification embedding (unit x-vector, 512-d) of the voiced part of each waveform."""
+
+    def __init__(self, device='cpu', path=MODELS / 'wavlm_base_plus_sv'):
+        from transformers import Wav2Vec2FeatureExtractor, WavLMForXVector
+        self.device = torch.device(device)
+        self.extractor = Wav2Vec2FeatureExtractor.from_pretrained(str(path), local_files_only=True)
+        self.model = WavLMForXVector.from_pretrained(str(path), local_files_only=True).to(self.device).eval()
+
+    @torch.no_grad()
+    def __call__(self, waves):
+        out = []
+        for wave in waves:                     # one at a time: clips differ in length
+            w = trim(np.asarray(wave, np.float32))
+            if len(w) < SAMPLE_RATE:             # short words are repeated to 1 s (the x-vector needs > 0.3 s)
+                w = np.tile(w, int(np.ceil(SAMPLE_RATE / max(len(w), 1))))
+            inputs = self.extractor(w, sampling_rate=SAMPLE_RATE, return_tensors='pt')
+            embedding = self.model(**{k: v.to(self.device) for k, v in inputs.items()}).embeddings
+            out.append(torch.nn.functional.normalize(embedding, dim=-1)[0].cpu().numpy())
+        return np.stack(out).astype(np.float32)
+
+
+def pitch(wave, rate=SAMPLE_RATE, fmin=60., fmax=500., frame=640, hop=160, threshold=.15):
+    """Median F0 (Hz) over the voiced frames (YIN, de Cheveigne & Kawahara 2002); NaN without voicing."""
+    w = np.asarray(wave, np.float64)
+    if len(w) <= frame:
+        return float('nan')
+    frames = np.lib.stride_tricks.sliding_window_view(w, frame)[::hop]
+    loud = frames.std(1)
+    frames = frames[loud > .1 * loud.max()]
+    lag_max, lag_min = min(int(rate / fmin), frame // 2), int(rate / fmax)
+    width = frame - lag_max
+    d = np.stack([np.square(frames[:, :width] - frames[:, lag:lag + width]).sum(1) for lag in range(lag_max)], 1)
+    norm = d[:, 1:] / np.maximum(np.cumsum(d[:, 1:], 1) / np.arange(1, lag_max), 1e-12)
+    f0 = []
+    for row in norm:                           # row[l - 1] is the normalised difference at lag l
+        below = np.flatnonzero(row[lag_min - 1:] < threshold)
+        if len(below):
+            lag = lag_min + below[0]
+            while lag < lag_max - 1 and row[lag] < row[lag - 1]:      # walk down to the local minimum
+                lag += 1
+            f0.append(rate / lag)
+    return float(np.median(f0)) if len(f0) >= 3 else float('nan')
+

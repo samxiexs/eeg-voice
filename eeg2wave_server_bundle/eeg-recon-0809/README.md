@@ -17,16 +17,21 @@ a CLIP speech space and a diffusion decoder producing the audio.
 
 ## Reconstruction (`scripts/reconstruct.py`)
 
+The output has two parts: the content (what is said, decoded from EEG) and the voice (who says it: sex,
+timbre, pitch). The voice comes from the person's own speech, never from EEG or an identity input.
+Speech neuroprostheses work the same way: the content is decoded, the voice is the user's own.
+
 | Step | What |
 |---|---|
-| Targets | Each vocabulary item is spoken by 8-12 macOS voices at 3 rates. Each rendering gets a SpeechT5 log-mel and HuBERT embeddings |
-| CLIP space | Anchors `a_k` are the items' HuBERT embeddings (best layer by held-out-voice identification), centred, PCA to K-1 dimensions |
-| Encoder | Per person: Euclidean alignment (from the person's unlabelled EEG), full-band log-power of every channel in 7 bands, and a linear map into the CLIP space. Trained with InfoNCE in both directions (EEG <-> speech) and optional supervised contrast across modalities. No identity input anywhere: personalisation comes from the person's own calibration trials. Settings come from inner cross-validation |
-| Decoder | Mel diffusion (v-prediction, adaLN-zero blocks, DDIM) conditioned on `e = sum_k p_k a_k`. It is trained on speech alone with synthetic posteriors (Dirichlet; the spoken item is drawn from `p`), with classifier-free guidance. EEG never enters its training |
-| Generation | Held-out trial -> calibrated `p(k \| EEG)` -> `e` -> mel -> SpeechT5 HiFi-GAN -> 16 kHz. Posterior sharpness and guidance are chosen on cross-fitted training trials |
-| Measures | What the speech is heard as: Whisper-small forced choice among the vocabulary (listener), smallest DTW mel-cepstral distance (MCD), nearest HuBERT centroid. Also the MCD to the true item |
-| Controls | Another trial of the same person (wrong), no condition (prior), the true item's anchor (oracle = decoder ceiling). EEG vs wrong is tested per person (Wilcoxon) |
-| Listening | `outputs/reconstruct/index.html` holds the numbers and links pages with reference, reconstruction and controls for each person and fold |
+| Targets | Each vocabulary item is spoken by 8-12 macOS voices at 3 rates, and in KaraOne by every participant (their Kinect recordings of the spoken trials, `prepare.py karaone_voices`). Each clip gets a SpeechT5 log-mel, HuBERT embeddings, a WavLM speaker embedding and its median F0 |
+| Content (CLIP) | Anchors `a_k` are the items' HuBERT embeddings (synthetic clips, best layer by held-out-voice identification), centred, PCA to K-1 dimensions |
+| Encoder | Per person: Euclidean alignment (from the person's unlabelled EEG), full-band log-power of every channel in 7 bands, and a linear map into the CLIP space. Trained with InfoNCE in both directions (EEG <-> speech) and optional supervised contrast across modalities. Personalisation comes from the person's own calibration trials. Settings come from inner cross-validation |
+| Voice | The traits of a voice are its mean speaker embedding (timbre, sex) and median log F0 (pitch). KaraOne participants speak in their own voice. BCI2020 and TOL recorded neither voices nor sexes, so each person is assigned a synthetic voice in turn |
+| Decoder | Mel diffusion (v-prediction, adaLN-zero blocks, DDIM) conditioned on the content `e = sum_k p_k a_k` (whitened, so near-homophones stay distinct) and on the voice traits. Trained on speech alone: synthetic posteriors (Dirichlet; the spoken item is drawn from `p`), each clip with its own voice's traits. Classifier-free guidance acts on the content only |
+| Generation | Held-out trial -> calibrated `p(k \| EEG)` -> `e`, plus the person's voice -> mel -> SpeechT5 HiFi-GAN -> 16 kHz. Posterior sharpness and guidance are chosen on cross-fitted training trials |
+| Measures | Content: Whisper-small forced choice among the vocabulary (listener), smallest DTW mel-cepstral distance to the person's voice saying each item (MCD), nearest HuBERT centroid. Voice: speaker identification among the dataset's voices, sex (F0 above 145 Hz = female), pitch error in semitones |
+| Controls | Another trial of the same person (wrong), no content (prior), the true item (oracle = decoder ceiling). EEG vs wrong is tested per person (Wilcoxon). Prior and oracle ignore the trial's EEG and are generated for 2 trials per person and item |
+| Listening | `outputs/reconstruct/index.html` holds the numbers and links pages: the true item in the person's voice, then the reconstruction and controls, for each person and fold |
 
 Protocol: within person. Fold k holds out the k-th contiguous fifth of every person's trials in every
 modality. Vocabularies: Thinking Out Loud (4 Spanish words), BCI2020 (5 English phrases), KaraOne
@@ -99,6 +104,22 @@ Personal CLIP encoder vs logistic regression, same within-person folds (imagined
 The encoder therefore uses dot-product logits; inner cross-validation decides on supervised contrast and
 on the person's non-imagined trials.
 
-Reconstruction: run `bash scripts/run_plan.sh reconstruct`. Numbers land in
-`outputs/reconstruct/summary.json`. Expect the EEG reconstructions to be identified about as often as
-the encoder is right; the oracle row is the decoder's ceiling.
+First reconstruction run, 2026-10-05: content only, with a random synthetic voice per sample
+(`outputs/reconstruct_v1/`). That design put the reconstruction in a different voice from the reference;
+its voice-aware successor writes to `outputs/reconstruct/`. All 5 within-person folds, so every imagined trial is held out once.
+The table gives the share of generated utterances identified as the true item: Whisper forced choice / MCD / HuBERT.
+
+| Dataset (chance) | Encoder | From EEG | Wrong trial | Prior | Oracle (decoder ceiling) | EEG > wrong trial |
+|---|---|---|---|---|---|---|
+| bci2020 (0.20) | 0.363 | **0.340 / 0.361 / 0.357** | 0.201 / 0.200 / 0.202 | 0.205 / 0.200 / 0.197 | 0.896 / 0.990 / 0.967 | 15/15 people, p < 0.001 |
+| thinking_out_loud (0.25) | 0.290 | **0.288 / 0.291 / 0.274** | 0.245 / 0.246 / 0.248 | 0.251 / 0.240 / 0.247 | 0.848 / 0.971 / 0.787 | 8/10 people, p = 0.007 (Whisper) |
+| karaone (0.091) | 0.148 | **0.114 / 0.134 / 0.122** | 0.099 / 0.096 / 0.109 | 0.093 / 0.093 / 0.093 | 0.477 / 0.822 / 0.709 | 12/14 people, p = 0.002 (MCD) |
+
+- **The speech says what the encoder decoded.** When the encoder is right, the generated speech is heard as
+  the right item 86-99 % of the time (Thinking Out Loud, BCI2020); when it is wrong, almost never. For these two datasets
+  the bottleneck is decoding the EEG, not generating speech.
+- **KaraOne has a second bottleneck in the decoder.** Even from the true anchor, Whisper rarely hears /n/, /piy/,
+  /tiy/ or /diy/ (0.07-0.28), while words and vowels are heard well (0.67-0.99). KaraOne records phonemes first and
+  words last, so single folds hold only some items. Only the pooled numbers are balanced.
+- MCD to the true item does not rank the conditions: prior samples are "average" speech and score closer than
+  crisp wrong words. Read the identification rates instead.

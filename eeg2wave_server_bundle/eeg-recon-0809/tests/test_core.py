@@ -123,19 +123,22 @@ class ReconstructionTest(unittest.TestCase):
 
     def test_diffusion_is_conditional_and_seeded(self):
         torch.manual_seed(0)
-        model = MelDiffusion(3, bins=8, frames=16, hidden=32, blocks=2, heads=2, timesteps=50)
+        model = MelDiffusion(3, bins=8, frames=16, hidden=32, blocks=2, heads=2, timesteps=50, trait_dim=5)
         x0, c, null = torch.randn(4, 8, 16), torch.randn(4, 3), torch.tensor([True, False, False, False])
+        traits = torch.randn(4, 5)
         optimizer = torch.optim.Adam(model.parameters(), 1e-2)
         for _ in range(5):
             optimizer.zero_grad()
-            model.loss(x0, c, null).backward()
+            model.loss(x0, c, null, traits).backward()
             optimizer.step()
-        x, t = torch.randn(1, 8, 16), torch.tensor([10])
-        e = [model.embed(torch.full((1, 3), v), torch.tensor([False])) for v in (0., 1.)]
-        self.assertFalse(torch.allclose(model(x, t, e[0]), model(x, t, e[1])))    # the condition reaches the output
+        x, t, no = torch.randn(1, 8, 16), torch.tensor([10]), torch.tensor([False])
+        e = [model.embed(torch.full((1, 3), v), no, traits[:1]) for v in (0., 1.)]
+        self.assertFalse(torch.allclose(model(x, t, e[0]), model(x, t, e[1])))    # the content reaches the output
+        e = [model.embed(c[:1], no, traits[i:i + 1]) for i in (0, 1)]
+        self.assertFalse(torch.allclose(model(x, t, e[0]), model(x, t, e[1])))    # and so does the voice
         ema = EMA(model, .9)
         ema.update(model)
-        a, b = (ema.model.sample(c, steps=5, generator=torch.Generator().manual_seed(0)) for _ in range(2))
+        a, b = (ema.model.sample(c, traits=traits, steps=5, generator=torch.Generator().manual_seed(0)) for _ in range(2))
         torch.testing.assert_close(a, b)
         mel = torch.full((1, 80, 10), -10.)
         mel[:, :, 3:7] = -2.

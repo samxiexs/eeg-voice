@@ -2,11 +2,12 @@
 classifier-free guidance (ported from this project's earlier generative decoder).
 
 The network is a stack of adaLN-zero residual blocks (dilated depthwise convolution, self-attention
-in every other block, MLP) over mel frames.  The condition is one vector per example (a point of
-the CLIP speech space: the EEG prediction or a speech embedding of the target).  It is embedded,
-added to the timestep embedding that modulates every block (class conditioning as in DiT) and also
-added to every input frame, so the content is present from the first layer.  A learned null
-condition, used for a fraction of the training examples, gives classifier-free guidance.
+in every other block, MLP) over mel frames.  It has two conditions: the content (a point of the CLIP
+speech space: the EEG prediction or the item's anchor) and the voice traits (speaker embedding and
+pitch of the voice to speak in).  Their embeddings are summed, added to the timestep embedding that
+modulates every block (class conditioning as in DiT) and to every input frame.  A learned null
+content, used for a fraction of the training examples, gives classifier-free guidance on the content;
+the voice is always given, so guidance sharpens what is said, not who says it.
 """
 from __future__ import annotations
 
@@ -58,18 +59,21 @@ class Block(nn.Module):
 
 
 class MelDiffusion(nn.Module):
-    """p(mel | condition vector) over normalised (bins, frames) log-mels."""
+    """p(mel | content, voice traits) over normalised (bins, frames) log-mels."""
 
-    def __init__(self, condition_dim, bins=80, frames=96, hidden=192, blocks=8, heads=4, dropout=.1, timesteps=1000):
+    def __init__(self, condition_dim, bins=80, frames=96, hidden=192, blocks=8, heads=4, dropout=.1, timesteps=1000,
+                 trait_dim=0):
         super().__init__()
         self.config = dict(condition_dim=condition_dim, bins=bins, frames=frames, hidden=hidden, blocks=blocks,
-                           heads=heads, dropout=dropout, timesteps=timesteps)
+                           heads=heads, dropout=dropout, timesteps=timesteps, trait_dim=trait_dim)
         self.bins, self.frames, self.hidden, self.timesteps = bins, frames, hidden, timesteps
         self.input = nn.Conv1d(bins, hidden, 3, padding=1)
         self.position = nn.Parameter(torch.randn(1, frames, hidden) * .02)
         self.time = nn.Sequential(nn.Linear(hidden, 2 * hidden), nn.SiLU(), nn.Linear(2 * hidden, hidden))
         self.condition = nn.Sequential(nn.Linear(condition_dim, 2 * hidden), nn.SiLU(), nn.Linear(2 * hidden, hidden))
         self.null = nn.Parameter(torch.zeros(hidden))
+        self.traits = (nn.Sequential(nn.Linear(trait_dim, 2 * hidden), nn.SiLU(), nn.Linear(2 * hidden, hidden))
+                       if trait_dim else None)
         self.inject = nn.Linear(hidden, hidden)                  # condition added to every input frame
         nn.init.zeros_(self.inject.weight); nn.init.zeros_(self.inject.bias)
         dilations = (1, 2, 4, 8)
@@ -81,10 +85,11 @@ class MelDiffusion(nn.Module):
         alpha_bar = torch.cos((steps + .008) / 1.008 * math.pi / 2) ** 2
         self.register_buffer('alpha_bar', (alpha_bar / alpha_bar[0]).clamp(1e-5, 1.).float())   # index t in [0, T]
 
-    def embed(self, c, null):
-        """Condition embedding; rows with ``null`` True get the learned null embedding."""
+    def embed(self, c, null, traits=None):
+        """Content embedding (the learned null where ``null``) plus the voice-trait embedding."""
         e = self.condition(c)
-        return torch.where(null[:, None], self.null.expand_as(e), e)
+        e = torch.where(null[:, None], self.null.expand_as(e), e)
+        return e if self.traits is None else e + self.traits(traits)
 
     def forward(self, x, t, e):
         """x (B, bins, frames) noisy normalised mel, t (B,) step in [1, T], e (B, hidden) condition embedding."""
@@ -94,21 +99,21 @@ class MelDiffusion(nn.Module):
             h = block(h, e)
         return self.output(self.output_norm(h).transpose(1, 2))
 
-    def loss(self, x0, c, null):
+    def loss(self, x0, c, null, traits=None):
         t = torch.randint(1, self.timesteps + 1, (len(x0),), device=x0.device)
         ab = self.alpha_bar[t][:, None, None]
         noise = torch.randn_like(x0)
         xt = ab.sqrt() * x0 + (1 - ab).sqrt() * noise
         v = ab.sqrt() * noise - (1 - ab).sqrt() * x0
-        return F.mse_loss(self(xt, t, self.embed(c, null)), v)
+        return F.mse_loss(self(xt, t, self.embed(c, null, traits)), v)
 
     @torch.no_grad()
-    def sample(self, c, *, null=None, steps=50, guidance=2., generator=None, clamp=(-3., 4.)):
-        """DDIM (eta = 0) with classifier-free guidance on v; ``null`` rows are sampled unconditionally."""
+    def sample(self, c, *, traits=None, null=None, steps=50, guidance=2., generator=None, clamp=(-3., 4.)):
+        """DDIM (eta = 0) with classifier-free guidance on the content; ``null`` rows have no content."""
         batch, device = c.shape[0], c.device
         null = torch.zeros(batch, dtype=torch.bool, device=device) if null is None else null
-        e_c = self.embed(c, null)
-        e_u = self.null.expand(batch, -1)
+        e_c = self.embed(c, null, traits)
+        e_u = self.embed(c, torch.ones_like(null), traits)                 # same voice, no content
         x = torch.randn(batch, self.bins, self.frames, generator=generator).to(device)
         schedule = torch.linspace(self.timesteps, 0, steps + 1).round().long().tolist()
         for t, t_next in zip(schedule[:-1], schedule[1:]):

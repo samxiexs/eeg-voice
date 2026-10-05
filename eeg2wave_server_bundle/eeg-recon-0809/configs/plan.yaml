@@ -50,19 +50,23 @@ imagery:                 # stage 2: item decoding; heard / spoken / mouthed tria
   person_weight: 0.1
   shots: [1, 5, 10]      # few-shot prototypes from the held-out person's own labelled trials
 
-reconstruct:             # imagined speech -> speech (scripts/reconstruct.py); within-person protocol
+reconstruct:             # imagined speech -> speech in the person's voice (scripts/reconstruct.py); within person
   datasets:              # text: what the synthetic voices say for each item (also the listener's vocabulary)
-    thinking_out_loud:
+    thinking_out_loud:   # voices: own = the participants' recordings; cycle = synthetic voices assigned in turn
       modalities: [overt, imagine, visual]
       target: imagine
+      voices: cycle      # neither voices nor sexes were recorded
       text: {arriba: arriba, abajo: abajo, derecha: derecha, izquierda: izquierda}
     bci2020:
       modalities: [imagine]
       target: imagine
+      voices: cycle      # neither voices nor sexes were recorded
       text: {hello: hello, help me: help me, stop: stop, thank you: thank you, 'yes': 'yes'}
     karaone:
       modalities: [cue, overt, imagine]
       target: imagine
+      voices: own        # Kinect recordings of every spoken trial (scripts/prepare.py karaone_voices)
+      decoder_steps: 30000   # 26 voices (12 synthetic + 14 participants) x 11 items
       text: {/iy/: ee, /uw/: oo, /piy/: pee, /tiy/: tee, /diy/: dee, /m/: mmm, /n/: nnn,
              pat: pat, pot: pot, knew: knew, gnaw: gnaw}
   folds: 5               # fold k = the k-th contiguous fifth of every person's trials of every modality
@@ -74,10 +78,10 @@ reconstruct:             # imagined speech -> speech (scripts/reconstruct.py); w
     temperature: 0.1     # supervised contrast
     steps: 300           # L-BFGS iterations or Adam steps
     lr: 0.01             # Adam
-  decoder:               # mel diffusion conditioned on the CLIP speech space, trained on speech alone
+  decoder:               # mel diffusion conditioned on content and voice traits, trained on speech alone
     hidden: 192
     blocks: 8
-    steps: 8000
+    steps: 20000
     batch: 64
     lr: 0.0003
     ema: 0.999
@@ -87,6 +91,7 @@ reconstruct:             # imagined speech -> speech (scripts/reconstruct.py); w
     sample_steps: 50     # DDIM
     guidance: [1, 2, 3, 4]
     sharpness: [1, .inf] # multiplies the calibrated posterior temperature; .inf = the encoder's decision
-    select_by: [listener, mcd]   # identification measures that choose the operating point
+    select_by: [mcd]     # measure that chooses the operating point (the Whisper listener is ~20x slower)
     select_trials: 150   # cross-fitted training trials per operating point
   listen_trials: 8       # trials per person on the listening page
+  control_trials: 2      # prior and oracle samples per person and item (they ignore the trial's EEG)

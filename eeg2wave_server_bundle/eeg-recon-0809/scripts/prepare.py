@@ -1,6 +1,7 @@
 """Convert a downloaded dataset into the common store (``artifacts/store/<name>.h5``).
 
     python scripts/prepare.py <dataset> [--force]
+    python scripts/prepare.py karaone_voices          # the KaraOne participants' own speech recordings
 
 Common conventions: microvolts (SparrKULee keeps its normalised units) and average reference over
 valid channels.  Imagined-speech datasets keep the full band (0.5-120 Hz at 256 Hz; CPSEED ships
@@ -142,6 +143,31 @@ def karaone(out, keep_raw=False):
             (root / f'{person}.tar.bz2').unlink()
     merge(sorted(parts.glob('*.h5')), out)
     shutil.rmtree(parts)
+    return True
+
+
+def karaone_voices(out, keep_raw=False):
+    """KaraOne participants' own speech: the Kinect recording of every spoken trial (16 kHz, one wav per
+    trial, ``labels.txt`` in trial order) -> ``artifacts/audio/karaone/persons/<person>/``, the voice each
+    person's reconstruction speaks in.  Archives are downloaded one at a time and deleted afterwards."""
+    import tarfile
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    import download
+    for person in download.KARAONE_PEOPLE:
+        folder = out / person
+        if (folder / 'labels.txt').exists():                     # written last: the person is complete
+            continue
+        download.run(download.karaone(argparse.Namespace(subject=person)), workers=1)
+        archive_path = RAW / 'karaone' / f'{person}.tar.bz2'
+        folder.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive_path, 'r:bz2') as archive:
+            members = [m for m in archive if m.isfile() and '/kinect_data/' in m.name
+                       and (m.name.endswith('.wav') or m.name.endswith('/labels.txt'))]
+            for m in sorted(members, key=lambda m: m.name.endswith('labels.txt')):
+                (folder / Path(m.name).name).write_bytes(archive.extractfile(m).read())
+        print(person, len(members) - 1, 'recordings', flush=True)
+        if not keep_raw:
+            archive_path.unlink()
     return True
 
 
@@ -439,11 +465,14 @@ SOURCES = dict(karaone=karaone, thinking_out_loud=thinking_out_loud, cpseed=cpse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('dataset', choices=sorted(SOURCES))
+    parser.add_argument('dataset', choices=sorted(SOURCES) + ['karaone_voices'])
     parser.add_argument('--force', action='store_true')
     parser.add_argument('--keep-raw', action='store_true', help='chisco / karaone: keep the downloaded raw files')
     parser.add_argument('--subjects', nargs='*', help='chisco: only these subjects, e.g. --subjects 03')
     args = parser.parse_args()
+    if args.dataset == 'karaone_voices':
+        karaone_voices(ROOT / 'artifacts' / 'audio' / 'karaone' / 'persons', keep_raw=args.keep_raw)
+        sys.exit(0)
     target = STORE / f'{args.dataset}.h5'
     if target.exists() and not args.force:
         raise SystemExit(f'{target} exists (use --force to rebuild)')

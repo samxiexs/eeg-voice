@@ -47,18 +47,21 @@ report() {
   $PY scripts/report.py "$IMAGERY_OUT" --reference scratch --json "$IMAGERY_OUT/summary.json"
 }
 
-reconstruct() {    # targets need macOS `say` (copy artifacts/audio to run elsewhere); then decoder, folds, report
+reconstruct() {    # targets need macOS `say` (copy artifacts/audio to run elsewhere); decoders, then folds, report
   for d in $RECON_DATASETS; do
     [ -f "artifacts/audio/$d.npz" ] || $PY scripts/reconstruct.py targets --datasets "$d" 2>&1 | tee -a logs/reconstruct_targets.log
     [ -f "outputs/reconstruct/decoders/$d.pt" ] || $PY scripts/reconstruct.py decoder --datasets "$d" 2>&1 \
-      | tee "logs/decoder_$d.log" || { echo "FAILED decoder $d"; continue; }
-    for f in $FOLDS; do
+      | tee "logs/decoder_$d.log" || echo "FAILED decoder $d"
+  done
+  for f in $FOLDS; do                 # fold by fold, so every dataset has a first result early
+    for d in $RECON_DATASETS; do
       [ -f "outputs/reconstruct/f$f/$d/summary.json" ] && continue
+      [ -f "outputs/reconstruct/decoders/$d.pt" ] || continue
       $PY scripts/reconstruct.py run --datasets "$d" --fold "$f" 2>&1 | tee "logs/reconstruct_${d}_f$f.log" \
         || echo "FAILED reconstruct $d fold $f"
     done
+    $PY scripts/reconstruct.py report || echo "FAILED report"
   done
-  $PY scripts/reconstruct.py report
 }
 
 case "${1:-all}" in
