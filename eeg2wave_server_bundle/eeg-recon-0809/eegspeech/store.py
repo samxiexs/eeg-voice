@@ -70,7 +70,9 @@ class StoreWriter:
             return
         group = self.file['subjects'].create_group(subject)
         group.attrs['channels'] = json.dumps(list(channels))
-        group.create_dataset('xyz', data=np.asarray(xyz, np.float32))
+        xyz = np.asarray(xyz, np.float32)
+        located = np.isfinite(xyz).all(1) & (np.linalg.norm(np.nan_to_num(xyz), axis=1) > 1e-6)
+        group.create_dataset('xyz', data=np.where(located[:, None], xyz, 0).astype(np.float32))
         total = sum(s['eeg'].shape[-1] for s in segments)
         eeg = group.create_dataset('eeg', (len(channels), total), np.float16, chunks=(len(channels), min(total, 2048)))
         table = np.zeros(len(segments), SEGMENT_DTYPE)
@@ -86,7 +88,7 @@ class StoreWriter:
                         self._index(self.items, s.get('item')),
                         stimulus if isinstance(stimulus, (int, np.integer)) else self._index(self.stimuli, stimulus),
                         s.get('offset', np.nan))
-            valid[i] = s.get('valid', np.ones(len(channels), bool))
+            valid[i] = np.asarray(s.get('valid', np.ones(len(channels), bool)), bool) & located   # no position: unusable
             position += x.shape[1]
         group.create_dataset('segments', data=table)
         group.create_dataset('valid', data=valid)
@@ -136,9 +138,6 @@ class Store:
 
     def xyz(self, subject):
         return self.file['subjects'][subject]['xyz'][:]
-
-    def valid(self, subject, segment):
-        return self.file['subjects'][subject]['valid'][segment]
 
     def load(self, subjects=None):
         """Cache the EEG of these subjects in memory (float16), for the small trial datasets."""

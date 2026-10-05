@@ -9,3 +9,5 @@ PyYAML>=6
 soundfile>=0.12
 requests>=2.31
 openpyxl>=3.1      # BCI 2020 answer sheet
+transformers>=4.40 # SpeechT5 HiFi-GAN, HuBERT, Whisper (scripts/reconstruct.py)
+huggingface_hub>=0.23

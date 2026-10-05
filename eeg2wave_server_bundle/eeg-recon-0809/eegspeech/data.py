@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 from .model import RATE
-from .signal import FEATURE_RATE, resample
+from .signal import FEATURE_RATE, bandpass, resample
 from .store import Store
 
 
@@ -59,9 +59,18 @@ def subject_folds(subjects, folds=5, seed=0):
     return {s: i % folds for i, s in enumerate(order)}
 
 
+def within_fold(table, folds, fold):
+    """Table rows held out by fold ``fold`` of the within-person protocol: the fold-th contiguous part
+    of every (person, modality), in recording order, so back-to-back repetitions stay on one side."""
+    return np.array([i for _, part in table.groupby(['subject', 'modality_name'])
+                     for i in np.array_split(part.index.to_numpy(), folds)[fold]], int)
+
+
 class Source:
-    def __init__(self, store: Store, subjects, *, align=True, rng=None):
-        self.store, self.align = store, align
+    """``rate``: the model's input rate; ``max_hz``: optional low-pass (e.g. 45 Hz to exclude high-frequency EMG)."""
+
+    def __init__(self, store: Store, subjects, *, align=True, rng=None, rate=RATE, max_hz=None):
+        self.store, self.align, self.rate, self.max_hz = store, align, int(rate), max_hz
         self.subjects = sorted(set(subjects) & set(store.subjects))
         self.rng = rng or np.random.default_rng(0)
         self._xyz = {s: store.xyz(s) for s in self.subjects}
@@ -73,7 +82,10 @@ class Source:
         valid = self._valid[row.subject][int(row.segment)]
         if self.align:
             x = self.store.alignment(row.subject, int(row.session)) @ x
-        x = resample(x, self.store.rate, RATE).astype(np.float32)
+        x = resample(x, self.store.rate, self.rate)
+        if self.max_hz and self.max_hz < .5 * self.rate:
+            x = bandpass(x, self.rate, high=self.max_hz)
+        x = x.astype(np.float32)
         x[~valid] = 0
         return dict(eeg=x, xyz=self._xyz[row.subject], valid=valid)
 
@@ -81,12 +93,15 @@ class Source:
 class TrialSource(Source):
     """Labelled trials of one store, cropped to ``window_s``; ``modalities`` restricts which trials enter."""
 
-    def __init__(self, store: Store, subjects, *, window_s, modalities=None, align=True, rng=None, cache=True):
-        super().__init__(store, subjects, align=align, rng=rng)
+    def __init__(self, store: Store, subjects, *, window_s, modalities=None, align=True, rng=None, cache=True,
+                 rate=RATE, max_hz=None, rows=None):
+        super().__init__(store, subjects, align=align, rng=rng, rate=rate, max_hz=max_hz)
         table = store.table
         keep = table.subject.isin(self.subjects) & (table.item >= 0)
         if modalities:
             keep &= table.modality_name.isin(modalities)
+        if rows is not None:                       # explicit table positions (e.g. one block of each person)
+            keep &= table.index.isin(rows)
         self.rows = table[keep].reset_index(drop=True)
         self.size = int(round(window_s * store.rate))
         self.items = store.items
@@ -104,7 +119,7 @@ class TrialSource(Source):
         w = self.window(row, start, size)
         w['length'] = w['eeg'].shape[1]
         if size < self.size:                                   # pad short trials to the common length
-            pad = int(round(self.size * RATE / self.store.rate)) - w['eeg'].shape[1]
+            pad = int(round(self.size * self.rate / self.store.rate)) - w['eeg'].shape[1]
             w['eeg'] = np.pad(w['eeg'], ((0, 0), (0, max(pad, 0))))
         w.update(item=int(row['item']), modality=int(row['modality']), index=i, subject=row['subject'])
         return w
@@ -135,8 +150,9 @@ class TrialSource(Source):
 class ListenSource(Source):
     """Stimulus-locked listening windows for match-mismatch and cross-person agreement."""
 
-    def __init__(self, store: Store, subjects, *, window_s=5., mismatches=4, min_overlap=.5, align=True, rng=None):
-        super().__init__(store, subjects, align=align, rng=rng)
+    def __init__(self, store: Store, subjects, *, window_s=5., mismatches=4, min_overlap=.5, align=True, rng=None,
+                 rate=RATE, max_hz=None):
+        super().__init__(store, subjects, align=align, rng=rng, rate=rate, max_hz=max_hz)
         table = store.table
         rows = table[table.subject.isin(self.subjects) & (table.stimulus >= 0)].reset_index(drop=True)
         self.window_s, self.mismatches = float(window_s), int(mismatches)

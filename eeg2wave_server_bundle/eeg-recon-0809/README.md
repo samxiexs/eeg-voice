@@ -1,98 +1,104 @@
 # eeg-recon-0809
 
-Decoding **imagined speech** from scalp EEG. Listening EEG, which is plentiful, is the stepping stone:
-an encoder is pretrained on people listening to speech, then trained on items that people hear, speak,
-mouth and imagine, and evaluated on the **imagined trials of people it has never seen**. The output
-waveform is the decoded item rendered as speech.
+Reconstructing **imagined speech** from scalp EEG as audible speech. Listening EEG was the planned
+stepping stone. The evidence below moved the work to per-person calibration on the full EEG band, with
+a CLIP speech space and a diffusion decoder producing the audio.
 
-Earlier work here regressed 4-s spectrograms from listening EEG and generated audio with diffusion.
-Retrieval stayed at chance and the decoder learned to ignore the EEG, while linear analyses showed that
-listening EEG carries little beyond the loudness envelope. That pipeline is in the git history before
-this rewrite.
+## What the data say
 
-## Plan
+| Finding | Evidence |
+|---|---|
+| Across people, imagined items are not decodable | Linear and deep models, with or without listening pretraining, spoken/heard trials or person vectors: at chance on held-out people (KaraOne +1-2 points) |
+| Within a person, there is a real but small signal | Linear, 5 contiguous folds per person: BCI2020 0.359 (chance 0.20), Thinking Out Loud 0.290 (0.25) |
+| It sits mostly above 55 Hz (likely covert-articulation EMG) | Same decoder with bands <= 45 Hz only: BCI2020 0.320, Thinking Out Loud 0.272. So the stores keep the full band (0.5-120 Hz, 256 Hz) |
+| Simple beats deep within a person | BCI2020: aligned band log-power + linear 0.36; time-resolved band power 0.30; tangent-space covariances 0.33; deep encoder trained on everyone 0.24 (fold 0) |
+| Listening EEG does not transfer to imagery | Listening is decodable (match-mismatch 41-56 %), but imagery has no shared stimulus clock (Marion: melody-specific ISC 0.28 listening, 0.00 imagery) |
+| High published accuracies use leaky splits | Random trial splits put back-to-back repetitions of a cue into both train and test. Every split here is contiguous in recording order |
 
-| Step | What | Script |
-|---|---|---|
-| 0. Gates | Linear floor per dataset (alignment + band log-variance + logistic regression). Then a check of whether imagery has stimulus-locked activity that a listening decoder could transfer: inter-subject and split-half correlation, with item-common activity removed | `baseline.py`, `isc.py` |
-| 1. Listen | Match-mismatch (EEG vs 1 matched + 4 mismatched speech segments) plus agreement between two people hearing the same stimulus window. Data: SparrKULee, Broderick, DS004940 | `train.py listen` |
-| 2. Imagery | Item cross-entropy per dataset (non-imagined trials at half weight) plus supervised contrast across modalities: heard, spoken, mouthed and imagined trials of the same item are positives | `train.py imagery --fold k` |
-| 3. Personalisation | No subject ids anywhere. Euclidean alignment uses the person's own unlabelled EEG (always on). Optional person vector from unlabelled calibration windows (gated FiLM, Zhang et al. 2026). Few-shot prototypes from k labelled trials of the new person | `--set person_dim=32`, evaluation |
-| 4. Speech | Decoded item rendered with a macOS `say` voice | `render.py` |
+## Reconstruction (`scripts/reconstruct.py`)
 
-Hypotheses tested by `scripts/run_plan.sh` (paired over the same held-out people):
-- **H1**: listening pretraining helps imagery (`pretrained` vs `scratch`).
-- **H2**: spoken and heard trials help imagery (`scratch` vs `imagined_only`).
-- **P1**: a person vector helps (`person` vs `scratch`).
+| Step | What |
+|---|---|
+| Targets | Each vocabulary item is spoken by 8-12 macOS voices at 3 rates. Each rendering gets a SpeechT5 log-mel and HuBERT embeddings |
+| CLIP space | Anchors `a_k` are the items' HuBERT embeddings (best layer by held-out-voice identification), centred, PCA to K-1 dimensions |
+| Encoder | Per person: Euclidean alignment (from the person's unlabelled EEG), full-band log-power of every channel in 7 bands, and a linear map into the CLIP space. Trained with InfoNCE in both directions (EEG <-> speech) and optional supervised contrast across modalities. No identity input anywhere: personalisation comes from the person's own calibration trials. Settings come from inner cross-validation |
+| Decoder | Mel diffusion (v-prediction, adaLN-zero blocks, DDIM) conditioned on `e = sum_k p_k a_k`. It is trained on speech alone with synthetic posteriors (Dirichlet; the spoken item is drawn from `p`), with classifier-free guidance. EEG never enters its training |
+| Generation | Held-out trial -> calibrated `p(k \| EEG)` -> `e` -> mel -> SpeechT5 HiFi-GAN -> 16 kHz. Posterior sharpness and guidance are chosen on cross-fitted training trials |
+| Measures | What the speech is heard as: Whisper-small forced choice among the vocabulary (listener), smallest DTW mel-cepstral distance (MCD), nearest HuBERT centroid. Also the MCD to the true item |
+| Controls | Another trial of the same person (wrong), no condition (prior), the true item's anchor (oracle = decoder ceiling). EEG vs wrong is tested per person (Wilcoxon) |
+| Listening | `outputs/reconstruct/index.html` holds the numbers and links pages with reference, reconstruction and controls for each person and fold |
 
-The encoder is montage-agnostic: spatial attention over electrode positions. It has a phase branch for
-stimulus-locked listening responses and a band-power branch for the non-phase-locked activity of
-imagery (`eegspeech/model.py`).
+Protocol: within person. Fold k holds out the k-th contiguous fifth of every person's trials in every
+modality. Vocabularies: Thinking Out Loud (4 Spanish words), BCI2020 (5 English phrases), KaraOne
+(7 phonemes + 4 words). Chisco sentences and CPSEED syllables have no speech targets yet.
 
 ## Data
 
-All datasets are converted to one HDF5 layout in `artifacts/store/` (`eegspeech/store.py`).
-Raw downloads are deleted after conversion. Rebuild them with `scripts/download.py` and `scripts/prepare.py`.
+One HDF5 layout for every dataset in `artifacts/store/` (`eegspeech/store.py`). Raw downloads are
+deleted after conversion. Rebuild them with `scripts/download.py` and `scripts/prepare.py`. About 37 GB in all.
 
-| Store | Role | People | Content | Size |
-|---|---|---|---|---|
-| `sparrkulee` | listen | 85 | Dutch audiobooks/podcasts, 64-ch, 159 h (Accou et al. 2024) | 4.8 GB |
-| `broderick2018` | listen | 19 | English audiobook, 128-ch, 19 h | 2.3 GB |
-| `ds004940` | listen | 22 | English sentences (N400), 128-ch | 2.7 GB |
-| `marion2021` | listen + imagine | 21 | 4 Bach melodies heard and imagined with a metronome, 64-ch | 0.4 GB |
-| `thinking_out_loud` | spoken / inner / visualised | 10 | 4 Spanish words, 128-ch (Nieto et al. 2022) | 0.5 GB |
-| `cpseed` | spoken / mouthed / imagined | 13 | 10 Mandarin Pinyin syllables, 32-ch (Ma et al. 2025) | 0.4 GB |
-| `karaone` | cue / spoken / imagined | 14 | 7 phonemes + 4 words, 62-ch | 0.4 GB |
-| `bci2020` | imagined | 15 | 5 English phrases, 64-ch (BCI Competition 2020, Track 3) | 0.2 GB |
-| `chisco` | imagined | 5 | ~12,600 imagined sentences each, 39 semantic categories, 122-ch (Zhang et al. 2024) | ~8 GB |
+| Store | Role | People | Content | Band | Size |
+|---|---|---|---|---|---|
+| `thinking_out_loud` | spoken / inner / visualised | 10 | 4 Spanish words, 128-ch (Nieto et al. 2022) | 0.5-100 Hz | 1.0 GB |
+| `bci2020` | imagined | 15 | 5 English phrases, 64-ch (BCI Competition 2020, Track 3) | 0.5-120 Hz | 0.4 GB |
+| `karaone` | cue / spoken / imagined | 14 | 7 phonemes + 4 words, 62-ch (Zhao & Rudzicz 2015) | 0.5-120 Hz | 0.9 GB |
+| `chisco` | imagined | 5 | ~11,700 imagined sentences each, 39 categories, 122-ch (Zhang et al. 2024) | 1-120 Hz | 15.3 GB |
+| `cpseed` | spoken / mouthed / imagined | 18 | 10 Mandarin syllables, 32-ch (Ma et al. 2025) | 4-45 Hz (authors) | 0.5 GB |
+| `marion2021` | listen + imagine | 21 | 4 Bach melodies, 64-ch | 0.1-30 Hz | 0.4 GB |
+| `sparrkulee` | listen | 85 | Dutch speech, 64-ch, 159 h (Accou et al. 2024) | 0.5-32 Hz | 4.8 GB |
+| `broderick2018` | listen | 19 | English audiobook, 128-ch | 0.5-45 Hz | 2.3 GB |
+| `ds004940` | listen | 22 | English sentences, 128-ch | 0.5-45 Hz | 2.7 GB |
 
-Stimulus audio for re-computing listening features stays in `data/ds004940`, `data/ds004408` and `data/marion2021`.
-
-Excluded subjects:
-- cpseed: sub-02 (duplicated session files) and sub-10 (no epoched data).
-- cpseed: sub-16..20. Their files hold 32 unnamed channels whose order matches no known layout.
-- thinking_out_loud: inner and visualised trials that the authors flag for EMG.
-- chisco: 7 of 122 channels (P11/P12, PO11/PO12, POO11h/POO12h, TPP5h) are masked; they have no standard position.
+Notes:
+- Thinking Out Loud keeps the trials the authors flag for mouth EMG, since covert articulation is information.
+- CPSEED: sub-02 (duplicated files) and sub-10 (no epochs) are excluded. Channel order comes from the EDF headers.
+- KaraOne Cb1/Cb2 and 7 Chisco channels have no standard position and are masked.
+- ds004940, broderick2018 and marion2021 were converted from the previous project's caches. Those caches
+  are gone, so these three stores cannot be rebuilt from this repository.
+- Models in `models/`: SpeechT5 HiFi-GAN, HuBERT-base, Whisper-small.
 
 ## Usage
 
 ```bash
-.venv-aligned-local/bin/python -m unittest discover -s tests     # synthetic tests
-python scripts/download.py <dataset>                              # thinking_out_loud | cpseed | bci2020 | sparrkulee | chisco
-python scripts/prepare.py <dataset>                               # -> artifacts/store/<dataset>.h5
-bash scripts/run_plan.sh gates | listen | imagery | report | all  # the plan, finished steps skipped
-python scripts/render.py items thinking_out_loud
-python scripts/render.py decode thinking_out_loud --run outputs/imagery/pretrained_f0 --subject sub-03 --shots 5
+.venv-aligned-local/bin/python -m unittest discover -s tests       # synthetic tests
+python scripts/download.py <dataset> && python scripts/prepare.py <dataset>
+python scripts/download.py models        # SpeechT5 HiFi-GAN, HuBERT-base, Whisper-small -> models/
+bash scripts/run_plan.sh reconstruct     # targets -> decoders -> 5 folds -> report (RECON_DATASETS, FOLDS)
+bash scripts/status.sh                   # what is running, last steps, errors
+python scripts/reconstruct.py run --datasets bci2020 --fold 0      # one fold of one dataset
+python scripts/baseline.py [--max-hz 45]                           # linear floor
+bash scripts/run_plan.sh gates | listen | imagery | report         # cross-person plan (listening pretraining)
 ```
 
-`configs/plan.yaml` holds windows, weights, folds, steps and the TTS vocabularies. Use `python` from
-`.venv-aligned-local`, which runs on MPS. Run one heavy process at a time on a 16 GB machine.
+`configs/plan.yaml` holds every setting. `targets` needs macOS `say`. Copy `artifacts/audio` to run
+the rest elsewhere (CUDA, MPS or CPU). Run one heavy process at a time on a 16 GB machine.
 
 ## Layout
 
 ```
-eegspeech/   store.py signal.py data.py model.py losses.py evaluation.py metrics.py
-scripts/     download.py prepare.py baseline.py isc.py train.py report.py render.py run_plan.sh
+eegspeech/   store signal data model losses evaluation metrics      (stores, deep encoder, cross-person plan)
+             features clip diffusion audio                           (reconstruction)
+scripts/     download prepare baseline isc train report run_plan.sh status.sh reconstruct
 configs/     plan.yaml
 tests/       test_core.py
 ```
 
-## Results so far
+## Results
 
-Linear floor (accuracy on imagined trials; cross = held-out people, 5 subject folds):
+Cross-person imagery (5 subject folds, 4 variants, without Chisco): every dataset stays at or near
+chance. Listening pretraining (H1), spoken/heard trials (H2) and person vectors (P1) show no reliable
+effect. Details are in `outputs/imagery/summary.json`.
 
-| Dataset | Chance | Within person | Across people |
-|---|---|---|---|
-| thinking_out_loud | 0.250 | 0.276 | 0.264 |
-| cpseed | 0.100 | 0.127 | 0.109 |
-| karaone | 0.091 | 0.120 | 0.118 |
-| bci2020 | 0.200 | 0.302 | 0.198 |
-| marion2021 (music) | 0.250 | 0.402 | 0.273 (0.301 when listening trials join training) |
+Personal CLIP encoder vs logistic regression, same within-person folds (imagined trials):
 
-Stimulus-locking gate on Marion (1-8 Hz, `outputs/isc_marion2021.json`):
-- **Listening**: melody-specific activity is shared across people (ISC 0.28, p = 0.005).
-- **Imagery**: shared activity is entirely melody-common, i.e. metronome or task (ISC 0.19 raw, 0.00 melody-specific).
-- **Imagery within a person**: melody-specific split-half reliability is weak but positive (0.012, above the null in 15/21 people).
+| Dataset (chance) | Logistic regression | CLIP, cosine (Adam) | CLIP, dot product (L-BFGS) | + supervised contrast 0.1 |
+|---|---|---|---|---|
+| bci2020 (0.20) | 0.367 | 0.331 | 0.370 | 0.358 |
+| thinking_out_loud (0.25) | 0.296 | 0.282 | 0.290 | 0.293 |
 
-Imagery therefore offers no shared stimulus clock for a listening decoder to lock onto. Transfer has to go
-through representations (spatial and spectral front end, cross-modal item codes) and through per-person calibration.
+The encoder therefore uses dot-product logits; inner cross-validation decides on supervised contrast and
+on the person's non-imagined trials.
+
+Reconstruction: run `bash scripts/run_plan.sh reconstruct`. Numbers land in
+`outputs/reconstruct/summary.json`. Expect the EEG reconstructions to be identified about as often as
+the encoder is right; the oracle row is the decoder's ceiling.

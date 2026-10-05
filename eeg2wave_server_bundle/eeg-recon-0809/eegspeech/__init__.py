@@ -1,8 +1,11 @@
-"""Imagined-speech decoding from scalp EEG, bootstrapped from listening EEG.
+"""Imagined speech from scalp EEG: decoding and reconstruction as speech.
 
-Modules: ``store`` (one HDF5 per dataset), ``signal`` (filters, alignment, speech
-features, electrode positions), ``data`` (samplers), ``model`` (montage-agnostic
-encoder), ``losses``, ``metrics``.
+Data: ``store`` (one HDF5 per dataset), ``signal`` (filters, alignment, speech features,
+electrode positions).  Reconstruction: ``features`` (aligned full-band log-power), ``clip``
+(personal CLIP encoders into a speech space), ``diffusion`` (mel diffusion decoder), ``audio``
+(speech targets, vocoder, HuBERT, Whisper listener, mel-cepstral distance).  Cross-person
+plan: ``data`` (samplers), ``model`` (montage-agnostic deep encoder), ``losses``,
+``evaluation``.  Shared: ``metrics``.
 """
 from pathlib import Path
 

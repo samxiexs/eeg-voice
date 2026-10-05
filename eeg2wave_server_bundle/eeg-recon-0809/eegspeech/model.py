@@ -21,9 +21,10 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-RATE = 128                     # Hz, model input rate
-STRIDE = 4                     # frames at 32 Hz
+RATE = 128                     # Hz, default model input rate (listening data); imagery runs at 256 Hz
+FRAME_RATE = 32                # Hz, rate of the encoder frames whatever the input rate
 BANDS = ((4, 8), (8, 13), (13, 30), (30, 45))
+HIGH_BANDS = ((55, 80), (80, 120))   # used when the input rate allows; skips 50/60 Hz mains
 THETA_MAX = 2.2                # rad from the vertex covered by the flattened position code
 
 
@@ -38,14 +39,21 @@ def flatten_positions(xyz):
 class SpatialAttention(nn.Module):
     """Virtual channels as position-dependent softmax mixtures of the recorded electrodes (Défossez et al. 2023)."""
 
-    def __init__(self, virtual=64, harmonics=10):
+    def __init__(self, virtual=64, harmonics=10, init_std=.5):
         super().__init__()
         k, l = torch.meshgrid(torch.arange(harmonics), torch.arange(harmonics), indexing='ij')
         self.register_buffer('frequencies', torch.stack([k.flatten(), l.flatten()], -1).float())
         self.logits = nn.Linear(2 * harmonics * harmonics, virtual)
+        # Average-referenced EEG sums to ~0 over electrodes, so a near-uniform softmax (PyTorch's default
+        # init) makes every virtual channel ~0 and the encoder output input-independent.  Larger logits give
+        # each virtual channel a regional mixture from the start.
+        if init_std is not None:
+            nn.init.normal_(self.logits.weight, std=init_std)
+            nn.init.zeros_(self.logits.bias)
 
     def forward(self, eeg, xyz, valid):
-        phase = 2 * math.pi * flatten_positions(xyz) @ self.frequencies.T
+        valid = valid & torch.isfinite(xyz).all(-1)                        # an electrode without a position is unusable
+        phase = 2 * math.pi * flatten_positions(torch.nan_to_num(xyz)) @ self.frequencies.T
         logits = self.logits(torch.cat([torch.cos(phase), torch.sin(phase)], -1))           # B, C, V
         logits = logits.masked_fill(~valid[:, :, None], float('-inf'))
         return torch.einsum('bcv,bct->bvt', torch.softmax(logits, dim=1), eeg)
@@ -73,32 +81,39 @@ def bandpass_taps(low, high, taps, rate):
 class PowerBank(nn.Module):
     """Per-channel learnable band-pass filters -> log power pooled over 250 ms, at the frame rate."""
 
-    def __init__(self, channels, bands=BANDS, taps=65, pool=32):
+    def __init__(self, channels, rate=RATE):
         super().__init__()
-        self.channels, self.bands, self.pool = channels, len(bands), pool
+        bands = BANDS + tuple(b for b in HIGH_BANDS if b[1] < .5 * rate)
+        self.channels, self.n_bands, self.stride = channels, len(bands), rate // FRAME_RATE
+        self.pool, taps = rate // 4, rate // 2 + 1
         self.filters = nn.Conv1d(channels, channels * len(bands), taps, padding=taps // 2, groups=channels, bias=False)
-        init = torch.from_numpy(np.stack([bandpass_taps(lo, hi, taps, RATE) for lo, hi in bands]))
+        init = torch.from_numpy(np.stack([bandpass_taps(lo, hi, taps, rate) for lo, hi in bands]))
         self.filters.weight.data.copy_(init.repeat(channels, 1)[:, None, :])
 
     def forward(self, x):
-        power = F.avg_pool1d(self.filters(x).square(), self.pool, STRIDE, padding=self.pool // 2 - STRIDE // 2)
+        power = F.avg_pool1d(self.filters(x).square(), self.pool, self.stride,
+                             padding=self.pool // 2 - self.stride // 2)
         return torch.log(power + 1e-4)
 
 
 class Encoder(nn.Module):
-    """EEG (any montage) -> frames (B, T/4, W) at 32 Hz, pooled (B, W) and a unit embedding (B, dim)."""
+    """EEG (any montage) at ``rate`` Hz -> frames (B, T', W) at 32 Hz, pooled (B, W) and a unit embedding (B, dim)."""
 
     def __init__(self, virtual=64, width=128, dim=128, dilations=(1, 2, 4, 8, 16, 1), dropout=.1,
-                 branches='both', person_dim=0):
+                 branches='both', person_dim=0, spatial_init=.5, normalize_virtual=True, rate=RATE):
         super().__init__()
         if branches not in ('both', 'phase', 'power'):
             raise ValueError('branches: both | phase | power')
-        self.branches, self.person_dim = branches, int(person_dim)
-        self.spatial = SpatialAttention(virtual)
-        self.phase = nn.Sequential(nn.Conv1d(virtual, width, 9, padding=4), nn.GELU(),
-                                   nn.Conv1d(width, width, 2 * STRIDE, stride=STRIDE, padding=STRIDE // 2))
-        self.power = PowerBank(virtual)
-        self.power_mix = nn.Conv1d(virtual * len(BANDS), width, 1)
+        if rate % FRAME_RATE:
+            raise ValueError(f'rate must be a multiple of {FRAME_RATE} Hz')
+        self.branches, self.person_dim, self.normalize_virtual = branches, int(person_dim), normalize_virtual
+        self.rate, self.stride = int(rate), int(rate) // FRAME_RATE
+        kernel = self.rate // 16 + 1
+        self.spatial = SpatialAttention(virtual, init_std=spatial_init)
+        self.phase = nn.Sequential(nn.Conv1d(virtual, width, kernel, padding=kernel // 2), nn.GELU(),
+                                   nn.Conv1d(width, width, 2 * self.stride, stride=self.stride, padding=self.stride // 2))
+        self.power = PowerBank(virtual, self.rate)
+        self.power_mix = nn.Conv1d(virtual * self.power.n_bands, width, 1)
         self.merge = nn.Conv1d(2 * width, width, 1)
         self.blocks = nn.Sequential(*[Residual(width, d, dropout) for d in dilations])
         self.norm = nn.LayerNorm(width)
@@ -110,10 +125,14 @@ class Encoder(nn.Module):
             nn.init.zeros_(self.film.weight); nn.init.zeros_(self.film.bias)
 
     def virtual(self, eeg, xyz, valid):
-        """Per-trial RMS normalisation over valid channels, then spatial attention."""
+        """Per-trial RMS normalisation over valid channels, spatial attention, and (optionally) RMS
+        normalisation of the virtual channels, so their scale does not depend on how selective the attention is."""
         x = eeg * valid[:, :, None]
         power = x.square().sum((1, 2)) / (valid.sum(1) * x.shape[-1]).clamp_min(1)
-        return self.spatial(x / (power.sqrt() + 1e-6)[:, None, None], xyz, valid)
+        v = self.spatial(x / (power.sqrt() + 1e-6)[:, None, None], xyz, valid)
+        if self.normalize_virtual:
+            v = v / (v.square().mean((1, 2), keepdim=True).sqrt() + 1e-6)
+        return v
 
     def forward(self, eeg, xyz, valid, lengths=None, person=None):
         v = self.virtual(eeg, xyz, valid)
@@ -134,7 +153,7 @@ class Encoder(nn.Module):
         if lengths is None:
             mask = torch.ones(h.shape[:2], dtype=torch.bool, device=h.device)
         else:
-            mask = torch.arange(h.shape[1], device=h.device)[None] < (lengths[:, None] + STRIDE - 1) // STRIDE
+            mask = torch.arange(h.shape[1], device=h.device)[None] < (lengths[:, None] + self.stride - 1) // self.stride
         weights = self.attend(h).squeeze(-1).masked_fill(~mask, float('-inf')).softmax(-1)
         pooled = (weights[..., None] * h).sum(1)
         return h, mask, pooled, F.normalize(self.project(pooled), dim=-1)
@@ -166,7 +185,7 @@ class PersonEncoder(nn.Module):
         super().__init__()
         self.encoder = encoder
         virtual = encoder.power.channels
-        self.window = nn.Sequential(nn.Linear(virtual * (1 + len(BANDS)), 128), nn.GELU(), nn.Linear(128, 128))
+        self.window = nn.Sequential(nn.Linear(virtual * (1 + encoder.power.n_bands), 128), nn.GELU(), nn.Linear(128, 128))
         self.out = nn.Sequential(nn.GELU(), nn.Linear(128, dim))
 
     def forward(self, eeg, xyz, valid, counts):
@@ -179,8 +198,11 @@ class PersonEncoder(nn.Module):
 class Model(nn.Module):
     """Encoder + speech encoder (listening objectives) + one item head per labelled dataset."""
 
+    ENCODER_DEFAULTS = dict(spatial_init=.5, normalize_virtual=True, rate=RATE)
+
     def __init__(self, heads: dict, *, features=18, person_dim=0, **encoder_args):
         super().__init__()
+        encoder_args = {**self.ENCODER_DEFAULTS, **encoder_args}          # recorded in full in the checkpoint
         self.encoder = Encoder(person_dim=person_dim, **encoder_args)
         width = self.encoder.norm.normalized_shape[0]
         self.speech = SpeechEncoder(features, width)
@@ -196,6 +218,8 @@ class Model(nn.Module):
         """Rebuild from a checkpoint; ``heads`` replaces the item heads (encoder weights still load)."""
         payload = torch.load(path, map_location=map_location, weights_only=False)
         config = dict(payload['config'])
+        config.setdefault('spatial_init', None)            # checkpoints from before these options existed
+        config.setdefault('normalize_virtual', False)
         if heads is not None:
             config['heads'] = dict(heads)
         model = cls(**config)

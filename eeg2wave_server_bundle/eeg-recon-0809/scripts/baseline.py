@@ -23,31 +23,27 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eegspeech import ROOT                                    # noqa: E402
 from eegspeech.data import subject_folds                      # noqa: E402
+from eegspeech.features import bands_for, log_power            # noqa: E402
 from eegspeech.metrics import summarize                        # noqa: E402
-from eegspeech.signal import bandpass                          # noqa: E402
 from eegspeech.store import open_store                         # noqa: E402
 
-BANDS = ((1, 4), (4, 8), (8, 13), (13, 30), (30, 45))
 
-
-def features(store, rows, channels, align=True):
-    """(N, len(channels) * bands) log-variance of band-passed, aligned trials."""
+def features(store, rows, channels, align=True, max_hz=None):
+    """(N, bands * len(channels)) log-variance of band-passed, aligned trials (bands starting below ``max_hz``)."""
+    bands = [b for b in bands_for(store.rate) if b[0] < (max_hz or np.inf)]
     out = []
     for row in rows.itertuples():
         names = store.channels(row.subject)
-        pick = [names.index(c) for c in channels]
         x = store.segment(row)
         if align:
             x = store.alignment(row.subject, int(row.session)) @ x
-        x = x[pick].astype(np.float64)
-        bands = [b for b in BANDS if b[0] < .45 * store.rate]                 # 64 Hz stores stop at 28.8 Hz
-        out.append(np.concatenate([np.log(bandpass(x, store.rate, lo, min(hi, .45 * store.rate)).var(-1) + 1e-6)
-                                   for lo, hi in bands]))
+        out.append(log_power(x[[names.index(c) for c in channels]].astype(np.float64), store.rate, bands))
     return np.asarray(out, np.float32)
 
 
 def fit_predict(x_train, y_train, x_test, classes, l2=1e-2, steps=200):
     """Multinomial logistic regression (L-BFGS) on standardised features."""
+    x_train, x_test = np.asarray(x_train, np.float32), np.asarray(x_test, np.float32)
     mean, std = x_train.mean(0), x_train.std(0) + 1e-6
     xt = torch.as_tensor((x_train - mean) / std)
     yt = torch.as_tensor(np.searchsorted(classes, y_train))
@@ -65,7 +61,7 @@ def fit_predict(x_train, y_train, x_test, classes, l2=1e-2, steps=200):
         return classes[(torch.as_tensor((x_test - mean) / std) @ w + b).argmax(1).numpy()]
 
 
-def run(name, spec, folds=5, align=True):
+def run(name, spec, folds=5, align=True, max_hz=None):
     store = open_store(name)
     table = store.table[store.table.item >= 0]
     target = table[table.modality_name == spec['target']]
@@ -74,7 +70,7 @@ def run(name, spec, folds=5, align=True):
     order = store.channels(store.subjects[0])
     common = [c for c in order if c in common] or order
     chance = 1 / target.item.nunique()
-    x_target = features(store, target, common, align)
+    x_target = features(store, target, common, align, max_hz)
     y_target = target.item.to_numpy()
     classes = np.unique(y_target)
     result = {'chance': chance, 'channels': len(common), 'trials': int(len(target))}
@@ -105,7 +101,7 @@ def run(name, spec, folds=5, align=True):
     result['cross'] = summarize(cross, chance)
 
     if aux.modality_name.nunique() > 1:
-        x_aux = features(store, aux, common, align)
+        x_aux = features(store, aux, common, align, max_hz)
         y_aux = aux.item.to_numpy()
         aux_fold = aux.subject.map(assignment).to_numpy()
         cross_aux = {}
@@ -126,6 +122,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--datasets', nargs='*')
     parser.add_argument('--no-align', action='store_true')
+    parser.add_argument('--max-hz', type=float, help='only bands below this frequency (e.g. 45: EMG control)')
     parser.add_argument('--out', default=str(ROOT / 'outputs' / 'baseline.json'))
     args = parser.parse_args()
     specs = yaml.safe_load(open(ROOT / 'configs' / 'plan.yaml'))['imagery']['sources']
@@ -134,7 +131,7 @@ if __name__ == '__main__':
         if args.datasets and name not in args.datasets:
             continue
         try:
-            results[name] = run(name, spec, align=not args.no_align)
+            results[name] = run(name, spec, align=not args.no_align, max_hz=args.max_hz)
         except FileNotFoundError:
             print(f'skipping {name}: no store')
             continue

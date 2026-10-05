@@ -1,5 +1,6 @@
 # Experiment plan.  Windows in seconds; weights = how often a dataset is drawn for a batch.
-# Subjects are split by eegspeech.data.subject_folds (deterministic); nothing uses subject ids as input.
+# Cross-person runs split people with eegspeech.data.subject_folds; within-person runs hold out contiguous
+# parts of every person's trials (eegspeech.data.within_fold).  Nothing uses subject ids as input.
 
 model:
   virtual: 64            # virtual channels of the spatial attention
@@ -13,6 +14,7 @@ listen:                  # stage 1: listening EEG -> speech (match-mismatch + cr
     sparrkulee:    {window: 5.0, weight: 3}
     broderick2018: {window: 5.0, weight: 1}
     ds004940:      {window: 3.0, weight: 1}
+  rate: 128              # model input rate (listening information is below 8 Hz)
   folds: 7               # fold 0 of each dataset is held out for evaluation
   steps: 8000
   batch: 32
@@ -32,7 +34,9 @@ imagery:                 # stage 2: item decoding; heard / spoken / mouthed tria
     bci2020:           {window: 2.0, modalities: [imagine], target: imagine, weight: 1.0}
     chisco:            {window: 2.0, modalities: [imagine], target: imagine, weight: 1.0}
     marion2021:        {window: 4.0, modalities: [listen, imagine], target: imagine, weight: 0.5}
-  folds: 5               # --fold k holds out fold k of every dataset at once
+  rate: 256              # full band: imagery information is mostly above 45 Hz (likely covert-articulation EMG)
+  max_hz: null           # e.g. 45 to exclude high frequencies (EMG control)
+  folds: 5               # --fold k: cross = fold k of the people; within = fifth k of every person's trials
   steps: 6000
   batch: 48
   aux_weight: 0.5        # loss weight of non-target modalities (spoken, mouthed, heard, visualised)
@@ -46,8 +50,43 @@ imagery:                 # stage 2: item decoding; heard / spoken / mouthed tria
   person_weight: 0.1
   shots: [1, 5, 10]      # few-shot prototypes from the held-out person's own labelled trials
 
-render:                  # item -> text for the speech rendering of decoded items (macOS `say`)
-  thinking_out_loud: {voice: Mónica, text: {arriba: arriba, abajo: abajo, derecha: derecha, izquierda: izquierda}}
-  karaone: {voice: Samantha, text: {/iy/: ee, /uw/: oo, /piy/: pee, /tiy/: tee, /diy/: dee, /m/: mmm, /n/: nnn,
-                                     pat: pat, pot: pot, knew: knew, gnaw: gnaw}}
-  bci2020: {voice: Samantha, text: {hello: hello, help me: help me, stop: stop, thank you: thank you, yes: yes}}
+reconstruct:             # imagined speech -> speech (scripts/reconstruct.py); within-person protocol
+  datasets:              # text: what the synthetic voices say for each item (also the listener's vocabulary)
+    thinking_out_loud:
+      modalities: [overt, imagine, visual]
+      target: imagine
+      text: {arriba: arriba, abajo: abajo, derecha: derecha, izquierda: izquierda}
+    bci2020:
+      modalities: [imagine]
+      target: imagine
+      text: {hello: hello, help me: help me, stop: stop, thank you: thank you, 'yes': 'yes'}
+    karaone:
+      modalities: [cue, overt, imagine]
+      target: imagine
+      text: {/iy/: ee, /uw/: oo, /piy/: pee, /tiy/: tee, /diy/: dee, /m/: mmm, /n/: nnn,
+             pat: pat, pot: pot, knew: knew, gnaw: gnaw}
+  folds: 5               # fold k = the k-th contiguous fifth of every person's trials of every modality
+  inner_folds: 5         # inner cross-validation on the training trials (settings, calibration, operating point)
+  encoder:               # personal linear CLIP encoders on aligned full-band log-power; grid chosen by inner CV
+    weight_decay: [0.03, 0.1, 0.3]
+    supcon_weight: [0, 0.1]  # 0: convex dot-product InfoNCE solved by L-BFGS; > 0: + supervised contrast (Adam)
+    aux_weight: [0, 0.5] # weight of the person's non-imagined trials (0: imagined trials only)
+    temperature: 0.1     # supervised contrast
+    steps: 300           # L-BFGS iterations or Adam steps
+    lr: 0.01             # Adam
+  decoder:               # mel diffusion conditioned on the CLIP speech space, trained on speech alone
+    hidden: 192
+    blocks: 8
+    steps: 8000
+    batch: 64
+    lr: 0.0003
+    ema: 0.999
+    null_fraction: 0.15  # classifier-free guidance
+    oracle_fraction: 0.3 # one-hot posteriors; the rest are Dirichlet(alpha) with log-uniform alpha
+    alpha: [0.1, 5]
+    sample_steps: 50     # DDIM
+    guidance: [1, 2, 3, 4]
+    sharpness: [1, .inf] # multiplies the calibrated posterior temperature; .inf = the encoder's decision
+    select_by: [listener, mcd]   # identification measures that choose the operating point
+    select_trials: 150   # cross-fitted training trials per operating point
+  listen_trials: 8       # trials per person on the listening page

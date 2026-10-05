@@ -4,6 +4,8 @@
     python scripts/train.py imagery --fold 0 --out outputs/imagery/pretrained_f0 --init outputs/listen/model.pt
     python scripts/train.py imagery --fold 0 --out outputs/imagery/scratch_f0
     python scripts/train.py imagery --fold 0 --out outputs/imagery/imagined_only_f0 --only-target
+    python scripts/train.py imagery --fold 0 --protocol within --out outputs/within/full_f0
+    python scripts/train.py imagery --fold 0 --protocol within --set max_hz=45 --out outputs/within/le45_f0
 
 Stage ``listen``: match-mismatch between EEG frames and speech features (1 matched + K
 mismatched segments) plus InfoNCE between two people hearing the same stimulus window.
@@ -27,7 +29,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eegspeech import ROOT                                                           # noqa: E402
-from eegspeech.data import ListenSource, TrialSource, collate, subject_folds          # noqa: E402
+from eegspeech.data import ListenSource, TrialSource, collate, subject_folds, within_fold   # noqa: E402
 from eegspeech.evaluation import item_scores, listen_scores                          # noqa: E402
 from eegspeech.losses import match_mismatch, pair_infonce, person_contrastive, supcon   # noqa: E402
 from eegspeech.model import Model                                                    # noqa: E402
@@ -109,11 +111,15 @@ def main():
     parser.add_argument('--out', required=True)
     parser.add_argument('--config', default=str(ROOT / 'configs' / 'plan.yaml'))
     parser.add_argument('--fold', type=int, default=0)
+    parser.add_argument('--protocol', choices=['cross', 'within'], default='cross',
+                        help='imagery: cross = held-out people; within = held-out fifth of every person\'s trials '
+                             '(contiguous in recording order; the person\'s other trials are in training)')
     parser.add_argument('--init', help='checkpoint whose encoder initialises this stage')
     parser.add_argument('--datasets', nargs='*', help='restrict to these datasets of the stage')
     parser.add_argument('--only-target', action='store_true', help='imagery: train on target-modality trials only')
     parser.add_argument('--steps', type=int, help='override the configured number of steps')
     parser.add_argument('--set', nargs='*', default=[], help='override stage keys, e.g. --set person_dim=32 align=false')
+    parser.add_argument('--model-set', nargs='*', default=[], help='override model keys, e.g. --model-set branches=power')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--device', default='auto')
     args = parser.parse_args()
@@ -125,6 +131,9 @@ def main():
         cfg[key] = yaml.safe_load(value)
     if args.steps:
         cfg['steps'] = args.steps
+    for item in args.model_set:
+        key, value = item.split('=', 1)
+        config['model'][key] = yaml.safe_load(value)
     specs = {k: v for k, v in cfg['sources'].items() if not args.datasets or k in args.datasets}
     device = device_of(args.device)
     rng = np.random.default_rng(args.seed)
@@ -133,6 +142,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     fold = 0 if args.stage == 'listen' else args.fold
+    rate, max_hz = int(cfg.get('rate', 128)), cfg.get('max_hz')
     train, test, splits = {}, {}, {}
     for name, spec in specs.items():
         try:
@@ -140,20 +150,30 @@ def main():
         except FileNotFoundError:
             print(f'skipping {name}: no store (run scripts/prepare.py {name})')
             continue
-        train_subjects, test_subjects = split(store, cfg['folds'], fold)
-        splits[name] = dict(train=train_subjects, test=test_subjects)
+        common = dict(window_s=spec['window'], align=cfg['align'], rate=rate, max_hz=max_hz)
         if args.stage == 'listen':
-            make = lambda subjects, r: ListenSource(store, subjects, window_s=spec['window'], mismatches=cfg['mismatches'],
-                                                    align=cfg['align'], rng=r)
-        else:
+            train_subjects, test_subjects = split(store, cfg['folds'], fold)
+            splits[name] = dict(train=train_subjects, test=test_subjects)
+            train[name] = ListenSource(store, train_subjects, mismatches=cfg['mismatches'], rng=rng, **common)
+            test[name] = ListenSource(store, test_subjects, mismatches=cfg['mismatches'], rng=np.random.default_rng(1),
+                                      **common)
+        elif args.protocol == 'within':
+            labelled = store.table[store.table.item >= 0]
+            held = within_fold(labelled, cfg['folds'], fold)
+            splits[name] = dict(protocol='within', held_out=int(len(held)))
             modalities = [spec['target']] if args.only_target else spec['modalities']
-            make = lambda subjects, r, m=modalities: TrialSource(store, subjects, window_s=spec['window'], modalities=m,
-                                                                 align=cfg['align'], rng=r)
-        train[name] = make(train_subjects, rng)
-        test[name] = (make(test_subjects, np.random.default_rng(1)) if args.stage == 'listen' else
-                      TrialSource(store, test_subjects, window_s=spec['window'], modalities=spec['modalities'],
-                                  align=cfg['align'], rng=np.random.default_rng(1)))
-        print(f'{name}: {len(train_subjects)} train / {len(test_subjects)} test subjects, {len(train[name])} segments')
+            train[name] = TrialSource(store, store.subjects, modalities=modalities, rng=rng,
+                                      rows=labelled.index.difference(held), **common)
+            test[name] = TrialSource(store, store.subjects, modalities=spec['modalities'], rng=np.random.default_rng(1),
+                                     rows=held, **common)
+        else:
+            train_subjects, test_subjects = split(store, cfg['folds'], fold)
+            splits[name] = dict(train=train_subjects, test=test_subjects)
+            modalities = [spec['target']] if args.only_target else spec['modalities']
+            train[name] = TrialSource(store, train_subjects, modalities=modalities, rng=rng, **common)
+            test[name] = TrialSource(store, test_subjects, modalities=spec['modalities'], rng=np.random.default_rng(1),
+                                     **common)
+        print(f'{name}: {len(train[name])} training / {len(test[name])} test segments ({args.protocol})')
     if not train:
         raise SystemExit('no data')
 
@@ -163,15 +183,17 @@ def main():
         model, _ = Model.load(args.init, heads=heads)
         if person_dim and model.person is None:
             raise SystemExit('--init model has no person encoder; train without --init or person_dim=0')
+        if model.encoder.rate != rate:
+            raise SystemExit(f'--init model runs at {model.encoder.rate} Hz, this stage at {rate} Hz')
     else:
-        model = Model(heads, person_dim=person_dim, **config['model'])
+        model = Model(heads, person_dim=person_dim, rate=rate, **config['model'])
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['lr'], weight_decay=cfg['weight_decay'])
     names = sorted(train)
     weights = np.array([specs[n]['weight'] for n in names], float)
     weights /= weights.sum()
     log = open(out / 'train.jsonl', 'w')
-    running, start = {}, time.time()
+    running, start, skipped = {}, time.time(), 0
     for step in range(cfg['steps']):
         model.train()
         for group in optimizer.param_groups:
@@ -182,28 +204,38 @@ def main():
         else:
             loss, logs = imagery_step(model, name, train[name], specs[name], cfg, device)
         optimizer.zero_grad(set_to_none=True)
+        if not torch.isfinite(loss):
+            skipped += 1
+            if skipped > 20:
+                raise SystemExit(f'step {step}: {skipped} non-finite losses ({name}); stopping')
+            continue
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
+        if not torch.isfinite(torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)):
+            skipped += 1
+            continue
         optimizer.step()
         for key, value in logs.items():
             running.setdefault(f'{name}/{key}', []).append(value)
         if (step + 1) % 100 == 0 or step + 1 == cfg['steps']:
-            entry = dict(step=step + 1, seconds=round(time.time() - start), lr=optimizer.param_groups[0]['lr'],
+            entry = dict(step=step + 1, seconds=round(time.time() - start), lr=optimizer.param_groups[0]['lr'], skipped=skipped,
                          **{k: round(float(np.mean(v)), 4) for k, v in running.items()})
             print(json.dumps(entry), flush=True)
             log.write(json.dumps(entry) + '\n'); log.flush()
             running = {}
+    if not all(torch.isfinite(p).all() for p in model.parameters()):
+        raise SystemExit('non-finite weights after training; nothing saved')
     model.save(out / 'model.pt', stage=args.stage, fold=fold, splits=splits, cfg=cfg, init=args.init)
 
-    report = dict(stage=args.stage, fold=fold, init=args.init, only_target=args.only_target, cfg=cfg, results={})
+    report = dict(stage=args.stage, fold=fold, protocol=args.protocol, init=args.init, only_target=args.only_target,
+                  cfg=cfg, results={})
     for name, source in test.items():
         if not len(source):
             continue
         if args.stage == 'listen':
             report['results'][name] = listen_scores(model, source, device)
         else:
-            report['results'][name] = item_scores(model, source, name, specs[name]['target'], device,
-                                                  shots=tuple(cfg['shots']))
+            shots = () if args.protocol == 'within' else tuple(cfg['shots'])     # within: the head is already personal
+            report['results'][name] = item_scores(model, source, name, specs[name]['target'], device, shots=shots)
         summary = {k: v for k, v in report['results'][name].items() if k != 'per_subject'}
         print(name, json.dumps(summary)[:600], flush=True)
     json.dump(report, open(out / 'evaluation.json', 'w'), indent=1)

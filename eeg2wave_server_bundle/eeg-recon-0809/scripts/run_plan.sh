@@ -5,11 +5,15 @@
 #   bash scripts/run_plan.sh listen     # stage 1: listening pretraining (~1-2 h)
 #   bash scripts/run_plan.sh imagery    # stage 2: 4 variants x 5 subject folds (~7 h)
 #   bash scripts/run_plan.sh report     # pooled tables
+#   bash scripts/run_plan.sh reconstruct  # imagined speech -> speech: targets, decoders, 5 within-person folds, report
 #   bash scripts/run_plan.sh all
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=${PY:-.venv-aligned-local/bin/python}
 FOLDS=${FOLDS:-"0 1 2 3 4"}
+IMAGERY_OUT=${IMAGERY_OUT:-outputs/imagery}          # e.g. IMAGERY_DATASETS=chisco IMAGERY_OUT=outputs/imagery_chisco
+IMAGERY_DATASETS=${IMAGERY_DATASETS:-}               # empty: every dataset of configs/plan.yaml that has a store
+RECON_DATASETS=${RECON_DATASETS:-"thinking_out_loud bci2020 karaone"}
 
 gates() {
   [ -f outputs/baseline.json ] || $PY scripts/baseline.py
@@ -24,9 +28,10 @@ listen() {
 imagery() {
   run() {            # one variant of one fold; a failure is logged and the queue moves on
     local name=$1 f=$2; shift 2
-    [ -f "outputs/imagery/${name}_f$f/evaluation.json" ] && return 0
-    $PY scripts/train.py imagery --fold "$f" --out "outputs/imagery/${name}_f$f" "$@" 2>&1 \
-      | tee "logs/imagery_${name}_f$f.log" || echo "FAILED imagery ${name} fold $f"
+    [ -f "$IMAGERY_OUT/${name}_f$f/evaluation.json" ] && return 0
+    $PY scripts/train.py imagery --fold "$f" --out "$IMAGERY_OUT/${name}_f$f" \
+      ${IMAGERY_DATASETS:+--datasets $IMAGERY_DATASETS} "$@" 2>&1 \
+      | tee "logs/$(basename "$IMAGERY_OUT")_${name}_f$f.log" || echo "FAILED imagery ${name} fold $f"
   }
   for f in $FOLDS; do
     run scratch "$f"                                       # all modalities, random init
@@ -39,7 +44,21 @@ imagery() {
 }
 
 report() {
-  $PY scripts/report.py outputs/imagery --reference scratch --json outputs/imagery/summary.json
+  $PY scripts/report.py "$IMAGERY_OUT" --reference scratch --json "$IMAGERY_OUT/summary.json"
+}
+
+reconstruct() {    # targets need macOS `say` (copy artifacts/audio to run elsewhere); then decoder, folds, report
+  for d in $RECON_DATASETS; do
+    [ -f "artifacts/audio/$d.npz" ] || $PY scripts/reconstruct.py targets --datasets "$d" 2>&1 | tee -a logs/reconstruct_targets.log
+    [ -f "outputs/reconstruct/decoders/$d.pt" ] || $PY scripts/reconstruct.py decoder --datasets "$d" 2>&1 \
+      | tee "logs/decoder_$d.log" || { echo "FAILED decoder $d"; continue; }
+    for f in $FOLDS; do
+      [ -f "outputs/reconstruct/f$f/$d/summary.json" ] && continue
+      $PY scripts/reconstruct.py run --datasets "$d" --fold "$f" 2>&1 | tee "logs/reconstruct_${d}_f$f.log" \
+        || echo "FAILED reconstruct $d fold $f"
+    done
+  done
+  $PY scripts/reconstruct.py report
 }
 
 case "${1:-all}" in
@@ -47,6 +66,7 @@ case "${1:-all}" in
   listen) listen ;;
   imagery) imagery ;;
   report) report ;;
+  reconstruct) reconstruct ;;
   all) gates; listen; imagery; report ;;
-  *) echo "usage: $0 gates|listen|imagery|report|all" >&2; exit 2 ;;
+  *) echo "usage: $0 gates|listen|imagery|report|reconstruct|all" >&2; exit 2 ;;
 esac

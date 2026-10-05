@@ -67,7 +67,8 @@ if __name__ == '__main__':
                 common = sorted(set(a) & set(b))
                 if len(common) >= 5:
                     diff = np.array([b[s] - a[s] for s in common])
-                    p = stats.wilcoxon(diff).pvalue if np.any(diff != 0) else 1.
+                    diff[np.abs(diff) < 1e-9] = 0
+                    p = stats.wilcoxon(diff, zero_method='zsplit').pvalue if np.any(diff != 0) else 1.
                     print(f'{variant:20s} {key[0]:18s} {key[1]:10s} diff {diff.mean():+.3f}  p={p:.3f}  n={len(common)}')
     if args.json:
         json.dump(summary, open(args.json, 'w'), indent=1)
