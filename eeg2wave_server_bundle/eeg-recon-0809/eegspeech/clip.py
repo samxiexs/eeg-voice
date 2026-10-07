@@ -12,10 +12,13 @@ labelled trials (personal calibration from data; no identity enters any model) w
 
 With a linear map into the K - 1 dimensional anchor space, the dot-product InfoNCE has the capacity
 of multinomial logistic regression and is convex.  L-BFGS solves it to convergence and matches
-logistic regression within a person (BCI2020 0.370 vs 0.367); the usual cosine form trained with
-Adam lost 3-4 points.  The posterior p(k | trial) = softmax(s z . a_k), with the temperature s
-calibrated on cross-fitted trials, conditions the generator through e = sum_k p_k a_k.  All persons
-of a dataset train in parallel as one batch of independent models.
+logistic regression within a person; the usual cosine form trained with Adam lost 3-4 points.  The
+posterior p(k | trial) = softmax(s z . a_k) has its temperature s calibrated on cross-fitted trials.
+All persons of a dataset train in parallel as one batch of independent models.
+
+Open vocabulary (``train_sentences``): a sentence's anchor comes from its speech, so a person's map
+ranks sentences never seen in training; trained with symmetric InfoNCE between the trials of a run and
+the sentences of that run, or by ridge regression onto the anchors.
 """
 from __future__ import annotations
 
@@ -25,7 +28,20 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .losses import supcon
+
+def supcon(z, labels, temperature=.1):
+    """Supervised contrastive loss (Khosla et al. 2020) on unit embeddings z (B, D): trials of the same
+    item (whatever their modality) are positives."""
+    logits = z @ z.T / temperature
+    eye = torch.eye(len(z), dtype=torch.bool, device=z.device)
+    positive = (labels[:, None] == labels[None, :]) & ~eye
+    logits = logits.masked_fill(eye, float('-inf'))
+    log_prob = logits - torch.logsumexp(logits, 1, keepdim=True)
+    count = positive.sum(1)
+    keep = count > 0
+    if not keep.any():
+        return z.sum() * 0.
+    return (-(log_prob.masked_fill(~positive, 0).sum(1)[keep] / count[keep])).mean()
 
 
 def anchors(item_embeddings):
@@ -139,3 +155,123 @@ def calibrate(z, items, anchor):
     grid = np.exp(np.linspace(np.log(1e-3), np.log(100), 300))
     losses = [float(F.cross_entropy(logits * s, y)) for s in grid]
     return float(grid[int(np.argmin(losses))]), float(min(losses))
+
+
+# ----------------------------------------------------------------------------- open vocabulary (sentences)
+class SentenceEncoder:
+    """One person's linear map from trial features to the sentence CLIP space; a candidate's score is z . a_s."""
+
+    def __init__(self, mean, std, weight):
+        self.mean, self.std, self.weight = mean, std, weight
+
+    def embed(self, x):
+        return ((np.asarray(x, np.float32) - self.mean) / self.std) @ self.weight
+
+
+def run_sets(sentence, run):
+    """Per run: (trial indices, distinct sentences = the run's candidates, each trial's candidate position)."""
+    out = []
+    for r in np.unique(run):
+        trials = np.flatnonzero(run == r)
+        candidates, position = np.unique(sentence[trials], return_inverse=True)
+        out.append((trials, candidates, position))
+    return out
+
+
+class Reducer:
+    """Standardisation of trial features by the training trials and, above ``components`` features, the
+    projection on their top principal directions (unsupervised, randomised SVD)."""
+
+    def __init__(self, mean, std, basis=None):
+        self.mean, self.std, self.basis = mean, std, basis
+
+    @classmethod
+    def fit(cls, x, components=None, seed=0):
+        x = np.asarray(x, np.float32)
+        mean, std = x.mean(0), x.std(0) + 1e-3
+        basis = None
+        if components and x.shape[1] > components:
+            torch.manual_seed(seed)
+            _, _, v = torch.svd_lowrank(torch.from_numpy((x - mean) / std), q=components, niter=3)
+            basis = v.numpy()
+        return cls(mean, std, basis)
+
+    def __call__(self, x):
+        z = (np.asarray(x, np.float32) - self.mean) / self.std
+        return z if self.basis is None else z @ self.basis
+
+
+def train_sentences(x, sentence, run, anchor, *, method='clip', weight_decay=.1, steps=200, standardize=True):
+    """Fit one person's sentence encoder.  ``x`` (n, F) trial features, ``sentence`` (n,) the row of
+    ``anchor`` (K, d) each trial imagined, ``run`` (n,) its recording run.
+
+    ridge  closed-form regression onto the trial's anchor: mean ||z - a||^2 + wd ||W||^2
+    clip   symmetric InfoNCE between the trials of a run and the sentences imagined in that run (at test
+           time the candidates are also a run's sentences), started from the ridge solution and solved
+           by L-BFGS: the objective is convex (a linear map inside log-sum-exp).  No bias: a sentence's
+           score depends on the trial's EEG only.
+    """
+    x = np.asarray(x, np.float64)
+    if standardize:
+        mean, std = x.mean(0), x.std(0) + 1e-3
+    else:                                                   # already standardised or projected (``Reducer``)
+        mean, std = np.zeros(x.shape[1]), np.ones(x.shape[1])
+    X = (x - mean) / std
+    n, f = X.shape
+    A = np.asarray(anchor, np.float64)
+    W = np.linalg.solve(X.T @ X / n + weight_decay * np.eye(f), X.T @ A[sentence] / n)
+    if method == 'clip':
+        sets = run_sets(np.asarray(sentence), np.asarray(run))
+        R, n_max, m_max = len(sets), max(len(t) for t, _, _ in sets), max(len(c) for _, c, _ in sets)
+        T = torch.zeros(R, n_max, dtype=torch.long); C = torch.zeros(R, m_max, dtype=torch.long)
+        valid_t = torch.zeros(R, n_max, dtype=torch.bool); valid_c = torch.zeros(R, m_max, dtype=torch.bool)
+        target = torch.zeros(R, n_max, dtype=torch.long)
+        for i, (trials, candidates, position) in enumerate(sets):
+            T[i, :len(trials)], valid_t[i, :len(trials)] = torch.from_numpy(trials), True
+            C[i, :len(candidates)], valid_c[i, :len(candidates)] = torch.from_numpy(candidates), True
+            target[i, :len(trials)] = torch.from_numpy(position)
+        positive = F.one_hot(target, m_max).bool() & valid_t[..., None] & valid_c[:, None, :]       # R, n, m
+        Xt, At = torch.as_tensor(X, dtype=torch.float32), torch.as_tensor(A, dtype=torch.float32)
+        Wt = torch.as_tensor(W, dtype=torch.float32).requires_grad_()
+        pair = valid_t[..., None] & valid_c[:, None, :]
+
+        def objective():
+            logits = torch.einsum('rnd,rmd->rnm', (Xt @ Wt)[T], At[C]).masked_fill(~pair, -1e4)
+            to_sentences = logits.log_softmax(-1)                       # EEG -> which sentence of the run
+            e2a = -(to_sentences * positive).sum(-1)[valid_t].mean()
+            to_trials = logits.log_softmax(1)                           # sentence -> which trial of the run
+            own = positive.sum(1)
+            a2e = (-(to_trials * positive).sum(1) / own.clamp_min(1))[own > 0].mean()
+            return .5 * (e2a + a2e) + weight_decay * Wt.square().sum()
+
+        optimizer = torch.optim.LBFGS([Wt], max_iter=steps, history_size=20, line_search_fn='strong_wolfe')
+
+        def closure():
+            optimizer.zero_grad()
+            loss = objective()
+            loss.backward()
+            return loss
+        optimizer.step(closure)
+        W = Wt.detach().double().numpy()
+    return SentenceEncoder(mean.astype(np.float32), std.astype(np.float32), W.astype(np.float32))
+
+
+def rank_percentile(scores, position):
+    """(n,) percentile of each row's true candidate among the row's candidates: 1 best, 0 worst, 0.5 chance
+    (ties count half).  ``scores`` (n, C), ``position`` (n,) the true column."""
+    scores = np.asarray(scores)
+    true = scores[np.arange(len(scores)), position][:, None]
+    above = (scores > true).sum(1) + .5 * ((scores == true).sum(1) - 1)
+    return 1 - above / max(scores.shape[1] - 1, 1)
+
+
+def calibrate_sets(score_sets, position_sets):
+    """Temperature minimising the log-loss of the true candidate over lists of (n_r, C_r) score matrices."""
+    grid = np.exp(np.linspace(np.log(1e-3), np.log(1e3), 241))
+    loss = []
+    for s in grid:
+        total = sum(-torch.log_softmax(torch.as_tensor(S * s), -1)[np.arange(len(p)), p].sum().item()
+                    for S, p in zip(score_sets, position_sets))
+        loss.append(total / sum(len(p) for p in position_sets))
+    best = int(np.argmin(loss))
+    return float(grid[best]), float(loss[best])

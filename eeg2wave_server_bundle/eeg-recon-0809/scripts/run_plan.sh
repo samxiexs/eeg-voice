@@ -1,51 +1,16 @@
 #!/usr/bin/env bash
 # The plan end to end, one heavy process at a time (16 GB machine).  Finished steps are skipped.
 #
-#   bash scripts/run_plan.sh gates      # linear floor + stimulus-locking gate (minutes)
-#   bash scripts/run_plan.sh listen     # stage 1: listening pretraining (~1-2 h)
-#   bash scripts/run_plan.sh imagery    # stage 2: 4 variants x 5 subject folds (~7 h)
-#   bash scripts/run_plan.sh report     # pooled tables
-#   bash scripts/run_plan.sh reconstruct  # imagined speech -> speech: targets, decoders, 5 within-person folds, report
-#   bash scripts/run_plan.sh all
+#   bash scripts/run_plan.sh reconstruct  # items (BCI2020, Thinking Out Loud): targets, decoders, 5 folds, report
+#   bash scripts/run_plan.sh sentences    # Chisco sentences, linear encoders: targets, 5 folds of held-out runs, report
+#   bash scripts/run_plan.sh deep         # Chisco sentences, the deep encoder (outputs/sentences_deep)
+#   bash scripts/run_plan.sh control      # positive control: the reading epochs (sentence on screen), fold 0
+#   bash scripts/run_plan.sh round        # all of it fold by fold (sentences linear, deep, items); outputs/index.html
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=${PY:-.venv-aligned-local/bin/python}
 FOLDS=${FOLDS:-"0 1 2 3 4"}
-IMAGERY_OUT=${IMAGERY_OUT:-outputs/imagery}          # e.g. IMAGERY_DATASETS=chisco IMAGERY_OUT=outputs/imagery_chisco
-IMAGERY_DATASETS=${IMAGERY_DATASETS:-}               # empty: every dataset of configs/plan.yaml that has a store
-RECON_DATASETS=${RECON_DATASETS:-"thinking_out_loud bci2020 karaone"}
-
-gates() {
-  [ -f outputs/baseline.json ] || $PY scripts/baseline.py
-  [ -f outputs/isc_marion2021.json ] || $PY scripts/isc.py marion2021
-  [ -f outputs/isc_ds004940.json ] || $PY scripts/isc.py ds004940
-}
-
-listen() {
-  [ -f outputs/listen/evaluation.json ] || $PY scripts/train.py listen --out outputs/listen 2>&1 | tee logs/listen.log
-}
-
-imagery() {
-  run() {            # one variant of one fold; a failure is logged and the queue moves on
-    local name=$1 f=$2; shift 2
-    [ -f "$IMAGERY_OUT/${name}_f$f/evaluation.json" ] && return 0
-    $PY scripts/train.py imagery --fold "$f" --out "$IMAGERY_OUT/${name}_f$f" \
-      ${IMAGERY_DATASETS:+--datasets $IMAGERY_DATASETS} "$@" 2>&1 \
-      | tee "logs/$(basename "$IMAGERY_OUT")_${name}_f$f.log" || echo "FAILED imagery ${name} fold $f"
-  }
-  for f in $FOLDS; do
-    run scratch "$f"                                       # all modalities, random init
-    if [ -f outputs/listen/model.pt ]; then                # H1: listening pretraining helps imagery
-      run pretrained "$f" --init outputs/listen/model.pt
-    fi
-    run imagined_only "$f" --only-target                   # H2: spoken / heard trials help imagery
-    run person "$f" --set person_dim=32                    # P1: person vector from the person's own unlabelled EEG
-  done
-}
-
-report() {
-  $PY scripts/report.py "$IMAGERY_OUT" --reference scratch --json "$IMAGERY_OUT/summary.json"
-}
+RECON_DATASETS=${RECON_DATASETS:-"thinking_out_loud bci2020"}
 
 reconstruct() {    # targets need macOS `say` (copy artifacts/audio to run elsewhere); decoders, then folds, report
   for d in $RECON_DATASETS; do
@@ -64,12 +29,39 @@ reconstruct() {    # targets need macOS `say` (copy artifacts/audio to run elsew
   done
 }
 
-case "${1:-all}" in
-  gates) gates ;;
-  listen) listen ;;
-  imagery) imagery ;;
-  report) report ;;
+sentences() {      # $1: linear | deep.  Targets need macOS `say`; fold by fold, report after each fold
+  local encoder=$1 out=outputs/sentences
+  [ "$encoder" = deep ] && out=outputs/sentences_deep
+  [ -f artifacts/audio/chisco_sentences.h5 ] || $PY scripts/sentences.py targets 2>&1 | tee -a logs/sentences_targets.log
+  for f in $FOLDS; do
+    [ -f "$out/f$f/chisco/summary.json" ] && continue
+    $PY scripts/sentences.py run --fold "$f" --encoder "$encoder" 2>&1 | tee "logs/sentences_${encoder}_f$f.log" \
+      || echo "FAILED sentences $encoder fold $f"
+    $PY scripts/sentences.py report --encoder "$encoder" || echo "FAILED sentences report"
+  done
+}
+
+control() {        # the same linear pipeline on the reading epochs: how far the pipeline reaches when content is there
+  [ -f outputs/sentences_read/f0/chisco/summary.json ] && return 0
+  $PY scripts/sentences.py run --fold 0 --modalities read --out outputs/sentences_read 2>&1 | tee logs/sentences_read_f0.log
+  $PY scripts/sentences.py report --out outputs/sentences_read
+}
+
+round() {          # one full round, fold by fold, so every pipeline has a first result early
+  [ -f artifacts/audio/chisco_sentences.h5 ] || $PY scripts/sentences.py targets 2>&1 | tee -a logs/sentences_targets.log
+  for f in $FOLDS; do
+    FOLDS=$f sentences linear
+    FOLDS=$f sentences deep
+    FOLDS=$f reconstruct
+    $PY scripts/overview.py || echo "FAILED overview"
+  done
+}
+
+case "${1:-}" in
   reconstruct) reconstruct ;;
-  all) gates; listen; imagery; report ;;
-  *) echo "usage: $0 gates|listen|imagery|report|reconstruct|all" >&2; exit 2 ;;
+  sentences) sentences linear ;;
+  deep) sentences deep ;;
+  control) control ;;
+  round) round ;;
+  *) echo "usage: $0 reconstruct|sentences|deep|control|round" >&2; exit 2 ;;
 esac

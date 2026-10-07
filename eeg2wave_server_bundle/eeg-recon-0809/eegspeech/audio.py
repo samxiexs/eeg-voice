@@ -37,11 +37,12 @@ VOICES = {                       # natural voices only (no novelty voices); seve
            'Reed (English (US))', 'Sandy (English (UK))', 'Shelley (English (US))', 'Grandpa (English (UK))'],
     'es': ['Mónica', 'Paulina', 'Eddy (Spanish (Spain))', 'Flo (Spanish (Mexico))', 'Reed (Spanish (Spain))',
            'Sandy (Spanish (Mexico))', 'Shelley (Spanish (Spain))', 'Grandpa (Spanish (Mexico))'],
-    'zh': ['Tingting', 'Meijia', 'Eddy (Chinese (China mainland))', 'Flo (Chinese (China mainland))',
-           'Reed (Chinese (China mainland))', 'Sandy (Chinese (China mainland))', 'Shelley (Chinese (China mainland))'],
+    'zh': ['Tingting', 'Eddy (Chinese (China mainland))', 'Flo (Chinese (China mainland))',
+           'Reed (Chinese (China mainland))', 'Sandy (Chinese (China mainland))', 'Rocko (Chinese (China mainland))'],
 }
 RATES_WPM = (150, 185, 220)
-FEMALE = {'Samantha', 'Karen', 'Moira', 'Tessa', 'Mónica', 'Paulina', 'Tingting', 'Meijia', 'Flo', 'Sandy', 'Shelley'}
+FEMALE = {'Samantha', 'Karen', 'Moira', 'Tessa', 'Mónica', 'Paulina', 'Tingting', 'Meijia', 'Flo', 'Sandy', 'Shelley',
+          'Grandma'}
 
 
 def sex_of(voice):
@@ -49,15 +50,42 @@ def sex_of(voice):
     return 'F' if voice.split()[0] in FEMALE else 'M'
 
 
-def synthesize(text, voice, wpm, path):
-    """One rendering with macOS ``say`` as 16-bit 16 kHz WAV."""
+def synthesize(text, voice, wpm, path, timeout=30, attempts=3):
+    """One rendering with macOS ``say`` as 16-bit 16 kHz WAV (``wpm`` None: the voice's own rate).
+
+    ``say`` now and then hangs after writing the header (2026-10-06: 1 clip of 1,500 for 26 min, not
+    reproducible), so every attempt has a timeout and the file only gets its name once complete."""
     if shutil.which('say') is None:
         raise RuntimeError('speech synthesis needs macOS `say`; build artifacts/audio on a Mac and copy it here')
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(['say', '-v', voice, '-r', str(wpm), '-o', str(path), '--file-format=WAVE',
-                    f'--data-format=LEI16@{SAMPLE_RATE}', text], check=True)
-    return path
+    part = path.with_name(path.stem + '.part.wav')
+    rate = ['-r', str(wpm)] if wpm else []
+    for _ in range(attempts):
+        try:
+            subprocess.run(['say', '-v', voice, *rate, '-o', str(part), '--file-format=WAVE',
+                            f'--data-format=LEI16@{SAMPLE_RATE}', text], check=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            continue
+        part.replace(path)
+        return path
+    raise RuntimeError(f'say timed out {attempts} times: {voice}: {text}')
+
+
+def characters(text):
+    """The letters and digits of a text (punctuation and spaces dropped), lower case."""
+    return [c for c in str(text).lower() if c.isalnum()]
+
+
+def cer(hypothesis, reference):
+    """Character error rate: Levenshtein distance between the characters of two texts / reference length."""
+    a, b = characters(hypothesis), characters(reference)
+    row = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        previous, row[0] = row[0], i
+        for j, y in enumerate(b, 1):
+            previous, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, previous + (x != y))
+    return row[-1] / max(len(b), 1)
 
 
 def read(path):

@@ -1,80 +1,31 @@
-# Experiment plan.  Windows in seconds; weights = how often a dataset is drawn for a batch.
-# Cross-person runs split people with eegspeech.data.subject_folds; within-person runs hold out contiguous
-# parts of every person's trials (eegspeech.data.within_fold).  Nothing uses subject ids as input.
-
-model:
-  virtual: 64            # virtual channels of the spatial attention
-  width: 128
-  dim: 128               # embedding size for the contrastive objectives
-  dropout: 0.1
-  branches: both         # both | phase | power
-
-listen:                  # stage 1: listening EEG -> speech (match-mismatch + cross-person agreement)
-  sources:
-    sparrkulee:    {window: 5.0, weight: 3}
-    broderick2018: {window: 5.0, weight: 1}
-    ds004940:      {window: 3.0, weight: 1}
-  rate: 128              # model input rate (listening information is below 8 Hz)
-  folds: 7               # fold 0 of each dataset is held out for evaluation
-  steps: 8000
-  batch: 32
-  mismatches: 4          # 5-way match-mismatch, chance 20 %
-  partner_fraction: 0.5  # anchors that also get another person's window at the same stimulus time
-  pair_weight: 0.5
-  temperature: 0.1
-  lr: 0.0003
-  weight_decay: 0.05
-  align: true            # Euclidean alignment from each person's own unlabelled EEG
-
-imagery:                 # stage 2: item decoding; heard / spoken / mouthed trials supervise the imagined ones
-  sources:
-    thinking_out_loud: {window: 2.0, modalities: [overt, imagine, visual], target: imagine, weight: 1.0}
-    cpseed:            {window: 2.0, modalities: [overt, mouthed, imagine], target: imagine, weight: 1.0}
-    karaone:           {window: 2.0, modalities: [cue, overt, imagine], target: imagine, weight: 1.0}
-    bci2020:           {window: 2.0, modalities: [imagine], target: imagine, weight: 1.0}
-    chisco:            {window: 2.0, modalities: [imagine], target: imagine, weight: 1.0}
-    marion2021:        {window: 4.0, modalities: [listen, imagine], target: imagine, weight: 0.5}
-  rate: 256              # full band: imagery information is mostly above 45 Hz (likely covert-articulation EMG)
-  max_hz: null           # e.g. 45 to exclude high frequencies (EMG control)
-  folds: 5               # --fold k: cross = fold k of the people; within = fifth k of every person's trials
-  steps: 6000
-  batch: 48
-  aux_weight: 0.5        # loss weight of non-target modalities (spoken, mouthed, heard, visualised)
-  supcon_weight: 0.5
-  temperature: 0.1
-  lr: 0.0003
-  weight_decay: 0.05
-  align: true
-  person_dim: 0          # > 0: person vector from the person's own unlabelled EEG (gated FiLM)
-  person_windows: 4      # windows per calibration set (two disjoint sets per person and step)
-  person_weight: 0.1
-  shots: [1, 5, 10]      # few-shot prototypes from the held-out person's own labelled trials
+# Every setting of the two reconstruction pipelines.  Within person: the folds hold out contiguous parts of a
+# person's recording, whole cue episodes (BCI2020) or whole runs (Chisco); see eegspeech.features.blocks.
+# Nothing uses subject ids as input: personalisation comes from the person's own calibration trials.
 
 reconstruct:             # imagined speech -> speech in the person's voice (scripts/reconstruct.py); within person
   datasets:              # text: what the synthetic voices say for each item (also the listener's vocabulary)
-    thinking_out_loud:   # voices: own = the participants' recordings; cycle = synthetic voices assigned in turn
+    thinking_out_loud:
       modalities: [overt, imagine, visual]
       target: imagine
-      voices: cycle      # neither voices nor sexes were recorded
       text: {arriba: arriba, abajo: abajo, derecha: derecha, izquierda: izquierda}
-    bci2020:
+    bci2020:             # 4 imaginings per cue, released in another order: folds hold out whole cue episodes
       modalities: [imagine]
       target: imagine
-      voices: cycle      # neither voices nor sexes were recorded
+      align_by: subject  # the training / validation / test files are parts of one recording (episodes span them)
+      encoder: {recenter: [0]}   # the released order is not the recording order: no drift to follow
       text: {hello: hello, help me: help me, stop: stop, thank you: thank you, 'yes': 'yes'}
-    karaone:
-      modalities: [cue, overt, imagine]
-      target: imagine
-      voices: own        # Kinect recordings of every spoken trial (scripts/prepare.py karaone_voices)
-      decoder_steps: 30000   # 26 voices (12 synthetic + 14 participants) x 11 items
-      text: {/iy/: ee, /uw/: oo, /piy/: pee, /tiy/: tee, /diy/: dee, /m/: mmm, /n/: nnn,
-             pat: pat, pot: pot, knew: knew, gnaw: gnaw}
-  folds: 5               # fold k = the k-th contiguous fifth of every person's trials of every modality
-  inner_folds: 5         # inner cross-validation on the training trials (settings, calibration, operating point)
-  encoder:               # personal linear CLIP encoders on aligned full-band log-power; grid chosen by inner CV
-    weight_decay: [0.03, 0.1, 0.3]
-    supcon_weight: [0, 0.1]  # 0: convex dot-product InfoNCE solved by L-BFGS; > 0: + supervised contrast (Adam)
-    aux_weight: [0, 0.5] # weight of the person's non-imagined trials (0: imagined trials only)
+  folds: 5               # fold k = the k-th fifth of every person's trials (contiguous) or cue episodes (BCI2020)
+  inner_folds: 5         # inner cross-validation on the training trials, same protocol (settings, calibration)
+  encoder:               # personal linear CLIP encoders on aligned log-power; settings chosen by inner CV
+    search:              # coordinate search; each stage tries the product of its values, the rest at the best so far;
+      - min_band_hz: [0, 30, 55]   # the first value of every setting is the starting point.  Bands >= this
+        recenter: [0, 20]          # causal drift removal: minus the mean of the 20 trials before (0: off)
+        aux_weight: [0, 0.5]       # weight of the person's non-imagined trials (0: imagined trials only)
+        time: [0, 3]               # + the time course in 3 parts (deviations from the whole trial; Chisco's signal)
+      - weight_decay: [0.1, 0.03, 0.3, 1, 3]
+      - supcon_weight: [0, 0.1]    # supervised contrast (Adam) on the best convex (L-BFGS) setting
+    select_by: nll       # inner-CV log-loss (proper, less noisy than accuracy); or accuracy
+    ensemble: 3          # the best settings are trained on all training trials, calibrated logits averaged
     temperature: 0.1     # supervised contrast
     steps: 300           # L-BFGS iterations or Adam steps
     lr: 0.01             # Adam
@@ -89,9 +40,61 @@ reconstruct:             # imagined speech -> speech in the person's voice (scri
     oracle_fraction: 0.3 # one-hot posteriors; the rest are Dirichlet(alpha) with log-uniform alpha
     alpha: [0.1, 5]
     sample_steps: 50     # DDIM
-    guidance: [1, 2, 3, 4]
-    sharpness: [1, .inf] # multiplies the calibrated posterior temperature; .inf = the encoder's decision
-    select_by: [mcd]     # measure that chooses the operating point (the Whisper listener is ~20x slower)
-    select_trials: 150   # cross-fitted training trials per operating point
+    guidance: [1, 2, 3, 4]   # checked by `reconstruct.py check`; the best for oracle speech is used
   listen_trials: 8       # trials per person on the listening page
   control_trials: 2      # prior and oracle samples per person and item (they ignore the trial's EEG)
+
+sentences:               # imagined sentences -> speech: open-vocabulary retrieval in a CLIP speech space (scripts/sentences.py)
+  datasets:
+    chisco:
+      modalities: [imagine]      # the 3.3 s imagery epochs ('read': the 5 s reading epochs before them)
+      align_by: subject          # held-out runs are whole: no run-wise alignment for them
+      sexes: {sub-01: F, sub-02: M, sub-03: M, sub-04: M, sub-05: F}   # participants.tsv: the voice's sex
+  folds: 5               # fold k = the k-th fifth of every person's runs (whole, contiguous in run order)
+  inner_folds: 5         # the same over the training runs
+  speech_model: chinese_hubert_base   # Mandarin HuBERT (models/), the CLIP speech space
+  space: {dims: 16, duration_weight: 1}   # the CLIP speech space: 16 whitened PCA dims + log duration (the best of
+                         # 2026-10-06); fixed, since encoders, renderer and judge all live in it
+  encoder:               # linear (default): filter-bank log-power, whole trial and time course -> CLIP space
+    windows: 6           # consecutive windows of the 3.3 s epoch (0.55 s), pooled to `time` parts
+    components: 512      # PCA of the training trials' features (unsupervised) above this many features
+    search:              # coordinate search, ranked by the inner-CV rank percentile of the true sentence; the first
+      - time: [3, 6, 0]            # value is the starting point (the best of 2026-10-06).  time: parts of the time course
+        min_band_hz: [0, 55]
+        recenter: [30, 0]          # causal drift removal over the 30 trials before (0: off)
+        method: [ridge]            # fast for the feature choice; clip is tried next
+      - method: [ridge, clip]      # clip: symmetric InfoNCE within runs, from the ridge solution
+        weight_decay: [100, 30, 300, 1000]   # 100 was the largest tried on 2026-10-06 and won every fold
+    steps: 200           # L-BFGS iterations
+    ensemble: 3          # the best settings' calibrated candidate log-probabilities are averaged
+  deep:                  # --encoder deep (eegspeech.deep): learned filter bank, personal spatial filters, log-power
+    rate: 128            # Hz; the epochs are cached once at this rate (anti-aliased: content below 57 Hz)
+    crop: 3.0            # s of the 3.3 s epoch per example: a random crop for training, the centre for testing
+    filters: 32          # temporal filters, initialised as log-spaced band-passes from 1 Hz
+    depth: 2             # spatial filters per temporal filter, per person
+    kernel: 0.25         # s, temporal filter length
+    pool: 0.25           # s, log-power window
+    stride: 0.125        # s, between log-power windows
+    dropout: 0.5
+    batch: 128
+    lr: 0.001
+    weight_decay: 0.01
+    epochs: 40
+    patience: 6          # epochs without a better validation rank percentile
+    seed: 0
+  renderer:              # per fold: mel diffusion p(mel | point of the space, voice), on the training sentences only
+    frames: 224          # canvas (3.6 s; 99 % of the clips are shorter than 2.9 s)
+    hidden: 192
+    blocks: 8
+    steps: 10000
+    batch: 32
+    lr: 0.0003
+    ema: 0.999
+    null_fraction: 0.15  # no content: classifier-free guidance and the prior condition
+    noise: 1.0           # condition = anchor + Gaussian noise of norm up to this, renormalised
+    guidance: 2
+    sample_steps: 25     # DDIM
+  permutations: 1000     # circular shifts per person and fold (encoder diagnostic)
+  render_trials: 60      # trials per person and fold reconstructed (4 conditions each), evenly over the held-out ones
+  transcribe_trials: 20  # of those, transcribed by Whisper
+  listen_trials: 6       # of those, kept as wav for the listening page

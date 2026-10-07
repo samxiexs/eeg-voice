@@ -1,42 +1,50 @@
 """Imagined speech -> speech in the person's voice: the content comes from EEG, the voice from the person.
 
-    python scripts/reconstruct.py targets [--datasets ...]              # item speech: synthetic and own voices
+    python scripts/reconstruct.py targets [--datasets ...]              # macOS: item speech in synthetic voices
     python scripts/reconstruct.py decoder [--datasets ...]              # train each dataset's diffusion decoder
     python scripts/reconstruct.py check   [--datasets ...]              # decoder ceiling per voice
     python scripts/reconstruct.py run --fold 0 1 2 3 4 [--datasets ...] # encoders, generation, measures, wavs
     python scripts/reconstruct.py report                                # pooled folds -> summary.json, index.html
 
 Protocol: within person.  Fold k holds out the k-th contiguous fifth of every person's trials of every
-modality (recording order); the person's other trials calibrate that person's encoder.  Nothing about
-the held-out trials (labels, EEG statistics beyond the unlabelled alignment) is used before generation.
+modality (recording order) or, where cues were imagined several times back to back and the released
+order is not the recording order (BCI2020), the k-th fifth of every person's cue episodes per item
+(eegspeech.features.episodes); the person's other trials calibrate that person's encoder.  Nothing
+about the held-out trials is used before generation: not their labels, and not their EEG (the
+alignment comes from the other segments; the drift baseline of a trial only uses trials before it).
 
-1 targets   every vocabulary item spoken by several synthetic voices at three rates (macOS say) and,
-            where the dataset recorded it (KaraOne), by every participant; per clip the SpeechT5 log-mel,
-            HuBERT embeddings, a WavLM speaker embedding and the median F0.
-2 content   CLIP anchors a_k = item speech embeddings (HuBERT of the synthetic clips, centred, PCA to
-            K - 1 dims).  A person's encoder maps Euclidean-aligned full-band log-power to the CLIP space
-            (InfoNCE EEG <-> speech, optionally supervised contrast across modalities); settings come from
-            inner cross-validation, whose held-out predictions calibrate the posterior p(k | EEG).
+1 targets   every vocabulary item spoken by several synthetic voices at three rates (macOS say); per
+            clip the SpeechT5 log-mel, HuBERT embeddings, a WavLM speaker embedding and the median F0.
+2 content   CLIP anchors a_k = item speech embeddings (HuBERT of the clips, centred, PCA to
+            K - 1 dims).  A person's encoder maps Euclidean-aligned full-band log-power (whole trial and,
+            optionally, its time course in 3 parts) to the CLIP space (InfoNCE EEG <-> speech, optionally
+            supervised contrast across modalities); settings come from
+            a coordinate search scored by inner cross-validation (same protocol as the outer folds), whose
+            held-out predictions calibrate the posterior p(k | EEG).
 3 voice     the traits of a voice are its mean speaker embedding (timbre, sex) and its median log F0
-            (pitch).  A person speaks in their own recorded voice (KaraOne) or, where neither voice nor sex
-            was recorded (BCI2020, Thinking Out Loud), in a synthetic voice assigned to them.  The traits
-            come from the person's speech, never from an identity input or from EEG.
+            (pitch).  BCI2020 and Thinking Out Loud recorded neither the participants' voices nor their
+            sexes, so each person is assigned a synthetic voice in turn; the reconstruction and the
+            reference speak in it.  The traits never come from an identity input or from EEG.
 4 decoder   mel diffusion conditioned on the content e = sum_k p_k a_k (whitened) and on voice traits,
             trained on speech alone: synthetic posteriors p (Dirichlet; the spoken item is drawn from p),
             each clip with its own voice's traits.  Classifier-free guidance acts on the content only.
-5 generate  held-out trial -> content from EEG + the person's voice -> DDIM -> log-mel -> HiFi-GAN.  The
-            operating point (posterior sharpness, guidance) is chosen on cross-fitted training trials.
+5 generate  held-out trial -> the posterior mean of the speech embedding, e = sum_k p(k | EEG) a_k with the
+            calibrated posterior (the least-squares estimate of the embedding, a continuous point; no item
+            is chosen) + the person's voice -> DDIM at the guidance the decoder check rates best (oracle
+            speech, no EEG) -> log-mel -> HiFi-GAN.  The encoder's top item is kept only as a diagnostic.
 6 measure   content: Whisper forced choice among the vocabulary (listener), smallest DTW mel-cepstral
             distance to the person's voice saying each item (mcd), nearest HuBERT item centroid; voice:
             nearest voice by speaker embedding, sex implied by the F0, pitch error.  Controls: another
-            trial's EEG (wrong), no content (prior), the true item (oracle, the decoder's ceiling); prior
-            and oracle do not depend on the trial and are generated for a subset of trials.
+            trial's EEG from another cue episode (wrong), no content (prior), the true item (oracle, the
+            decoder's ceiling); prior and oracle do not depend on the trial and are generated for a subset
+            of trials.
 """
 from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import html
+import itertools
 import json
 import math
 from pathlib import Path
@@ -54,7 +62,6 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eegspeech import ROOT, audio, clip, features                              # noqa: E402
-from eegspeech.data import within_fold                                         # noqa: E402
 from eegspeech.diffusion import EMA, MelDiffusion, MelScaler                   # noqa: E402
 from eegspeech.metrics import summarize                                        # noqa: E402
 from eegspeech.store import open_store                                         # noqa: E402
@@ -93,14 +100,6 @@ def targets(name, spec, device):
     with ThreadPoolExecutor(8) as pool:                     # `say` runs as separate processes
         list(pool.map(lambda j: j[3].exists() or audio.synthesize(j[4], j[1], j[2], j[3]), jobs))
     clips = [(k, voice, wpm, audio.trim(audio.read(path))) for k, voice, wpm, path, _ in jobs]
-    if spec.get('voices') == 'own':                         # each participant's own recordings
-        for done in sorted((AUDIO / name / 'persons').glob('*/labels.txt')):
-            labels = [line.strip() for line in done.read_text().splitlines() if line.strip()]
-            for i, label in enumerate(labels):
-                wav = done.parent / f'{i}.wav'
-                if wav.exists() and label in store.items:   # room recordings: trim more tightly
-                    clips.append((store.items.index(label), f'person:{done.parent.name}', 0,
-                                  audio.trim(audio.read(wav), threshold_db=-25.)))
     waves = [audio.level(w) for *_, w in clips]
     mels = [audio.log_mel(w) for w in waves]
     lengths = np.array([m.shape[1] for m in mels])
@@ -108,15 +107,13 @@ def targets(name, spec, device):
     item = np.array([c[0] for c in clips])
     voice = np.array([c[1] for c in clips])
     wpm = np.array([c[2] for c in clips])
-    log(f'{name}: {len(clips)} clips ({int((wpm > 0).sum())} synthetic, {int((wpm == 0).sum())} own voices); '
-        f'HuBERT, speaker embeddings and F0 ...')
+    log(f'{name}: {len(clips)} clips; HuBERT, speaker embeddings and F0 ...')
     hubert = audio.Hubert(device)(waves)                                          # clips, layers, 768
     xvector = audio.Speaker(device)(waves)                                        # clips, 512
     f0 = np.array([audio.pitch(w) for w in waves])
-    synthetic = wpm > 0
     fisher, held_voice = [], []
-    for layer in range(hubert.shape[1]):                     # the content layer, chosen on the synthetic clips
-        h, it, vo = hubert[synthetic, layer], item[synthetic], voice[synthetic]
+    for layer in range(hubert.shape[1]):                     # the content layer
+        h, it, vo = hubert[:, layer], item, voice
         means = np.stack([h[it == k].mean(0) for k in range(len(store.items))])
         fisher.append(float(np.square(means[it] - h.mean(0)).sum() / np.square(h - means[it]).sum()))
         hits = 0                                             # leave-one-voice-out nearest-centroid identification
@@ -146,12 +143,11 @@ class Targets:
         self.language = str(t['language'])
         self.texts = [spec['text'][i] for i in self.items]
         self.K = len(self.items)
-        synthetic = self.wpm > 0
         hubert = t['hubert'][:, self.layer]
-        means = np.stack([hubert[synthetic & (self.item == k)].mean(0) for k in range(self.K)])
+        means = np.stack([hubert[self.item == k].mean(0) for k in range(self.K)])
         self.anchor = clip.anchors(means)
-        self.centre = hubert[synthetic].mean(0)
-        centroids = np.stack([(hubert - self.centre)[synthetic & (self.item == k)].mean(0) for k in range(self.K)])
+        self.centre = hubert.mean(0)
+        centroids = np.stack([(hubert - self.centre)[self.item == k].mean(0) for k in range(self.K)])
         self.centroids = centroids / np.linalg.norm(centroids, axis=1, keepdims=True)
         # voices: identity (mean speaker embedding), pitch (median F0) and sex; their traits condition the decoder
         self.voices = sorted(set(t['voice']))
@@ -159,8 +155,7 @@ class Targets:
         x = np.stack([t['xvector'][self.voice == v].mean(0) for v in range(len(self.voices))])
         self.voice_xvector = x / np.linalg.norm(x, axis=1, keepdims=True)
         self.voice_f0 = np.array([np.nanmedian(t['f0'][self.voice == v]) for v in range(len(self.voices))])
-        self.voice_sex = np.array([('F' if f >= FEMALE_F0 else 'M') if v.startswith('person:') else audio.sex_of(v)
-                                   for v, f in zip(self.voices, self.voice_f0)])
+        self.voice_sex = np.array([audio.sex_of(v) for v in self.voices])
         self.traits = np.concatenate([self.voice_xvector, ((np.log(self.voice_f0) - np.log(150.)) / .5)[:, None]],
                                      1).astype(np.float32)
         # what every voice says for every item: references for the cepstral distance and one clip to play
@@ -171,11 +166,11 @@ class Targets:
                 own = np.flatnonzero((self.voice == v) & (self.item == k))
                 if len(own):
                     self.refs[(v, k)] = [audio.cepstra(self.mel[r]) for r in own]
-                    self.reference[(v, k)] = int(min(own, key=lambda r: abs(int(self.wpm[r]) - middle) if self.wpm[r] else 0))
+                    self.reference[(v, k)] = int(min(own, key=lambda r: abs(int(self.wpm[r]) - middle)))
 
     def label(self, v):
         """'Samantha (F, 177 Hz)'"""
-        return f'{self.voices[v].replace("person:", "")} ({self.voice_sex[v]}, {self.voice_f0[v]:.0f} Hz)'
+        return f'{self.voices[v]} ({self.voice_sex[v]}, {self.voice_f0[v]:.0f} Hz)'
 
 
 class Judge:
@@ -228,8 +223,8 @@ class Judge:
 def whitening(anchor):
     """Symmetric whitening of the anchors' second moment, applied to the decoder's content condition.
 
-    Near-homophones (KaraOne /tiy/ vs /piy/: anchor cosine 0.81) would otherwise reach the decoder as
-    almost the same condition; whitened, every item direction has unit scale.  The CLIP space and the
+    Near-homophones (anchor cosine up to 0.81 for /tiy/ vs /piy/ in an earlier vocabulary) would otherwise
+    reach the decoder as almost the same condition; whitened, every item direction has unit scale.  The CLIP space and the
     encoders are unchanged.
     """
     w, v = np.linalg.eigh(anchor.T.astype(np.float64) @ anchor / len(anchor))
@@ -238,7 +233,7 @@ def whitening(anchor):
 
 def decoder(name, spec, cfg, device, seed=0):
     c = cfg['decoder']
-    steps = spec.get('decoder_steps', c['steps'])
+    steps = c['steps']
     t = Targets(name, spec)
     mel = torch.from_numpy(t.mel)
     scaler = MelScaler.fit(mel)
@@ -330,18 +325,10 @@ def check_decoder(name, spec, cfg, device, per_item=2):
         _, scores, voice = judge(mels, voices)
         report[f'oracle_w{guidance:g}'] = {m: float((s.argmax(1) == items).mean()) for m, s in scores.items()}
         report[f'oracle_w{guidance:g}'].update(voice_measures(voice, voices, t))
-    own = [v for v in range(len(t.voices)) if t.voices[v].startswith('person:')]
-    if own:                                                                     # the participants' own voices
-        mask = np.isin(voices, own)
-        mels = d.mels(t.anchor[items[mask]], voices[mask], np.zeros(mask.sum(), bool), c['guidance'][1],
-                      c['sample_steps'], seed=1)
-        _, scores, voice = judge(mels, voices[mask])
-        report['own_voices'] = {m: float((s.argmax(1) == items[mask]).mean()) for m, s in scores.items()}
-        report['own_voices'].update(voice_measures(voice, voices[mask], t))
     folder = OUT / 'decoders' / name
     folder.mkdir(parents=True, exist_ok=True)
     shown = [v for v in range(len(t.voices)) if t.voice_sex[v] == 'F'][:1] + \
-            [v for v in range(len(t.voices)) if t.voice_sex[v] == 'M'][:1] + own[:2]
+            [v for v in range(len(t.voices)) if t.voice_sex[v] == 'M'][:1]
     for v in shown:                                                             # listen: reference vs generated
         keys = [(v, k) for k in range(t.K) if (v, k) in t.reference]
         refs = judge.vocoder(t.mel[[t.reference[key] for key in keys]])
@@ -374,62 +361,95 @@ def semitones(f0, target):
 
 # ----------------------------------------------------------------------------- 2 CLIP encoders
 def encoders(name, spec, cfg, fold, t: Targets):
-    """Inner-CV choice of the encoder settings, cross-fitted training embeddings and test embeddings."""
+    """Inner-CV choice of the encoder settings, an ensemble of the best ones, cross-fitted training
+    embeddings and test embeddings.  Features: the drift-corrected whole-trial log-power of the setting's
+    bands and, with ``time`` k > 0, its time course in k parts.
+
+    Settings are searched coordinate-wise (``encoder.search``: each stage tries the product of its values
+    with the other settings at the best so far; the first value of every setting is the starting point;
+    a dataset's ``encoder`` entry narrows the values) and ranked by the inner-CV log-loss, a proper score
+    that is less noisy than accuracy for picking among close settings.  The ``ensemble`` best are trained
+    on all training trials and their calibrated logits averaged (logits are linear in the embedding, so the
+    average is again a CLIP embedding).  Inner folds follow the outer protocol (contiguous blocks or whole
+    cue episodes); the alignment of the fold never sees its held-out trials.
+    """
     store = open_store(name)
-    feats = features.load(name)
     enc = cfg['encoder']
     item_map = np.array([t.items.index(i) for i in store.items])                  # store item -> anchor index
-    table = store.table
-    labelled = table[(table.item >= 0) & table.modality_name.isin(spec['modalities'])]
-    held = set(within_fold(labelled, cfg['folds'], fold).tolist())
+    labelled = features.labelled(store, spec['modalities'])
+    held = set(features.within_fold(labelled, cfg['folds'], fold).tolist())
+    feats, bands = features.load(name, held=held, align_by=spec.get('align_by', 'session'))
     target = spec['target']
+    space = [{k: list(spec.get('encoder', {}).get(k, v)) for k, v in stage.items()} for stage in enc['search']]
+    if len(spec['modalities']) == 1:                         # no other modality to borrow from
+        space = [{k: [0] if k == 'aux_weight' else v for k, v in stage.items()} for stage in space]
+    windows = {w for stage in space for w in stage.get('recenter', [0])}
     people = {}
     for s in store.subjects:
         if s not in feats:
             continue
-        rows, x = feats[s]
-        position = {int(r): i for i, r in enumerate(rows)}
+        rows, x, parts = feats[s]
         part = labelled[labelled.subject == s]
         train = part[~part.index.isin(held)]
         test = part[part.index.isin(held) & (part.modality_name == target)]
         if not len(test) or not (train.modality_name == target).any():
             continue
-        inner = pd.Series(0, index=train.index)
-        for _, group in train.groupby('modality_name'):
-            for j, chunk in enumerate(np.array_split(group.index.to_numpy(), cfg['inner_folds'])):
-                inner[chunk] = j
-        people[s] = dict(x=x, position=position, train=train, inner=inner.to_numpy(), test=test,
-                         is_target=(train.modality_name == target).to_numpy())
+        views = {0: x}                                       # recenter window -> drift-corrected whole-trial features
+        mine = store.table.loc[rows]
+        out = np.isin(rows, list(held))
+        modality = mine.modality_name.to_numpy()
+        means = {m: x[(modality == m) & ~out].mean(0) if ((modality == m) & ~out).any() else x[~out].mean(0)
+                 for m in np.unique(modality)}
+        run = (mine.session.astype(str) + '/' + mine.modality_name).to_numpy()
+        for w in windows - {0}:                              # causal drift removal (recording order)
+            base = features.local_baseline(x, run, out, np.stack([means[m] for m in modality]), w)
+            views[w] = x - base
+        people[s] = dict(views=views, position={int(r): i for i, r in enumerate(rows)}, train=train, test=test,
+                         whole=x, windows=parts, inner=features.blocks(train, cfg['inner_folds']),
+                         is_target=(train.modality_name == target).to_numpy(),
+                         columns={hz: features.band_columns(bands, x.shape[1], hz)
+                                  for hz in {hz for stage in space for hz in stage.get('min_band_hz', [0])}})
     subjects = sorted(people)
 
-    def rows_x(s, rows):
-        return people[s]['x'][[people[s]['position'][int(r)] for r in rows]]
+    def take(s, rows, setting):
+        """(n, F') features of the setting: drift-corrected whole-trial log-power of its bands and, with
+        ``time`` k, the time course in k parts (``features.time_course``)."""
+        p = people[s]
+        index, columns = [p['position'][int(r)] for r in rows], p['columns'][setting['min_band_hz']]
+        x = p['views'][setting['recenter']][index][:, columns]
+        if not setting.get('time', 0):
+            return x
+        return np.concatenate([x, features.time_course(p['whole'][index][:, columns], p['windows'][index][:, :, columns],
+                                                       setting['time'])], 1)
 
-    def persons(aux, j=None):
+    def persons(setting, j=None):
         out = []
         for s in subjects:
             p = people[s]
             keep = np.ones(len(p['train']), bool) if j is None else p['inner'] != j
-            if aux == 0:
+            if setting['aux_weight'] == 0:
                 keep &= p['is_target']
-            rows = p['train'].index.to_numpy()[keep]
-            out.append(clip.Person(rows_x(s, rows), item_map[p['train']['item'].to_numpy()[keep]],
-                                   np.where(p['is_target'][keep], 1., aux)))
+            out.append(clip.Person(take(s, p['train'].index.to_numpy()[keep], setting),
+                                   item_map[p['train']['item'].to_numpy()[keep]],
+                                   np.where(p['is_target'][keep], 1., setting['aux_weight'])))
         return out
 
+    def embed(model, i, s, rows, setting):
+        return model.embed(i, take(s, rows, setting))
+
     fixed = dict(temperature=enc['temperature'], steps=enc['steps'], lr=enc['lr'])
-    auxes = enc['aux_weight'] if len(spec['modalities']) > 1 else [0]
-    grid = [(wd, sw, aux) for wd in enc['weight_decay'] for sw in enc['supcon_weight'] for aux in auxes]
-    inner = {}
-    for wd, sw, aux in grid:
+    fit = lambda setting, people_, seed: clip.train(people_, t.anchor, weight_decay=setting['weight_decay'],
+                                                    supcon_weight=setting['supcon_weight'], seed=seed, **fixed)
+
+    def evaluate(setting):
         z, y, who, rows_all = [], [], [], []
         for j in range(cfg['inner_folds']):
-            model = clip.train(persons(aux, j), t.anchor, weight_decay=wd, supcon_weight=sw, seed=j, **fixed)
+            model = fit(setting, persons(setting, j), j)
             for i, s in enumerate(subjects):
                 p = people[s]
                 rows = p['train'].index.to_numpy()[(p['inner'] == j) & p['is_target']]
                 if len(rows):
-                    z.append(model.embed(i, rows_x(s, rows)))
+                    z.append(embed(model, i, s, rows, setting))
                     y.append(item_map[p['train'].loc[rows, 'item'].to_numpy()])
                     who += [s] * len(rows)
                     rows_all.append(rows)
@@ -437,67 +457,83 @@ def encoders(name, spec, cfg, fold, t: Targets):
         hit = (z @ t.anchor.T).argmax(1) == y
         accuracy = float(np.mean([hit[who == s].mean() for s in subjects]))
         scale, nll = clip.calibrate(z, y, t.anchor)
-        inner[(wd, sw, aux)] = dict(accuracy=accuracy, nll=nll, scale=scale, z=z, y=y, who=who,
-                                    rows=np.concatenate(rows_all))
-        log(f'{name} f{fold} inner CV wd={wd:g} supcon={sw:g} aux={aux:g}: accuracy {accuracy:.3f}, '
-            f'log-loss {nll:.3f} (uniform {np.log(t.K):.3f}, scale {scale:.3g})')
-    best = max(grid, key=lambda g: (round(inner[g]['accuracy'], 3), -inner[g]['nll']))
-    chosen = inner[best]
-    model = clip.train(persons(best[2]), t.anchor, weight_decay=best[0], supcon_weight=best[1], seed=0, **fixed)
-    z_test, y_test, who_test, rows_test = [], [], [], []
-    for i, s in enumerate(subjects):
-        rows = people[s]['test'].index.to_numpy()
-        z_test.append(model.embed(i, rows_x(s, rows)))
-        y_test.append(item_map[people[s]['test']['item'].to_numpy()])
-        who_test += [s] * len(rows)
-        rows_test.append(rows)
-    return dict(setting=dict(weight_decay=best[0], supcon_weight=best[1], aux_weight=best[2]),
-                inner={f'wd={g[0]:g},supcon={g[1]:g},aux={g[2]:g}': dict(accuracy=v['accuracy'], nll=v['nll'], scale=v['scale'])
-                       for g, v in inner.items()},
-                scale=chosen['scale'], train=dict(z=chosen['z'], y=chosen['y'], who=chosen['who'], rows=chosen['rows']),
-                test=dict(z=np.concatenate(z_test), y=np.concatenate(y_test), who=np.array(who_test),
-                          rows=np.concatenate(rows_test)))
+        log(f'{name} f{fold} inner CV {label(setting)}: accuracy {accuracy:.3f}, log-loss {nll:.4f} '
+            f'(uniform {np.log(t.K):.4f})')
+        return dict(accuracy=accuracy, nll=nll, scale=scale, z=z, y=y, who=who, rows=np.concatenate(rows_all))
+
+    label = lambda g: ','.join(f'{k}={v:g}' for k, v in g.items())
+    if enc.get('select_by', 'nll') == 'nll':
+        rank = lambda result: -result['nll']
+    else:
+        rank = lambda result: (round(result['accuracy'], 3), -result['nll'])
+    results = {}
+    best = {k: v[0] for stage in space for k, v in stage.items()}
+    for stage in space:                                      # coordinate search
+        for values in itertools.product(*stage.values()):
+            setting = dict(best, **dict(zip(stage, values)))
+            if label(setting) not in results:
+                results[label(setting)] = (setting, evaluate(setting))
+        best = max(results.values(), key=lambda r: rank(r[1]))[0]
+    top = sorted(results.values(), key=lambda r: rank(r[1]), reverse=True)[:enc['ensemble']]
+    y = top[0][1]['y']
+    assert all(np.array_equal(r['y'], y) for _, r in top)
+    z_train = np.mean([r['scale'] * r['z'] for _, r in top], 0)                 # calibrated logits, averaged
+    scale, nll = clip.calibrate(z_train, y, t.anchor)
+    log(f'{name} f{fold} ensemble of {len(top)}: inner accuracy '
+        f'{np.mean((z_train @ t.anchor.T).argmax(1) == y):.3f} (trials pooled), log-loss {nll:.4f}')
+    z_test = 0
+    for setting, r in top:
+        model = fit(setting, persons(setting), 0)
+        z_test = z_test + r['scale'] * np.concatenate([embed(model, i, s, people[s]['test'].index.to_numpy(), setting)
+                                                       for i, s in enumerate(subjects)])
+    z_test = z_test / len(top)
+    test = [people[s]['test'] for s in subjects]
+    return dict(setting=dict(ensemble=[setting for setting, _ in top]),
+                inner={key: dict(accuracy=r['accuracy'], nll=r['nll']) for key, (_, r) in results.items()},
+                scale=scale, train=dict(z=z_train, y=y, who=top[0][1]['who'], rows=top[0][1]['rows']),
+                test=dict(z=z_test, y=np.concatenate([item_map[p['item'].to_numpy()] for p in test]),
+                          who=np.concatenate([[s] * len(p) for s, p in zip(subjects, test)]),
+                          rows=np.concatenate([p.index.to_numpy() for p in test]),
+                          group=np.concatenate([(p['episode'] if 'episode' in p else p.index).to_numpy()
+                                                for p in test])))
 
 
 # ----------------------------------------------------------------------------- 5-6 generate, measure
-def derangement(who, rng):
-    """For each trial, another trial of the same person (a random permutation without fixed points)."""
+def derangement(who, rng, group=None):
+    """For each trial, another trial of the same person and of another cue episode (``group``; default:
+    every trial its own).  The person's episodes are put in random order, their trials side by side, and
+    every trial is paired with the trial as many places on as the largest episode has trials."""
+    group = np.arange(len(who)) if group is None else np.asarray(group)
     out = np.arange(len(who))
     for s in np.unique(who):
-        idx = rng.permutation(np.flatnonzero(who == s))
+        idx = np.flatnonzero(who == s)
+        names, own = np.unique(group[idx], return_inverse=True)
+        order = rng.permutation(len(names))[own]                     # random episode order
+        idx = idx[np.lexsort((rng.random(len(idx)), order))]        # episodes contiguous, shuffled inside
+        size = int(np.bincount(own).max())
         if len(idx) > 1:
-            out[idx] = np.roll(idx, 1)
+            out[idx] = np.roll(idx, size if len(idx) >= 2 * size else 1)
     return out
 
 
-def person_voices(t: Targets, spec, subjects):
-    """The voice each person speaks in: their own recording, or a synthetic voice assigned in turn."""
-    if spec.get('voices') == 'own':
-        missing = [s for s in subjects if f'person:{s}' not in t.voices]
-        if missing:
-            raise SystemExit(f'no recordings of {missing}: python scripts/prepare.py karaone_voices, then targets')
-        return {s: t.voices.index(f'person:{s}') for s in subjects}
+def person_voices(t: Targets, subjects):
+    """The synthetic voice each person speaks in, assigned in turn (the listed order mixes the sexes)."""
     synthetic = [v for v in audio.VOICES[t.language] if v in t.voices]           # listed order mixes the sexes
     return {s: t.voices.index(synthetic[i % len(synthetic)]) for i, s in enumerate(sorted(subjects))}
 
 
-def operating_point(name, cfg, fold, t, e, d, judge, voice_of):
-    """Posterior sharpness x guidance scale chosen on cross-fitted training trials (never held-out ones)."""
-    c = cfg['decoder']
-    rng = np.random.default_rng(fold)
-    tr = e['train']
-    pick = np.sort(rng.choice(len(tr['y']), min(len(tr['y']), c['select_trials']), replace=False))
-    voices = np.array([voice_of[s] for s in tr['who'][pick]])
-    scores = {}
-    for sharpness in c['sharpness']:
-        condition = clip.posterior(tr['z'][pick], t.anchor, e['scale'] * sharpness) @ t.anchor
-        for guidance in c['guidance']:
-            mels = d.mels(condition, voices, np.zeros(len(pick), bool), guidance, c['sample_steps'], seed=10_000 + fold)
-            _, s, _ = judge(mels, voices, c['select_by'])
-            scores[(sharpness, guidance)] = float(np.mean([(s[m].argmax(1) == tr['y'][pick]).mean() for m in c['select_by']]))
-            log(f'{name} f{fold}: sharpness {sharpness:g} guidance {guidance:g} -> identified '
-                f'{scores[(sharpness, guidance)]:.3f} ({"+".join(c["select_by"])}, cross-fitted training trials)')
-    return max(scores, key=scores.get), scores
+def decoder_guidance(name, guidance):
+    """The guidance scale the decoder check rates best: content identification of oracle speech (the
+    item's anchor, no EEG) rounded to 1 %, then speaker similarity, then the smaller scale.  The check's
+    clips are many and EEG-free, so this choice costs no trials and is not fitted to EEG noise."""
+    path = OUT / 'decoders' / f'{name}.json'
+    report = json.load(open(path)) if path.exists() else {}
+    rated = {g: report[f'oracle_w{g:g}'] for g in guidance if f'oracle_w{g:g}' in report}
+    if not rated:                                           # no check yet: 2 (the checks so far chose 2 and 3)
+        return float(2 if 2 in guidance else guidance[0])
+    score = lambda g: (round(float(np.mean([rated[g][m] for m in MEASURES if m in rated[g]])), 2),
+                       round(rated[g].get('similarity', 0.), 3), -g)
+    return float(max(rated, key=score))
 
 
 def listen_selection(trials, per_subject):
@@ -522,17 +558,18 @@ def run(name, spec, cfg, fold, device):
     started = time.time()
     e = encoders(name, spec, cfg, fold, t)
     log(f'{name} f{fold}: encoder settings {e["setting"]} ({time.time() - started:.0f} s)')
-    voice_of = person_voices(t, spec, sorted(set(e['train']['who']) | set(e['test']['who'])))
-    (sharpness, guidance), choice = operating_point(name, cfg, fold, t, e, d, judge, voice_of)
-    log(f'{name} f{fold}: operating point sharpness {sharpness:g}, guidance {guidance:g}')
+    voice_of = person_voices(t, sorted(set(e['train']['who']) | set(e['test']['who'])))
+    guidance = decoder_guidance(name, c['guidance'])
+    log(f'{name} f{fold}: guidance {guidance:g} (decoder check)')
 
     te = e['test']
     n = len(te['y'])
     voices = np.array([voice_of[s] for s in te['who']])
     calibrated = clip.posterior(te['z'], t.anchor, e['scale'])
-    condition = clip.posterior(te['z'], t.anchor, e['scale'] * sharpness) @ t.anchor
-    other = derangement(te['who'], np.random.default_rng(1000 + fold))
-    trials = pd.DataFrame(dict(subject=te['who'], row=te['rows'], item=te['y'], decoded=calibrated.argmax(1),
+    condition = calibrated @ t.anchor                         # E[a | EEG]: a point of the speech space, no decision
+    other = derangement(te['who'], np.random.default_rng(1000 + fold), te['group'])
+    trials = pd.DataFrame(dict(subject=te['who'], row=te['rows'], episode=te['group'], item=te['y'],
+                               decoded=calibrated.argmax(1),
                                p_true=calibrated[np.arange(n), te['y']], wrong_item=te['y'][other], voice=voices,
                                voice_sex=t.voice_sex[voices], voice_f0=t.voice_f0[voices]))
     listen = listen_selection(trials, cfg['listen_trials'])
@@ -552,6 +589,8 @@ def run(name, spec, cfg, fold, device):
         trials.loc[rows, f'{kind}_similarity'] = voice['similarity']
         trials.loc[rows, f'{kind}_f0'] = voice['f0']
         kept[kind] = {int(r): w for r, w in zip(rows, waves) if int(r) in shown}
+        if device.type == 'mps':                             # the allocator keeps its peak otherwise (16 GB machine)
+            torch.mps.empty_cache()
         heard = (trials.loc[rows, f'{kind}_listener'] == trials.loc[rows, 'item']).mean()
         log(f'{name} f{fold}: {kind:6s} ({len(rows)} trials) identified as the true item listener {heard:.3f}, '
             f'mcd {np.mean(trials.loc[rows, f"{kind}_mcd"] == trials.loc[rows, "item"]):.3f}; voice '
@@ -564,10 +603,12 @@ def run(name, spec, cfg, fold, device):
     np.savez(folder / 'encoder.npz', z_test=te['z'], p_test=calibrated, who_test=te['who'], rows_test=te['rows'],
              y_test=te['y'], z_train=e['train']['z'], y_train=e['train']['y'], who_train=e['train']['who'],
              rows_train=e['train']['rows'], anchor=t.anchor, scale=e['scale'])
-    summary = dict(dataset=name, fold=fold, trials=n, items=t.K, chance=1 / t.K, encoder=e['setting'], inner=e['inner'],
-                   scale=e['scale'], sharpness=sharpness, guidance=guidance,
+    protocol = dict(held_out='cue episodes' if name in features.REPEATS else 'contiguous blocks',
+                    alignment=f"per {spec.get('align_by', 'session')}, without the held-out trials")
+    summary = dict(dataset=name, fold=fold, trials=n, items=t.K, chance=1 / t.K, protocol=protocol,
+                   encoder=e['setting'], inner=e['inner'], scale=e['scale'], guidance=guidance,
+                   conditioning='posterior mean of the speech embedding',
                    voices={s: t.label(v) for s, v in voice_of.items()},
-                   operating_points={f'sharpness={k[0]:g},guidance={k[1]:g}': v for k, v in choice.items()},
                    results=measure(trials, t), seconds=round(time.time() - started))
     json.dump(summary, open(folder / 'summary.json', 'w'), indent=1)
     listen_page(name, fold, folder, trials, listen, kept, t, judge, summary)
@@ -640,14 +681,15 @@ def listen_page(name, fold, folder, trials, listen, kept, t, judge, summary):
                     + ''.join(f'<td>{player(f"audio/{stem}_{kind}.wav")}</td>' for kind in CONDITIONS) + '</tr>')
     body = (f'<h2>{html.escape(name)}, fold {fold}: imagined speech reconstructed from EEG, in the person\'s voice</h2>'
             + numbers_table({f'fold {fold}': summary['results']}, summary['chance'])
-            + f'<p class="muted">Operating point: posterior sharpness {summary["sharpness"]:g}, guidance {summary["guidance"]:g}. '
-              'Columns: the person and the voice they speak in (own recording, or an assigned synthetic voice when the '
-              'dataset recorded neither voice nor sex); the true item said in that voice (vocoded reference); the '
-              'encoder\'s decision and its probability for the true item; what Whisper picks for the EEG '
+            + f'<p class="muted">Speech generated from the posterior mean of the speech embedding (no item is chosen), guidance {summary["guidance"]:g}. '
+              'Columns: the person and the synthetic voice assigned to them (the dataset recorded neither voice '
+              'nor sex); the true item said in that voice (vocoded reference); the '
+              'encoder\'s top item and its probability for the true item (a diagnostic, not used for the speech); '
+              'what Whisper picks for the EEG '
               'reconstruction, its free transcript and pitch; reconstructions from this trial\'s EEG, from another '
               'trial of the same person (wrong), without content (prior) and from the true item (oracle: the '
               'decoder\'s ceiling).</p>'
-            + '<table><tr><th>person, voice</th><th>true item</th><th>decoded (p true)</th><th>heard as</th>'
+            + '<table><tr><th>person, voice</th><th>true item</th><th>encoder top item (p true)</th><th>heard as</th>'
               '<th>EEG</th><th>wrong trial</th><th>prior</th><th>oracle</th></tr>' + ''.join(rows) + '</table>')
     (folder / 'listen.html').write_text(PAGE.format(title=f'{html.escape(name)} fold {fold}', body=body))
 

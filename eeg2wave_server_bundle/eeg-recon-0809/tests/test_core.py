@@ -13,46 +13,48 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / 'scripts'))
-from eegspeech import audio, clip                                                   # noqa: E402
-from eegspeech.data import ListenSource, TrialSource, collate, within_fold          # noqa: E402
+from eegspeech import audio, clip, deep, features                                   # noqa: E402
 from eegspeech.diffusion import EMA, MelDiffusion, MelScaler                        # noqa: E402
-from eegspeech.losses import match_mismatch, supcon                                 # noqa: E402
-from eegspeech.model import Model                                                   # noqa: E402
+from eegspeech.features import blocks, within_fold                                  # noqa: E402
 from eegspeech.signal import BIOSEMI64, positions, whitening                        # noqa: E402
 from eegspeech.store import Store, StoreWriter                                      # noqa: E402
 import reconstruct                                                                  # noqa: E402
 
 
 def toy_store(path, rate=128., subjects=3):
-    """Trials of 2 items in 2 modalities plus one 60 s listening segment per subject."""
+    """Trials of 2 items in 2 modalities plus one 60 s rest segment per subject."""
     rng = np.random.default_rng(0)
     xyz, _ = positions(BIOSEMI64[:16], 'biosemi64')
     writer = StoreWriter(path, name='toy', rate=rate, band=[.5, 45], reference='average', unit='uV')
-    writer.add_stimulus('story', rng.standard_normal((18, 64 * 60)).astype(np.float32), [f'r{i}' for i in range(18)])
     for s in range(subjects):
-        segments = [dict(eeg=rng.standard_normal((16, 256)), valid=np.ones(16, bool), modality=m, item=f'w{k}')
-                    for m in ('overt', 'imagine') for k in (0, 1) for _ in range(6)]
-        segments.append(dict(eeg=rng.standard_normal((16, int(60 * rate))), valid=np.ones(16, bool), modality='listen',
-                             stimulus='story', offset=-.5))
+        segments = [dict(eeg=rng.standard_normal((16, 256)), valid=np.ones(16, bool), modality=m, item=f'w{k}',
+                         text=f'w{k}') for m in ('overt', 'imagine') for k in (0, 1) for _ in range(6)]
+        segments.append(dict(eeg=rng.standard_normal((16, int(60 * rate))), valid=np.ones(16, bool), modality='rest'))
         writer.add_subject(f'sub-{s}', BIOSEMI64[:16], xyz, segments)
     writer.close()
     return Store(path)
 
 
 class StoreTest(unittest.TestCase):
-    def test_round_trip_and_sources(self):
+    def test_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = toy_store(Path(tmp) / 'toy.h5')
             self.assertEqual(len(store.table), 3 * 25)
             self.assertEqual(store.items, ['w0', 'w1'])
+            self.assertEqual(store.modalities, ['overt', 'imagine', 'rest'])
             self.assertEqual(store.segment(store.table.iloc[0]).shape, (16, 256))
-            trials = TrialSource(store, store.subjects, window_s=1.5, modalities=['imagine'])
-            self.assertTrue((trials.rows.modality_name == 'imagine').all())
-            self.assertEqual(tuple(collate(trials.sample(8), ('item',)).eeg.shape), (8, 16, 192))
-            listen = ListenSource(store, store.subjects, window_s=5., mismatches=3)
-            windows, pairs = listen.sample(6, partner_fraction=1.)
-            self.assertEqual(windows[0]['features'].shape, (4, 18, 320))
-            self.assertTrue(pairs and all(windows[a]['subject'] != windows[p]['subject'] for a, p in pairs))
+            self.assertEqual(store.table.text.iloc[0], 'w0')
+            self.assertEqual(int(store.table.item.iloc[-1]), -1)
+
+    def test_alignment_can_leave_out_held_trials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = toy_store(Path(tmp) / 'toy.h5')
+            rows = store.table[store.table.subject == 'sub-0'].index[:12]
+            full, without = store.alignment('sub-0'), store.alignment('sub-0', exclude=rows)
+            self.assertFalse(np.allclose(full, without))
+            again = Store(Path(tmp) / 'toy.h5')
+            again.table = again.table.drop(rows)                                    # as if never recorded
+            np.testing.assert_allclose(again.alignment('sub-0'), without, rtol=1e-5)
 
     def test_alignment_whitens(self):
         rng = np.random.default_rng(1)
@@ -71,35 +73,53 @@ class StoreTest(unittest.TestCase):
             store = Store(Path(tmp) / 'p.h5')
             self.assertTrue(np.isfinite(store.xyz('s')).all())
             self.assertFalse(store.file['subjects']['s']['valid'][0][2])
-        frames, _, pooled, _ = Model({'p': 2}, virtual=8, width=16, dim=8).encoder(
-            torch.randn(1, 8, 128), torch.as_tensor(xyz)[None], torch.ones(1, 8, dtype=torch.bool))
-        self.assertTrue(torch.isfinite(frames).all() and torch.isfinite(pooled).all())
 
 
-class DeepModelTest(unittest.TestCase):
-    def test_losses(self):
-        eeg = torch.randn(4, 20, 8)
-        speech = torch.randn(4, 5, 20, 8)
-        speech[:, 0] = eeg
-        self.assertEqual(float(match_mismatch(eeg, speech, torch.ones(4, 20, dtype=torch.bool))[1]), 1.)
+class DeepEncoderTest(unittest.TestCase):
+    def test_supcon_prefers_same_item_neighbours(self):
         z = torch.nn.functional.normalize(torch.tensor([[1., 0], [1., .1], [0, 1.], [.1, 1.]]), dim=-1)
-        self.assertLess(float(supcon(z, torch.tensor([0, 0, 1, 1]))), float(supcon(z, torch.tensor([0, 1, 0, 1]))))
+        self.assertLess(float(clip.supcon(z, torch.tensor([0, 0, 1, 1]))), float(clip.supcon(z, torch.tensor([0, 1, 0, 1]))))
 
-    def test_montage_agnostic_forward_and_reload(self):
-        model = Model({'toy': 3}, person_dim=8, virtual=16, width=32, dim=16)
-        for channels in (16, 40):
-            xyz, _ = positions(BIOSEMI64[:channels], 'biosemi64')
-            frames, mask, _, z = model.encoder(torch.randn(2, channels, 256), torch.as_tensor(xyz).expand(2, -1, -1),
-                                               torch.ones(2, channels, dtype=torch.bool), torch.tensor([256, 200]),
-                                               person=torch.randn(2, 8))
-            self.assertEqual(tuple(frames.shape), (2, 64, 32))
-            self.assertEqual(int(mask[1].sum()), 50)
-            self.assertTrue(torch.allclose(z.norm(dim=-1), torch.ones(2), atol=1e-5))
-        with tempfile.TemporaryDirectory() as tmp:
-            model.save(Path(tmp) / 'm.pt')
-            loaded, _ = Model.load(Path(tmp) / 'm.pt', heads={'other': 5})
-            self.assertIn('other', loaded.heads)
-            self.assertTrue(torch.equal(loaded.encoder.spatial.logits.weight, model.encoder.spatial.logits.weight))
+    def test_filter_bank_passes_its_band(self):
+        bank = deep.sinc_bank(8, 33, 128)
+        t = np.arange(512) / 128
+        edges = np.geomspace(1, .45 * 128, 9)
+        centre = np.sqrt(edges[5] * edges[6])                                  # inside filter 5
+        y = np.stack([np.convolve(np.sin(2 * np.pi * centre * t), h, 'valid') for h in bank])
+        self.assertEqual(int(np.argmax(y.std(1))), 5)
+
+    def test_sentence_net_is_personal_and_learns(self):
+        torch.manual_seed(0)
+        rng = np.random.default_rng(0)
+        anchor = torch.nn.functional.normalize(torch.randn(6, 4), dim=-1)
+        n, channels, samples = 96, 6, 160
+        sentence = rng.integers(0, 6, n)
+        x = rng.standard_normal((n, channels, samples)).astype(np.float32)
+        t = np.arange(samples) / 64
+        for i in range(n):                                     # 8 Hz power in channel 0 for the first half of items
+            x[i, 0] += (sentence[i] < 3) * 3 * np.sin(2 * np.pi * 8 * t)
+        data = x.astype(np.float16)
+        person = np.repeat([0, 1], n // 2)
+        model = deep.SentenceNet(channels, 2, samples, 4, 64, filters=8, depth=1, kernel=.25, pool=.5, stride=.25,
+                                 dropout=0.)
+        z = model(torch.from_numpy(x[:4]), torch.tensor([0, 0, 1, 1]))
+        self.assertEqual(tuple(z.shape), (4, 4))
+        torch.testing.assert_close(z.norm(dim=-1), torch.ones(4))
+        with torch.no_grad():                                   # the persons' spatial filters are separate
+            model.spatial[1].add_(1.)
+        self.assertFalse(torch.allclose(model(torch.from_numpy(x[:1]), torch.tensor([0])),
+                                        model(torch.from_numpy(x[:1]), torch.tensor([1]))))
+        examples = deep.Examples(data, [np.eye(channels)] * 2, person, samples, torch.device('cpu'))
+        a, p = examples(np.array([5, 1, 3]))
+        torch.testing.assert_close(a[1], torch.from_numpy(data[1].astype(np.float32)))   # order kept, identity alignment
+        self.assertEqual(p.tolist(), [0, 0, 0])
+        cfg = dict(rate=64, crop=2.25, filters=8, depth=1, kernel=.25, pool=.5, stride=.25, dropout=0., batch=32,
+                   lr=.01, weight_decay=0., epochs=15, patience=15)
+        run = np.repeat(np.arange(8), n // 8)
+        model, examples, scale, best = deep.fit(data, [np.eye(channels)] * 2, person, sentence, run,
+                                                np.asarray(anchor), np.arange(64), np.arange(64, n), cfg,
+                                                torch.device('cpu'), lambda m: None)
+        self.assertGreater(best, .6)                                              # chance 0.5
 
 
 class ReconstructionTest(unittest.TestCase):
@@ -145,6 +165,21 @@ class ReconstructionTest(unittest.TestCase):
         scaler = MelScaler.fit(mel)
         torch.testing.assert_close(scaler.decode(scaler.encode(mel)), mel)        # floor frames -> digital silence
 
+    def test_band_power_and_its_time_course(self):
+        rng = np.random.default_rng(3)
+        bands = features.bands_for(256)
+        x = rng.standard_normal((4, 768))
+        x[0, 512:] *= 4                                                          # channel 0 louder at the end
+        whole, windows = features.log_power(x, 256, bands, windows=6)
+        self.assertEqual(whole.shape, (4 * len(bands),))
+        self.assertEqual(windows.shape, (6, 4 * len(bands)))
+        course = features.time_course(whole[None], windows[None], 3).reshape(3, len(bands), 4)
+        self.assertTrue((course[2, 1:, 0] > course[0, 1:, 0] + 1).all())         # channel 0 rises in every band
+                                                                                 # above 4 Hz (1-4 Hz: too slow for 1 s)
+        high = features.band_columns(bands, whole.size, 55)
+        self.assertEqual(len(high), 4 * sum(lo >= 55 for lo, _ in bands))
+        self.assertEqual(high[0], 4 * [lo >= 55 for lo, _ in bands].index(True))
+
     def test_dtw_mcd(self):
         rng = np.random.default_rng(0)
         a, other = rng.standard_normal((30, 24)), rng.standard_normal((25, 24))
@@ -162,6 +197,76 @@ class ReconstructionTest(unittest.TestCase):
         who = np.array(['a'] * 5 + ['b'] * 4)
         other = reconstruct.derangement(who, np.random.default_rng(0))
         self.assertTrue((other != np.arange(len(who))).all() and (who[other] == who).all())
+        who, episode = np.repeat(['a', 'b'], 24), np.repeat(np.arange(12), 4)       # 4 repetitions per cue
+        other = reconstruct.derangement(who, np.random.default_rng(0), episode)
+        self.assertTrue((episode[other] != episode).all() and (who[other] == who).all())
+
+    def test_episode_folds_hold_out_whole_episodes(self):
+        rng = np.random.default_rng(0)
+        item = np.repeat(np.arange(5), 80)                                          # 20 cues x 4 repetitions per item
+        episode = np.repeat(np.arange(100), 4)
+        order = rng.permutation(400)                                                # released order != recording order
+        table = pd.DataFrame(dict(subject='a', modality_name='imagine', item=item[order], episode=episode[order]))
+        fold = blocks(table, 5)
+        self.assertEqual(set(fold), set(range(5)))
+        self.assertTrue((table.assign(fold=fold).groupby('episode').fold.nunique() == 1).all())   # never split
+        counts = pd.crosstab(fold, table.item)
+        self.assertTrue((counts.to_numpy() == 16).all())                            # class balance kept
+        held = set(within_fold(table, 5, 2).tolist())
+        self.assertEqual(held, set(np.flatnonzero(fold == 2).tolist()))
+
+    def test_episodes_are_recovered_from_near_duplicates(self):
+        rng = np.random.default_rng(1)
+        state = rng.standard_normal((10, 40))                                       # one state per cue episode
+        x = np.repeat(state, 4, axis=0) + .5 * rng.standard_normal((40, 40))
+        order = rng.permutation(40)
+        x = x[order] / np.linalg.norm(x[order], axis=1, keepdims=True)
+        groups = features.capped_groups(x @ x.T, 4)
+        truth = np.repeat(np.arange(10), 4)[order]
+        self.assertTrue(all(len(set(truth[g])) == 1 and len(g) == 4 for g in groups))
+
+    def test_run_folds_hold_out_whole_runs_in_run_order(self):
+        table = pd.DataFrame(dict(subject='a', modality_name='imagine', item=0,
+                                  block=np.repeat([10, 1, 2, 3, 4, 5, 6, 7, 8, 9], 6)))   # stored in name order
+        fold = blocks(table, 5)
+        self.assertTrue((table.assign(fold=fold).groupby('block').fold.nunique() == 1).all())
+        self.assertEqual(sorted(table.block[fold == 0].unique()), [1, 2])                  # contiguous in run order
+        self.assertEqual(sorted(table.block[fold == 4].unique()), [9, 10])
+
+    def test_sentence_retrieval_learns_only_where_there_is_signal(self):
+        rng = np.random.default_rng(4)
+        anchor = rng.standard_normal((400, 8))
+        anchor /= np.linalg.norm(anchor, axis=1, keepdims=True)
+        sentence, run = rng.permutation(400), np.repeat(np.arange(10), 40)
+        mixing = rng.standard_normal((8, 30))
+        for strength, low, high in ((0., .4, .6), (.5, .9, 1.)):
+            x = strength * anchor[sentence] @ mixing + rng.standard_normal((400, 30))
+            train, test = run < 8, run >= 8
+            for method in ('ridge', 'clip'):
+                model = clip.train_sentences(x[train], sentence[train], run[train], anchor, method=method, steps=50)
+                z = model.embed(x[test])
+                score = np.mean(np.concatenate([clip.rank_percentile(z[t] @ anchor[c].T, p)
+                                                for t, c, p in clip.run_sets(sentence[test], run[test])]))
+                self.assertTrue(low < score < high, (strength, method, score))
+        np.testing.assert_allclose(clip.rank_percentile(np.array([[3., 2., 1.], [1., 1., 1.]]), np.array([0, 2])), [1, .5])
+
+    def test_drift_baseline_is_causal(self):
+        rng = np.random.default_rng(2)
+        x = rng.standard_normal((30, 6)).astype(np.float32)
+        run = np.repeat(['s1/imagine', 's1/overt'], 15)
+        held = np.zeros(30, bool)
+        held[5:10] = True
+        prior = np.zeros((30, 6))
+        base = features.local_baseline(x, run, held, prior, window=4)
+        changed = x.copy()
+        changed[12] += 100                                                          # a later trial
+        changed[7] += 100                                                           # a held-out trial
+        again = features.local_baseline(changed, run, held, prior, window=4)
+        np.testing.assert_allclose(again[:8], base[:8])                             # nothing from the future
+        np.testing.assert_allclose(again[10:12], base[10:12])                       # training rows skip held-out ones
+        self.assertFalse(np.allclose(again[8], base[8]))                            # held-out rows follow the stream
+        np.testing.assert_allclose(again[15:], base[15:])                           # runs are separate
+        np.testing.assert_allclose(base[0], 0)                                      # first trial: the prior
 
 
 if __name__ == '__main__':
