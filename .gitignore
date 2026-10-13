@@ -50,23 +50,6 @@ server_bundle/paper-ref/
 # Server bundle: keep code/config/docs, keep data/models/generated outputs local.
 eeg2wave_server_bundle/**
 !eeg2wave_server_bundle/
-# Keep the eeg-recon-0809 code while raw EEG, stores, checkpoints and local audio remain ignored.
-!eeg2wave_server_bundle/eeg-recon-0809/
-eeg2wave_server_bundle/eeg-recon-0809/**
-!eeg2wave_server_bundle/eeg-recon-0809/README.md
-!eeg2wave_server_bundle/eeg-recon-0809/.gitignore
-!eeg2wave_server_bundle/eeg-recon-0809/requirements.txt
-!eeg2wave_server_bundle/eeg-recon-0809/eegspeech/
-!eeg2wave_server_bundle/eeg-recon-0809/eegspeech/*.py
-!eeg2wave_server_bundle/eeg-recon-0809/configs/
-!eeg2wave_server_bundle/eeg-recon-0809/configs/*.yaml
-!eeg2wave_server_bundle/eeg-recon-0809/docs/
-!eeg2wave_server_bundle/eeg-recon-0809/docs/*.md
-!eeg2wave_server_bundle/eeg-recon-0809/scripts/
-!eeg2wave_server_bundle/eeg-recon-0809/scripts/*.py
-!eeg2wave_server_bundle/eeg-recon-0809/scripts/*.sh
-!eeg2wave_server_bundle/eeg-recon-0809/tests/
-!eeg2wave_server_bundle/eeg-recon-0809/tests/*.py
 !eeg2wave_server_bundle/paper-ref/
 !eeg2wave_server_bundle/paper-ref/**/
 !eeg2wave_server_bundle/paper-ref/**/*.md
@@ -256,23 +239,11 @@ eeg2wave_demo_bundle/outputs/**
 !eeg2wave_server_bundle/feis_karaone_ds004306_bundle/reports/
 !eeg2wave_server_bundle/feis_karaone_ds004306_bundle/reports/**/*.md
 
-# Unified EEG reconstruction bundle: keep scripts/docs/configs, ignore downloaded data.
-!eeg2wave_server_bundle/eeg-recon-0809/
-!eeg2wave_server_bundle/eeg-recon-0809/**/
-!eeg2wave_server_bundle/eeg-recon-0809/.gitignore
-!eeg2wave_server_bundle/eeg-recon-0809/README.md
-!eeg2wave_server_bundle/eeg-recon-0809/bundle_manifest.json
-!eeg2wave_server_bundle/eeg-recon-0809/scripts/
-!eeg2wave_server_bundle/eeg-recon-0809/scripts/**
-!eeg2wave_server_bundle/eeg-recon-0809/app/
-!eeg2wave_server_bundle/eeg-recon-0809/app/**
-!eeg2wave_server_bundle/eeg-recon-0809/notebooks/
-!eeg2wave_server_bundle/eeg-recon-0809/notebooks/**/*.ipynb
-eeg2wave_server_bundle/eeg-recon-0809/data/
-eeg2wave_server_bundle/eeg-recon-0809/artifacts/
-eeg2wave_server_bundle/eeg-recon-0809/outputs/
-!eeg2wave_server_bundle/eeg-recon-0809/data/
-!eeg2wave_server_bundle/eeg-recon-0809/data/ds006104/
-!eeg2wave_server_bundle/eeg-recon-0809/data/ds006104/audio_internal/
-!eeg2wave_server_bundle/eeg-recon-0809/data/ds006104/audio_internal/README.md
+
+# Root-level EEG reconstruction project: keep code and reports, ignore local resources.
+/.venv*/
+Paper-ECoG-EEG/*.pdf
 !eeg2wave_server_bundle/feis_karaone_ds004306_bundle/reports/**/*.json
+
+# The reconstruction pipeline writes generated files under this top-level directory.
+/outputs/

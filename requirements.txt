@@ -1,19 +1,21 @@
-# Install the CUDA-matched PyTorch build before running:
-#   python -m pip install -r requirements.txt
-#
-# The version ranges below are intentionally broad because the server image may
-# already include a newer CUDA-enabled PyTorch 2.x build.
+# Python 3.12. Install a CUDA-matched PyTorch build first on CUDA servers.
+# Local development uses the root .venv-aligned-local environment.
 
-torch>=2.4,<3.0
-torchaudio>=2.4,<3.0
+torch>=2.5,<3.0
+torchaudio>=2.5,<3.0
 
 numpy>=1.26
-pandas>=2.1
-scipy>=1.11
-mne>=1.7
+pandas>=2.2
+scipy>=1.13
+mne>=1.8
+h5py>=3.11
+PyYAML>=6
+soundfile>=0.12
 
 requests>=2.31
 openpyxl>=3.1
+transformers>=4.40
+huggingface_hub>=0.23
 matplotlib>=3.8
 pytest>=8.0
 tqdm>=4.66
