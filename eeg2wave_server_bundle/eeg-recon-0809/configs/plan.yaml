@@ -98,3 +98,37 @@ sentences:               # imagined sentences -> speech: open-vocabulary retriev
   render_trials: 60      # trials per person and fold reconstructed (4 conditions each), evenly over the held-out ones
   transcribe_trials: 20  # of those, transcribed by Whisper
   listen_trials: 6       # of those, kept as wav for the listening page
+
+foundation:              # pretrained EEG foundation models as encoders (scripts/foundation.py, eegspeech.foundation);
+                         # the folds, targets and anchors of `reconstruct` and `sentences`; measures of the encoder
+  models: [reve, cbramod, labram]
+  channel_components: 16 # a channel's token embedding -> top principal directions of the person's training tokens
+  items:                 # frozen features -> the personal linear CLIP encoder (clip.train), coordinate search by inner CV
+    search:
+      - layer: [last, mid]
+        pool: [mean+time, chan, mean+time+chan]   # mean: all tokens; time: per patch over channels; chan: per channel
+        recenter: [0, 20]
+        aux_weight: [0, 0.5]
+      - weight_decay: [1, 0.3, 3, 10, 30]
+    ensemble: 3
+  sentences:             # frozen features -> standardise, PCA, ridge onto the anchors (sentences.py's encoder)
+    search:
+      - layer: [last, mid]
+        pool: [mean+time, chan, mean+time+chan]
+        recenter: [30, 0]
+      - weight_decay: [100, 30, 300, 1000]
+    components: 512
+    ensemble: 3
+  finetune:              # backbone + personal heads, CE of s * cos(z, a) over the anchors, early stop on the last inner block
+    items_models: [cbramod, labram, reve]
+    sentences_models: [cbramod]
+    epochs: 20
+    patience: 4
+    batch: 32
+    lr: 0.0001           # backbone (1e-3 destabilises pretrained weights: arXiv 2607.27268)
+    head_lr: 0.001
+    weight_decay: 0.05
+    dropout: 0.5
+    aux_weight: 0.5      # Thinking Out Loud's spoken and visualised trials, as extra training examples
+    reve_start: 18       # REVE: the top 4 of 22 layers are fine-tuned, on cached tokens of the frozen lower ones
+    seed: 0

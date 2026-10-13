@@ -6,6 +6,7 @@
 #   bash scripts/run_plan.sh deep         # Chisco sentences, the deep encoder (outputs/sentences_deep)
 #   bash scripts/run_plan.sh control      # positive control: the reading epochs (sentence on screen), fold 0
 #   bash scripts/run_plan.sh round        # all of it fold by fold (sentences linear, deep, items); outputs/index.html
+#   bash scripts/run_plan.sh foundation   # EEG foundation models as encoders: embed, frozen probe, fine-tune, report
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=${PY:-.venv-aligned-local/bin/python}
@@ -57,11 +58,28 @@ round() {          # one full round, fold by fold, so every pipeline has a first
   done
 }
 
+foundation() {     # stage 1 (frozen probe) for every model and dataset, then stage 2 (fine-tuning); report after each
+  local log=logs/foundation.log
+  $PY scripts/foundation.py embed 2>&1 | tee -a $log || echo "FAILED foundation embed"
+  for source in fm fm+lp; do
+    for d in bci2020 thinking_out_loud chisco; do
+      $PY scripts/foundation.py probe --datasets "$d" --source "$source" --fold $FOLDS 2>&1 | tee -a $log \
+        || echo "FAILED foundation probe $d $source"
+      $PY scripts/foundation.py report >> $log 2>&1 || echo "FAILED foundation report"
+    done
+  done
+  for d in bci2020 thinking_out_loud chisco; do
+    $PY scripts/foundation.py finetune --datasets "$d" --fold $FOLDS 2>&1 | tee -a $log || echo "FAILED foundation finetune $d"
+    $PY scripts/foundation.py report >> $log 2>&1 || echo "FAILED foundation report"
+  done
+}
+
 case "${1:-}" in
   reconstruct) reconstruct ;;
   sentences) sentences linear ;;
   deep) sentences deep ;;
   control) control ;;
   round) round ;;
-  *) echo "usage: $0 reconstruct|sentences|deep|control|round" >&2; exit 2 ;;
+  foundation) foundation ;;
+  *) echo "usage: $0 reconstruct|sentences|deep|control|round|foundation" >&2; exit 2 ;;
 esac

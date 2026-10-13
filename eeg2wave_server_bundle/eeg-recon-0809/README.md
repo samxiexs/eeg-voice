@@ -25,6 +25,7 @@ controls.
 | Chisco's reading epochs were stored as imagined | Each run had a reading (5 s, sentence on screen) and an imagery (3.3 s) epoch file. Both were labelled imagined until 2026-10-06, so half of the "imagined" trials were reading |
 | Above 55 Hz | Thinking Out Loud with bands <= 45 Hz only: 0.272 vs 0.290 full band. Chisco >= 55 Hz alone: 0.503 vs 0.507 with all bands (inner CV). The stores keep the full band (0.5-120 Hz at 256 Hz) |
 | Across people, imagined items are not decodable | Linear and deep models, with or without listening pretraining, spoken/heard trials or person vectors: at chance on held-out people (2026-10-04; that code was removed on 2026-10-06, results in `outputs/imagery/`) |
+| Pretrained EEG foundation models do not read more | REVE, CBraMod, LaBraM (2026-10-11, `scripts/foundation.py`, same folds and trials). Frozen features: Thinking Out Loud 0.246-0.263 vs log-power 0.292 (worse, p <= 0.03), BCI2020 0.207-0.220 vs 0.222, Chisco 0.504-0.507 vs 0.510; added to log-power: within +-0.6 points (Thinking Out Loud -2 to -3). Fine-tuned (all layers, REVE top 4; flat or pooled head): chance everywhere (BCI2020 0.195-0.208, Thinking Out Loud 0.240-0.251, Chisco CBraMod 0.501). The published 0.51-0.60 on BCI2020 use its leaky official split. `report/04_foundation_models.md` |
 | Listening EEG does not transfer to imagery | Listening is decodable (match-mismatch 41-56 %), but imagery has no shared stimulus clock (Marion: melody-specific ISC 0.28 listening, 0.00 imagery) |
 
 ## What to do next, and why (2026-10-06)
@@ -136,7 +137,7 @@ Notes:
 - Removed 2026-10-06: the `cpseed` and `marion2021` stores, the listening stores and the cross-person
   plan's code (`train.py`, `model.py`, `baseline.py`, `isc.py`; still in git history).
 - Models in `models/`: SpeechT5 HiFi-GAN, HuBERT-base (English), Chinese HuBERT-base, Whisper-small,
-  WavLM-base-plus-sv.
+  WavLM-base-plus-sv; EEG foundation models REVE-base (+ position bank), CBraMod, LaBraM (braindecode 1.8.1).
 
 ## Usage
 
@@ -148,6 +149,7 @@ bash scripts/run_plan.sh reconstruct     # items: targets -> decoders -> 5 folds
 bash scripts/run_plan.sh sentences       # Chisco, linear encoders -> outputs/sentences
 bash scripts/run_plan.sh deep            # Chisco, deep encoder -> outputs/sentences_deep
 bash scripts/run_plan.sh control         # Chisco reading epochs, fold 0 (positive control)
+bash scripts/run_plan.sh foundation      # EEG foundation models as encoders: frozen probe, fine-tuning (outputs/foundation)
 bash scripts/status.sh                   # what is running, last steps, errors
 ```
 
@@ -159,7 +161,8 @@ the rest elsewhere (CUDA, MPS or CPU). Run one heavy process at a time on a 16 G
 ```
 eegspeech/   store signal features metrics                (stores, alignment, features and folds, statistics)
              clip deep diffusion audio                     (CLIP encoders, deep encoder, mel decoder, speech)
-scripts/     download prepare reconstruct sentences run_plan.sh status.sh
+             foundation                                    (REVE, CBraMod, LaBraM: inputs, frozen features, fine-tuning)
+scripts/     download prepare reconstruct sentences foundation run_plan.sh status.sh
 configs/     plan.yaml
 tests/       test_core.py
 ```

@@ -269,5 +269,32 @@ class ReconstructionTest(unittest.TestCase):
         np.testing.assert_allclose(base[0], 0)                                      # first trial: the prior
 
 
+class FoundationTest(unittest.TestCase):
+    def test_inputs_follow_each_models_pretraining(self):
+        from eegspeech import foundation
+        rng = np.random.default_rng(0)
+        t = np.arange(512) / 256.
+        x = 20 * np.sin(2 * np.pi * 10 * t) + 5 * rng.standard_normal((4, 512)) + 30 * np.sin(2 * np.pi * 50 * t)
+        reve = foundation.prepare(x, 256., 'chisco', 'reve')
+        self.assertEqual(reve.shape, (4, 400))                                      # 200 Hz, any length
+        np.testing.assert_allclose(reve.std(1), 1, atol=1e-4)                       # z-scored per trial and channel
+        cbramod = foundation.prepare(x[:, :600], 256., 'chisco', 'cbramod')         # 2.34 s -> 2 whole patches
+        self.assertEqual(cbramod.shape, (4, 400))
+        self.assertLess(cbramod.std(), 1)                                           # units of 100 uV
+        spectrum = np.abs(np.fft.rfft(foundation.prepare(x, 256., 'chisco', 'labram'), axis=1)).mean(0)
+        self.assertLess(spectrum[100], .15 * spectrum[20])          # 50 Hz (1.5x the 10 Hz) notched, 10 Hz kept
+
+    def test_channel_basis_streamed_equals_direct(self):
+        from eegspeech import foundation
+        import foundation as script
+        rng = np.random.default_rng(1)
+        chan = rng.standard_normal((40, 6, 8)) @ rng.standard_normal((8, 8))
+        direct = foundation.ChannelBasis.fit(chan[:30], 3)
+        streamed = script.channel_basis(chan, np.arange(30), 3, chunk=7)
+        a, b = direct(chan), streamed(chan)
+        self.assertEqual(a.shape, (40, 18))
+        np.testing.assert_allclose(np.abs(a), np.abs(b), rtol=1e-3, atol=1e-3)      # same directions up to sign
+
+
 if __name__ == '__main__':
     unittest.main()
