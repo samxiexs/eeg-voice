@@ -1,11 +1,19 @@
-# Perceived EEG-to-Speech 报告
+# Perceived EEG-to-Speech reports
 
-| 文件 | 用途 |
+The current research plan is NeuroSpeech v2.1. Its data ingest is implemented; the model code has only run on synthetic fixtures. The v1 interface checks below still describe the single-dataset pipeline.
+
+| File | Purpose |
 |---|---|
-| [最终执行方案](06_execution_plan_2026-10-13.md) | 固定单一研究路线、数据划分、损失与科学放行门槛 |
-| [项目运行说明](../README.md) | 已实现的完整入口、运行顺序与 EEG-only 输入合同 |
-| [清理记录](cleanup_2026-10-13.json) | 用户授权删除的旧流水线、数据缓存与失败输出目录 |
-| [真实文件与模型检查](implementation_checks.json) | 实际 EEG / WavLM / Vocos / ASR 接口及完整梯度链路；科研效果仍未验证 |
-| [数据单位审计](dataset_unit_audit.json) | 固定快照的原作者数值尺度核对、缩放依据及绝对单位解释限制 |
+| [NeuroSpeech research plan v2.1](07_neurospeech_research_plan_2026-10-13.md) | Current plan (English): four English perceived-speech sources (Kymata English only) and KaraOne for transfer; REVE adaptation, physiological alignment, CFM, Simulation and cross-subject training; batch-by-batch processing that keeps only processed data |
+| [Plan, Chinese original](07_neurospeech_research_plan_2026-10-13.zh.md) | Unchanged source of the translation |
+| [Dataset size and English-directory audit](dataset_storage_audit_2026-10-13.json) | Kymata English whitelist (117.767 GB of selected files, with per-file SHA256 and URLs), KaraOne archives (24.824 GB) and source evidence; processed sizes are budget estimates |
+| [NeuroSpeech model interface check](neurospeech_model_interface_check_2026-10-13.json) | Pinned REVE / WavLM / Vocos / Whisper revisions and a small synthetic-input interface check |
+| Historical execution plan v1 (`06_execution_plan_2026-10-13.md`) | Protocol of the single-dataset TCN implementation; superseded by v2.1. The file is deleted in the working tree and still available with `git show HEAD:report/06_execution_plan_2026-10-13.md` (Chinese) |
+| [Project run instructions](../README.md) | v2.1 data commands and status, v1 entry points, run order and the EEG-only input contract |
+| [Cleanup record](cleanup_2026-10-13.json) | Old pipelines, data caches and failed output directories deleted with the user's authorization |
+| [Real-file and model checks](implementation_checks.json) | v1: real EEG / WavLM / Vocos / ASR interfaces and the full gradient chain; scientific performance is still unverified |
+| [Dataset unit audit](dataset_unit_audit.json) | ds004408: check of the original authors' numeric scale, the scaling evidence and the limits on interpreting absolute units |
 
-完成代码测试后，implementation_checks.json 记录真实 EEG / 音频 / 冻结模型的接口与梯度核对。正式训练与评估完成后，report 命令生成结果表；计算图核对不会被表述为语音重建性能提升。
+Per-dataset ingest evidence (source receipts, synchronization measurements, cleanup logs) lives next to the data in `data/processed/neurospeech/{dataset}/manifest.json`, `metadata/` and `cleanup.jsonl`.
+
+After formal training and evaluation the `report` command generates the result tables; a computation-graph check is never presented as a speech-reconstruction result.

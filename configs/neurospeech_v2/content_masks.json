@@ -1,0 +1,76 @@
+{
+  "kymata_english:kymata_english_conversation": {
+    "kind": "untranscribed-or-overlapping-speech",
+    "status": "locked",
+    "human_review": false,
+    "method": "speech-level sound in pauses of the released word tier",
+    "level_db_re_median_word_rms": -12.0,
+    "minimum_pause_seconds": 0.15,
+    "pad_seconds": 0.1,
+    "audio_sha256": "03e2bf72c92a61f65e6144f7d6b199e06dd654ea5abdbcef09320c7e0d48bb76",
+    "limitation": "simultaneous speech during a transcribed word is not detected; the source releases no speaker turns",
+    "intervals": [
+      [
+        25.14,
+        25.59
+      ],
+      [
+        49.57,
+        50.09
+      ],
+      [
+        80.59,
+        82.34
+      ],
+      [
+        89.9,
+        90.33
+      ],
+      [
+        133.5,
+        134.15
+      ],
+      [
+        222.14,
+        222.56
+      ],
+      [
+        240.74,
+        242.54
+      ],
+      [
+        243.12,
+        243.66
+      ],
+      [
+        245.2,
+        247.43
+      ],
+      [
+        294.32,
+        294.79
+      ],
+      [
+        298.27,
+        298.65
+      ],
+      [
+        303.57,
+        303.96
+      ],
+      [
+        307.02,
+        307.56
+      ],
+      [
+        344.86,
+        345.27
+      ],
+      [
+        352.14,
+        352.56
+      ]
+    ],
+    "note": "Derived automatically from the released annotation and audio; edit the intervals and keep status locked after any manual review."
+  }
+}

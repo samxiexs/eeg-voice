@@ -14,3 +14,7 @@ praatio>=6,<7
 matplotlib>=3.8,<4
 pytest>=8,<10
 tqdm>=4.66,<5
+mtrf==2.1.2
+einops>=0.8,<1
+h5py>=3.10,<4
+scikit-learn>=1.4,<2

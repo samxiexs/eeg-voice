@@ -1,0 +1,3175 @@
+{
+  "date": "2026-10-13",
+  "scope": "public metadata only; no EEG, MEG, MRI, audio or video payload downloaded",
+  "decimal_GB": 1000000000,
+  "kymata_english": {
+    "source": "https://osf.io/qdzgh/",
+    "english_root": "english-native-english-conversation",
+    "english_root_metadata_url": "https://api.osf.io/v2/nodes/qdzgh/files/osfstorage/67b25e3b9a590149313141d2/",
+    "selected_download_bytes": 117766637843,
+    "selected_download_GB": 117.766637843,
+    "task_en_fif_bytes": 117609308339,
+    "task_en_fif_GB": 117.609308339,
+    "task_en_fif_files": 81,
+    "recording_directories": [
+      "E1",
+      "E10",
+      "E11",
+      "E12",
+      "E13",
+      "E14",
+      "E15",
+      "E16",
+      "E17",
+      "E18",
+      "E19",
+      "E2",
+      "E20",
+      "E3",
+      "E3b",
+      "E4",
+      "E5",
+      "E6",
+      "E7",
+      "E8",
+      "E9"
+    ],
+    "unique_subjects_after_E3b_maps_to_E3": 20,
+    "largest_fif": {
+      "id": "67bd786c7f49e6daddbd5964",
+      "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-1_meg.fif",
+      "bytes": 1615867983,
+      "version": 1,
+      "sha256": "e39beb16c23936dc398a52dbadbcca5a11dd947179114e3ad2363a59f750480c",
+      "download_url": "https://osf.io/download/67bd786c7f49e6daddbd5964/"
+    },
+    "selection": "English task-en FIF + English audio/annotations + relevant sidecars; skip Russian, anatomy, visual frames, empty-room and MEG-only calibration files",
+    "temporary_combined_modalities": "EEG and MEG are in the same FIF; extract EEG and delete FIF after verified preprocessing",
+    "excluded_paths": [
+      "/english-native-english-conversation/ct_sparse_triux.fif",
+      "/english-native-english-conversation/sss_cal_triux.dat",
+      "/english-native-english-conversation/stimuli/visual/",
+      "/english-native-english-conversation/sub-E1/anat/",
+      "/english-native-english-conversation/sub-E2/anat/",
+      "/english-native-english-conversation/sub-E3/anat/",
+      "/english-native-english-conversation/sub-E3b/anat/",
+      "/english-native-english-conversation/sub-E4/anat/",
+      "/english-native-english-conversation/sub-E5/anat/",
+      "/english-native-english-conversation/sub-E6/anat/",
+      "/english-native-english-conversation/sub-E7/anat/",
+      "/english-native-english-conversation/sub-E8/anat/",
+      "/english-native-english-conversation/sub-E9/anat/",
+      "/english-native-english-conversation/sub-E10/anat/",
+      "/english-native-english-conversation/sub-E11/anat/",
+      "/english-native-english-conversation/sub-E12/anat/",
+      "/english-native-english-conversation/sub-E13/anat/",
+      "/english-native-english-conversation/sub-E14/anat/",
+      "/english-native-english-conversation/sub-E15/anat/",
+      "/english-native-english-conversation/sub-E16/anat/",
+      "/english-native-english-conversation/sub-E17/anat/",
+      "/english-native-english-conversation/sub-E18/anat/",
+      "/english-native-english-conversation/sub-E19/anat/",
+      "/english-native-english-conversation/sub-E20/anat/",
+      "/english-native-english-conversation/sub-E1/meg/sub-E1_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E1/meg/sub-E1_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E1/meg/sub-E1_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E1/meg/sub-E1_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E2/meg/sub-E2_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E2/meg/sub-E2_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E2/meg/sub-E2_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E2/meg/sub-E2_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E3/meg/sub-E3_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E3/meg/sub-E3_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E3/meg/sub-E3_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E3/meg/sub-E3_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E4/meg/sub-E4_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E4/meg/sub-E4_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E4/meg/sub-E4_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E4/meg/sub-E4_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E5/meg/sub-E5_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E5/meg/sub-E5_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E5/meg/sub-E5_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E5/meg/sub-E5_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E6/meg/sub-E6_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E6/meg/sub-E6_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E6/meg/sub-E6_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E6/meg/sub-E6_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E7/meg/sub-E7_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E7/meg/sub-E7_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E7/meg/sub-E7_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E7/meg/sub-E7_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E8/meg/sub-E8_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E8/meg/sub-E8_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E8/meg/sub-E8_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E8/meg/sub-E8_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E9/meg/sub-E9_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E9/meg/sub-E9_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E9/meg/sub-E9_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E9/meg/sub-E9_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E10/meg/sub-E10_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E10/meg/sub-E10_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E10/meg/sub-E10_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E10/meg/sub-E10_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E11/meg/sub-E11_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E11/meg/sub-E11_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E11/meg/sub-E11_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E11/meg/sub-E11_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E12/meg/sub-E12_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E12/meg/sub-E12_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E12/meg/sub-E12_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E12/meg/sub-E12_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E13/meg/sub-E13_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E13/meg/sub-E13_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E13/meg/sub-E13_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E13/meg/sub-E13_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E14/meg/sub-E14_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E14/meg/sub-E14_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E14/meg/sub-E14_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E14/meg/sub-E14_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E15/meg/sub-E15_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E15/meg/sub-E15_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E15/meg/sub-E15_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E15/meg/sub-E15_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E16/meg/sub-E16_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E16/meg/sub-E16_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E16/meg/sub-E16_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E16/meg/sub-E16_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E17/meg/sub-E17_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E17/meg/sub-E17_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E17/meg/sub-E17_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E17/meg/sub-E17_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E18/meg/sub-E18_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E18/meg/sub-E18_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E18/meg/sub-E18_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E18/meg/sub-E18_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E19/meg/sub-E19_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E19/meg/sub-E19_task-emptyroom_run-0_channels.tsv",
+      "/english-native-english-conversation/sub-E19/meg/sub-E19_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E19/meg/sub-E19_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E20/meg/sub-E20_task-emptyroom_run-0_events.tsv",
+      "/english-native-english-conversation/sub-E20/meg/sub-E20_task-emptyroom_run-0_meg.json",
+      "/english-native-english-conversation/sub-E20/meg/sub-E20_task-emptyroom_run-0_meg.fif",
+      "/english-native-english-conversation/sub-E20/meg/sub-E20_task-emptyroom_run-0_channels.tsv"
+    ],
+    "files": [
+      {
+        "id": "67bd6d5664813b23002e903c",
+        "path": "/english-native-english-conversation/README",
+        "bytes": 139,
+        "version": 1,
+        "sha256": "2a976b0ae00dd566912595d20e78d4ff040052dde03c501d0af2906cf7b861e1",
+        "download_url": "https://osf.io/download/wvtud/"
+      },
+      {
+        "id": "67bd6cde3a3d93003e5563b7",
+        "path": "/english-native-english-conversation/dataset_description.json",
+        "bytes": 156,
+        "version": 1,
+        "sha256": "a6a4f844fa3ca619b5f28896768cd5bd32945b2231115fee030702082eff9403",
+        "download_url": "https://osf.io/download/tm2dc/"
+      },
+      {
+        "id": "67bd6db0850067a5152e903b",
+        "path": "/english-native-english-conversation/stimuli/audio/mfa_phoneme.txt",
+        "bytes": 15129,
+        "version": 1,
+        "sha256": "61179b40a92630909f4915d01eaeccda8f55fa1f7fd5a6742d6487348b360064",
+        "download_url": "https://osf.io/download/2zdmv/"
+      },
+      {
+        "id": "67bd6db33ce6e072a19faffc",
+        "path": "/english-native-english-conversation/stimuli/audio/mfa_phoneme_stime.txt",
+        "bytes": 35823,
+        "version": 1,
+        "sha256": "53db6ed7d2eda653b0c5f463fad0dd71007bcc3a8b0013866344c5c4d4dbaf91",
+        "download_url": "https://osf.io/download/824ar/"
+      },
+      {
+        "id": "67bd6db312950d9b07bd57d7",
+        "path": "/english-native-english-conversation/stimuli/audio/mfa_word.txt",
+        "bytes": 8760,
+        "version": 1,
+        "sha256": "c89266afbbd0f3322340635ebd654089ecab4932f24b903d05d1493234b2c141",
+        "download_url": "https://osf.io/download/rzx8s/"
+      },
+      {
+        "id": "67bd6daca7c45ffe429fb01a",
+        "path": "/english-native-english-conversation/stimuli/audio/mfa_word_stime.txt",
+        "bytes": 11675,
+        "version": 1,
+        "sha256": "fccd1b963b174190751519e11c674d5a4c028c311f8aaef43b0f1a4346365a33",
+        "download_url": "https://osf.io/download/p72e4/"
+      },
+      {
+        "id": "68f392783eb92e8c594972c8",
+        "path": "/english-native-english-conversation/stimuli/audio/script_for_bbc_english_podcast_cutting/cuts.csv",
+        "bytes": 190,
+        "version": 1,
+        "sha256": "09b13222b3ad7a9cdb2fbe5364b990a7c80b302e3617f96f810f77406f1e16e5",
+        "download_url": "https://osf.io/download/7bgmd/"
+      },
+      {
+        "id": "68f3926e6b44de69f67f2afa",
+        "path": "/english-native-english-conversation/stimuli/audio/script_for_bbc_english_podcast_cutting/reconstruct_from_csv.py",
+        "bytes": 3505,
+        "version": 1,
+        "sha256": "195dfbbb8c3ff4782bd4012ee553c4ba21698f917e96a21b019773d15af942cd",
+        "download_url": "https://osf.io/download/9nwpb/"
+      },
+      {
+        "id": "67bd6d98162a37cc6fbd57d9",
+        "path": "/english-native-english-conversation/stimuli/audio/stimulus.wav",
+        "bytes": 154197892,
+        "version": 1,
+        "sha256": "996e9930e24930bb40602651616412b436964d59d6dc765dbb6c3996ef813972",
+        "download_url": "https://osf.io/download/y9en6/"
+      },
+      {
+        "id": "67bd6e9f38623fe60380606b",
+        "path": "/english-native-english-conversation/sub-E1/meg/sub-E1_coordsystem.json",
+        "bytes": 1826,
+        "version": 1,
+        "sha256": "f654fbc74b04290bebf32a2c220f5978983f08426a3a44b5b02a90da45e051c8",
+        "download_url": "https://osf.io/download/67bd6e9f38623fe60380606b/"
+      },
+      {
+        "id": "67bd6ea68407a428e655641a",
+        "path": "/english-native-english-conversation/sub-E1/meg/sub-E1_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/wkte5/"
+      },
+      {
+        "id": "67bd6ea9f4b21f0f20bd57d6",
+        "path": "/english-native-english-conversation/sub-E1/meg/sub-E1_task-en_run-1_events.tsv",
+        "bytes": 9720,
+        "version": 1,
+        "sha256": "9a68deb6c5494e5b937b77630bb5fe9e5dee24a763672cb6db202f4c6ac84997",
+        "download_url": "https://osf.io/download/gqt7s/"
+      },
+      {
+        "id": "67bd6eeda66339f1d25564eb",
+        "path": "/english-native-english-conversation/sub-E1/meg/sub-E1_task-en_run-1_meg.fif",
+        "bytes": 1478950191,
+        "version": 1,
+        "sha256": "79ffb1d11c702882bae7c04d081be630811e326b396b8508d7bcae85d127eee7",
+        "download_url": "https://osf.io/download/bjvmd/"
+      },
+      {
+        "id": "67bd6eb1479007d376bd57ea",
+        "path": "/english-native-english-conversation/sub-E1/meg/sub-E1_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "f3a61b458b9a44a40035ddaecc4cea89c4842da572e2ba4b5ab2b3fa78de5a87",
+        "download_url": "https://osf.io/download/6u7e8/"
+      },
+      {
+        "id": "67bd6eb4a7c45ffe429fb06d",
+        "path": "/english-native-english-conversation/sub-E1/meg/sub-E1_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd6eb4a7c45ffe429fb06d/"
+      },
+      {
+        "id": "67bd6eb73ce6e072a19fb030",
+        "path": "/english-native-english-conversation/sub-E1/meg/sub-E1_task-en_run-2_events.tsv",
+        "bytes": 9580,
+        "version": 1,
+        "sha256": "6835341c0987b0be4d80f8634f77d04a93803a4648939e59f1a6bdba944118a1",
+        "download_url": "https://osf.io/download/bps3j/"
+      },
+      {
+        "id": "67bd6efb38623fe603806081",
+        "path": "/english-native-english-conversation/sub-E1/meg/sub-E1_task-en_run-2_meg.fif",
+        "bytes": 1453477451,
+        "version": 1,
+        "sha256": "0c094970dc92ad01f0cb23d4ba41bd2313bf0448629a277c2dba743a3ef5b645",
+        "download_url": "https://osf.io/download/67bd6efb38623fe603806081/"
+      },
+      {
+        "id": "67bd6ef2d89418dfa580616e",
+        "path": "/english-native-english-conversation/sub-E1/meg/sub-E1_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "f60058d954677538a4b8cd44b3f380c0e739d27e19af0e556090a694df4b6cc6",
+        "download_url": "https://osf.io/download/67bd6ef2d89418dfa580616e/"
+      },
+      {
+        "id": "67bd7cdb7f59fc242ebd5882",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_coordsystem.json",
+        "bytes": 1703,
+        "version": 1,
+        "sha256": "ccdf17f23c291d8597417fd841af1a9f0588fe3f55c7e93e9b923346fe30e0d5",
+        "download_url": "https://osf.io/download/xw4d6/"
+      },
+      {
+        "id": "67bd7c507f49e6daddbd5b63",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/b8k56/"
+      },
+      {
+        "id": "67bd7c4f85c4e3d7e1556901",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-1_events.tsv",
+        "bytes": 9732,
+        "version": 1,
+        "sha256": "57b7d23a41d5a8df436eaf3e6ed842dfbc4763c419bf38eabc5c441ef1f7fa9a",
+        "download_url": "https://osf.io/download/7mspf/"
+      },
+      {
+        "id": "67bd7c8cf367aaaec62e98af",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-1_meg.fif",
+        "bytes": 1520344599,
+        "version": 1,
+        "sha256": "c3675a3bc4499e0cd984775850396d485610f16f0833e22c789c87e4fafb0120",
+        "download_url": "https://osf.io/download/mq3ed/"
+      },
+      {
+        "id": "67bd7c533ad901f49b556a51",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "7028ddd06b593740302724eef21e366f57d5777724999633dffc35823c00a19e",
+        "download_url": "https://osf.io/download/5cgjf/"
+      },
+      {
+        "id": "67bd7c5493cbdcaba9bd5edc",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/tmk4c/"
+      },
+      {
+        "id": "67bd7c5738623fe6038064d9",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-2_events.tsv",
+        "bytes": 9574,
+        "version": 1,
+        "sha256": "7edf73ad7b6d42e5e440100ef2c34488e3a184a2a0a0d4721581156445ca47b6",
+        "download_url": "https://osf.io/download/67bd7c5738623fe6038064d9/"
+      },
+      {
+        "id": "67bd7c9332d35e7c869fb5cb",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-2_meg.fif",
+        "bytes": 1472583375,
+        "version": 1,
+        "sha256": "90c36bfd295d1c9d5cfacd6a2b9bc2952a14b0dd3162031b9ecf0293fd89acd4",
+        "download_url": "https://osf.io/download/j6g7f/"
+      },
+      {
+        "id": "67bd7c8fd89418dfa5806f24",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "f19506e57b39276892c836e02bd1244a63cc4d575ec92a90f574022a8c117a5b",
+        "download_url": "https://osf.io/download/g39dk/"
+      },
+      {
+        "id": "67bd7c9166e3f994749fb1db",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/5rmwf/"
+      },
+      {
+        "id": "67bd7c94d89418dfa5806f28",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-3_events.tsv",
+        "bytes": 9568,
+        "version": 1,
+        "sha256": "ba11930629f3c608f9ff707f0d04d8b391d68ada56865167e328a6088337d670",
+        "download_url": "https://osf.io/download/67bd7c94d89418dfa5806f28/"
+      },
+      {
+        "id": "67bd7cd63ad901f49b556ac1",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-3_meg.fif",
+        "bytes": 1421638347,
+        "version": 1,
+        "sha256": "af0f325f47531826c21ee46023f46ccb59cfee17875ff23a566895975331e05a",
+        "download_url": "https://osf.io/download/23vd4/"
+      },
+      {
+        "id": "67bd7c96d5db8634899fb3d2",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "92dd299617672f29073c3bdc63feef4d55986b57a41091aaea8eb48043a3d35f",
+        "download_url": "https://osf.io/download/xqrwv/"
+      },
+      {
+        "id": "67bd7c99524954e26c2e95a5",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/9z3d7/"
+      },
+      {
+        "id": "67bd7c9d2b6db8bfaf806936",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-4_events.tsv",
+        "bytes": 9550,
+        "version": 1,
+        "sha256": "880ba9ace5016cdfe7c43ae45a1a2b78d482853b0915aed4f6bbd4ab129f6fe3",
+        "download_url": "https://osf.io/download/mkj4h/"
+      },
+      {
+        "id": "67bd7ce0c654cc713a55652a",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-4_meg.fif",
+        "bytes": 1416862247,
+        "version": 1,
+        "sha256": "a23189ce52ecd98a3485441518efb3e47e37ecd289e474a2f74d9cc01eab02f5",
+        "download_url": "https://osf.io/download/6nuhg/"
+      },
+      {
+        "id": "67bd7cd993cbdcaba9bd5f2e",
+        "path": "/english-native-english-conversation/sub-E10/meg/sub-E10_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "e8871db38c07e6cab253b6b7c26194658a74e1e4d7eb5ce92b21d506802a048a",
+        "download_url": "https://osf.io/download/mjau9/"
+      },
+      {
+        "id": "67bd7e7038623fe6038065a1",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_coordsystem.json",
+        "bytes": 1703,
+        "version": 1,
+        "sha256": "8de997672752b16a6f4845ec6d25cb519c8f9d504a0d14b9be648716758f0fa8",
+        "download_url": "https://osf.io/download/46ecf/"
+      },
+      {
+        "id": "67bd7e827f49e6daddbd5cee",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/h6vge/"
+      },
+      {
+        "id": "67bd7daf850067a5152e9381",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-1_events.tsv",
+        "bytes": 9723,
+        "version": 1,
+        "sha256": "801904f31eaa4072ee9c6518d23c18f6fc0e7258b82d500d52e15671bf212de4",
+        "download_url": "https://osf.io/download/9n5jh/"
+      },
+      {
+        "id": "67bd7df764813b23002e956e",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-1_meg.fif",
+        "bytes": 1498054219,
+        "version": 1,
+        "sha256": "6d3deaa1929a5a70dba933b784596aabc3ef3ddb18c5d88e5325fa059d613387",
+        "download_url": "https://osf.io/download/y7zmf/"
+      },
+      {
+        "id": "67bd7db209a3ac164b8060ef",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "4ec4dbd137abed5e380d08c10167ae3e9b1e0d37b8c5a29a3a766225ea59f524",
+        "download_url": "https://osf.io/download/y8e6q/"
+      },
+      {
+        "id": "67bd7db485c4e3d7e15569e3",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/n3fub/"
+      },
+      {
+        "id": "67bd7db709a3ac164b8060f9",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-2_events.tsv",
+        "bytes": 9555,
+        "version": 1,
+        "sha256": "e31c03a6ee7133999317e6b9ebfda20b04e9a0cf0ba191269fd8f14ae559c12f",
+        "download_url": "https://osf.io/download/8w6s5/"
+      },
+      {
+        "id": "67bd7e13d5db8634899fb4ac",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-2_meg.fif",
+        "bytes": 1421636427,
+        "version": 1,
+        "sha256": "3619fe06e29d8c369c9715f686ff335dba3feaf2fe6e898381c1d6d2ae4fe7dd",
+        "download_url": "https://osf.io/download/smuhk/"
+      },
+      {
+        "id": "67bd7dfa2b6db8bfaf806a2b",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "92dd299617672f29073c3bdc63feef4d55986b57a41091aaea8eb48043a3d35f",
+        "download_url": "https://osf.io/download/p56ha/"
+      },
+      {
+        "id": "67bd7dfc8c84e9b51f55670e",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/gz3j4/"
+      },
+      {
+        "id": "67bd7e0232d35e7c869fb6a0",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-3_events.tsv",
+        "bytes": 9573,
+        "version": 1,
+        "sha256": "7cb3281f357f7d42693c2c991d083bb737e69bd31ca11a3d730c078aa431732e",
+        "download_url": "https://osf.io/download/67bd7e0232d35e7c869fb6a0/"
+      },
+      {
+        "id": "67bd7e6ad6155ec36c2e9eb9",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-3_meg.fif",
+        "bytes": 1429596579,
+        "version": 1,
+        "sha256": "786dccdca22d59c93d418fe7ba988f45b37be32a8a7fffbf530a3e54a784e5ad",
+        "download_url": "https://osf.io/download/4zey9/"
+      },
+      {
+        "id": "67bd7e1674996c50e1bd5872",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "52985febe591397895f8b71f0fa48e2c5aa8f82dc491d6c9bc08d333963696eb",
+        "download_url": "https://osf.io/download/rqfgz/"
+      },
+      {
+        "id": "67bd7e19a7c45ffe429fb4e2",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/f4ydb/"
+      },
+      {
+        "id": "67bd7e1e7f49e6daddbd5ccd",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-4_events.tsv",
+        "bytes": 9570,
+        "version": 1,
+        "sha256": "b5d311b3b378313682e73cd46243077ede2e17b677fdf7ecc7cfce0ddedd01e8",
+        "download_url": "https://osf.io/download/zup3t/"
+      },
+      {
+        "id": "67bd7e7c9f7c8b90b6bd5910",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-4_meg.fif",
+        "bytes": 1408900187,
+        "version": 1,
+        "sha256": "f836b7a09524a9e7ed720d2559f17d9ee380a0c11ea3f68d03ab4af18026cb0f",
+        "download_url": "https://osf.io/download/2zb7k/"
+      },
+      {
+        "id": "67bd7e6da7c45ffe429fb4f9",
+        "path": "/english-native-english-conversation/sub-E11/meg/sub-E11_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "a833ccc7f736b32608b99e29814c7ceee1c3bb70d81dd2b4ff6061484a1ea331",
+        "download_url": "https://osf.io/download/5fm78/"
+      },
+      {
+        "id": "67bd7f5532d35e7c869fb7e2",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_coordsystem.json",
+        "bytes": 1669,
+        "version": 1,
+        "sha256": "639ead1172816e2b6ee89e7da17cc3f5380507b383626db1b84f9e9bf40f65ff",
+        "download_url": "https://osf.io/download/xfy72/"
+      },
+      {
+        "id": "67bd7f6d32d35e7c869fb800",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/kdmva/"
+      },
+      {
+        "id": "67bd7f6f32d35e7c869fb802",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-1_events.tsv",
+        "bytes": 9735,
+        "version": 1,
+        "sha256": "9d716994246811dd798e20d53b0030d1aa3aaf1667590b82f561df36674c2cbf",
+        "download_url": "https://osf.io/download/7g4z8/"
+      },
+      {
+        "id": "67bd7fad95aaf7d5992e9354",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-1_meg.fif",
+        "bytes": 1572881283,
+        "version": 1,
+        "sha256": "47ae9a518a37579b0ab45d7fbd9aac0231f0bff7829635de91e6fee648c0304d",
+        "download_url": "https://osf.io/download/x7v8n/"
+      },
+      {
+        "id": "67bd7ed464813b23002e95da",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "95cf617ca11054d5c8ab6a75f1841c8d638b442d4b33600c5e1b516ce7ae1437",
+        "download_url": "https://osf.io/download/b2rgy/"
+      },
+      {
+        "id": "67bd7ed4266f6c78fb556523",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/pz36f/"
+      },
+      {
+        "id": "67bd7ed6850067a5152e9423",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-2_events.tsv",
+        "bytes": 9559,
+        "version": 1,
+        "sha256": "4727b5a1449bf134056c9e78a8a6e3a55240b7e514d05f23d562cb3aefc60acf",
+        "download_url": "https://osf.io/download/8vq93/"
+      },
+      {
+        "id": "67bd7f463ad901f49b556cf5",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-2_meg.fif",
+        "bytes": 1415269931,
+        "version": 1,
+        "sha256": "44dda0489e943c0152ae85879c14fd182a026b4f3f40a660e244eba269e47867",
+        "download_url": "https://osf.io/download/yhv9x/"
+      },
+      {
+        "id": "67bd7edb3ad901f49b556c8d",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "40941e252925715996d4964c4f4ed8db118e03e0cf1baa042a690892ef8964c3",
+        "download_url": "https://osf.io/download/9cszk/"
+      },
+      {
+        "id": "67bd7ede524954e26c2e96c6",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/erjq4/"
+      },
+      {
+        "id": "67bd7ee109a3ac164b8061fe",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-3_events.tsv",
+        "bytes": 9562,
+        "version": 1,
+        "sha256": "cd33c25b5d0a44a89ff22e882aa339baacf132ecca4af6ceaea42da4f9d44b60",
+        "download_url": "https://osf.io/download/xvyu8/"
+      },
+      {
+        "id": "67bd7f512b6db8bfaf806ad4",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-3_meg.fif",
+        "bytes": 1432782287,
+        "version": 1,
+        "sha256": "8b9a02b2d953f6fa7c662e01f9040489ade9ba860fc8bdb68cb2f0f45b262a30",
+        "download_url": "https://osf.io/download/67bd7f512b6db8bfaf806ad4/"
+      },
+      {
+        "id": "67bd7f477dbb6d44759fb505",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "491d908d6c40226d5740ef6eaa8d8e1c5ac0ff939e9924f18bc84c11d13ab447",
+        "download_url": "https://osf.io/download/tbxy2/"
+      },
+      {
+        "id": "67bd7f49b6ea2f90a880626f",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/v36sx/"
+      },
+      {
+        "id": "67bd7f4bebc8fc13e9bd5872",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-4_events.tsv",
+        "bytes": 9546,
+        "version": 1,
+        "sha256": "0305704a45c2bb86dcc97904051f6c44e12f65e24e278994579d45681c77c6ab",
+        "download_url": "https://osf.io/download/h5qk2/"
+      },
+      {
+        "id": "67bd7f838c84e9b51f5567da",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-4_meg.fif",
+        "bytes": 1418453975,
+        "version": 1,
+        "sha256": "b4bcbf388d9d9a7ea123b5615479c365424e3c648ea248b2cf29c4e26eff4c8c",
+        "download_url": "https://osf.io/download/2rbp6/"
+      },
+      {
+        "id": "67bd7f5309a3ac164b806226",
+        "path": "/english-native-english-conversation/sub-E12/meg/sub-E12_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "d27de00660d546f819fceaf5be0bec856a70e71b6d0684f7c7db358735f88f46",
+        "download_url": "https://osf.io/download/tjq3y/"
+      },
+      {
+        "id": "67bd804b6874ea3dfc8062fd",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_coordsystem.json",
+        "bytes": 1665,
+        "version": 1,
+        "sha256": "49b6232c1951ca31836c62d68e87b1384bd6435da21b725a48439b94cb2e3fc8",
+        "download_url": "https://osf.io/download/67bd804b6874ea3dfc8062fd/"
+      },
+      {
+        "id": "67bd806585c4e3d7e1556b3a",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd806585c4e3d7e1556b3a/"
+      },
+      {
+        "id": "67bd8069eca0717d2c556624",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-1_events.tsv",
+        "bytes": 9732,
+        "version": 1,
+        "sha256": "2cb9c01ea7fa62118391de695bd8d9e7f7ccdcc4628cfd5893bd9b588da0d3fc",
+        "download_url": "https://osf.io/download/67bd8069eca0717d2c556624/"
+      },
+      {
+        "id": "67bd80c832d35e7c869fb9a4",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-1_meg.fif",
+        "bytes": 1502833099,
+        "version": 1,
+        "sha256": "666d8025ea6f820165c02d1b43773f7843aa2b839ee295f81e80b44efc3078b7",
+        "download_url": "https://osf.io/download/67bd80c832d35e7c869fb9a4/"
+      },
+      {
+        "id": "67bd7ff586edde90d49fb2ba",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "9d5eb09e7afff0fd4b47f10330e7e6101b2e0f82b08432ce817f781b20da2f3a",
+        "download_url": "https://osf.io/download/67bd7ff586edde90d49fb2ba/"
+      },
+      {
+        "id": "67bd7ff57dbb6d44759fb54c",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd7ff57dbb6d44759fb54c/"
+      },
+      {
+        "id": "67bd7ff8850067a5152e9480",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-2_events.tsv",
+        "bytes": 10583,
+        "version": 1,
+        "sha256": "c1e97a61df50db6c6a0ba6208205e146cad2e0f8818e2b4791430f1ef73bba2c",
+        "download_url": "https://osf.io/download/67bd7ff8850067a5152e9480/"
+      },
+      {
+        "id": "67bd803964813b23002e968b",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-2_meg.fif",
+        "bytes": 1442337003,
+        "version": 1,
+        "sha256": "579b67d408b9e8dafb4441bc591cbf998a14f76ae2ee92d426c6f555fe956d8d",
+        "download_url": "https://osf.io/download/67bd803964813b23002e968b/"
+      },
+      {
+        "id": "67bd7ffb8e7b4a595c806364",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "19a99dae8cfdb766cdccc923b054f4cb95e14b668d14f78abc6b602613cc3b4d",
+        "download_url": "https://osf.io/download/67bd7ffb8e7b4a595c806364/"
+      },
+      {
+        "id": "67bd7ffe32d35e7c869fb8ca",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd7ffe32d35e7c869fb8ca/"
+      },
+      {
+        "id": "67bd80027f49e6daddbd5da5",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-3_events.tsv",
+        "bytes": 9566,
+        "version": 1,
+        "sha256": "5c0999350189bef6200dd175cf126981ff664e7b2c61a0fd95279a697b7b0761",
+        "download_url": "https://osf.io/download/67bd80027f49e6daddbd5da5/"
+      },
+      {
+        "id": "67bd80441d5f9537ff2e906d",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-3_meg.fif",
+        "bytes": 1431191395,
+        "version": 1,
+        "sha256": "6e4f86110933b16249772e2bae3c5b86959e5246f691cf54d9b5b0ee8d6f848f",
+        "download_url": "https://osf.io/download/67bd80441d5f9537ff2e906d/"
+      },
+      {
+        "id": "67bd803b6ef7f451809fb35d",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "e84234edcc50674b760e29a2fac70fe9c2d81a16a0ca33a0ce6a60a9c9d9699f",
+        "download_url": "https://osf.io/download/67bd803b6ef7f451809fb35d/"
+      },
+      {
+        "id": "67bd803e6ef7f451809fb35f",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd803e6ef7f451809fb35f/"
+      },
+      {
+        "id": "67bd8040524954e26c2e9771",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-4_events.tsv",
+        "bytes": 10105,
+        "version": 1,
+        "sha256": "77b4f1d9e60529a23241fd55537bc32b826ff61554549d0d563a562b049ea12c",
+        "download_url": "https://osf.io/download/67bd8040524954e26c2e9771/"
+      },
+      {
+        "id": "67bd80783ad901f49b556ea1",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-4_meg.fif",
+        "bytes": 1434376203,
+        "version": 1,
+        "sha256": "7b1b1941755c36e5aaadd2f0be589146fa5dcaf603d9fa4b1b02a51ead797362",
+        "download_url": "https://osf.io/download/67bd80783ad901f49b556ea1/"
+      },
+      {
+        "id": "67bd804786edde90d49fb2f0",
+        "path": "/english-native-english-conversation/sub-E13/meg/sub-E13_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "562196fe9b700269a8a89f4e138df9de581ae685a0930ec12d706e0a0eb23752",
+        "download_url": "https://osf.io/download/67bd804786edde90d49fb2f0/"
+      },
+      {
+        "id": "67bd88066ef7f451809fb5ab",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_coordsystem.json",
+        "bytes": 1665,
+        "version": 1,
+        "sha256": "83a7d1122eed60080e11e2ae9167e568da65d678c8ef42d52fd0859705f4abb1",
+        "download_url": "https://osf.io/download/67bd88066ef7f451809fb5ab/"
+      },
+      {
+        "id": "67bd88518c84e9b51f556d05",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd88518c84e9b51f556d05/"
+      },
+      {
+        "id": "67bd885464813b23002e9a9b",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-1_events.tsv",
+        "bytes": 9721,
+        "version": 1,
+        "sha256": "b97734d9d670c64d54493141839f99403ff906ccbe78eabe25fbdb732c91895f",
+        "download_url": "https://osf.io/download/67bd885464813b23002e9a9b/"
+      },
+      {
+        "id": "67bd87ac7f49e6daddbd61dd",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-1_meg.fif",
+        "bytes": 1491688715,
+        "version": 1,
+        "sha256": "66209a462a6e3a63dfc029e5358992823c2a52015de5ed3e13bcbac0cec40ca5",
+        "download_url": "https://osf.io/download/67bd87ac7f49e6daddbd61dd/"
+      },
+      {
+        "id": "67bd86fad5db8634899fbadc",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "9dd433e1e2d4c709a10a50cf35d8d1b21a609e748b05a40bca1ca39d860650e7",
+        "download_url": "https://osf.io/download/67bd86fad5db8634899fbadc/"
+      },
+      {
+        "id": "67bd86ffd21acae450bd5f64",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd86ffd21acae450bd5f64/"
+      },
+      {
+        "id": "67bd8701266f6c78fb5567c9",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-2_events.tsv",
+        "bytes": 9618,
+        "version": 1,
+        "sha256": "c76d3f56d53db79f8421dbb656c4c873ff218262b0cafb4dcc5e571308faaba9",
+        "download_url": "https://osf.io/download/67bd8701266f6c78fb5567c9/"
+      },
+      {
+        "id": "67bd87f48753964bd4bd622e",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-2_meg.fif",
+        "bytes": 1416863019,
+        "version": 1,
+        "sha256": "99b74665d7849df8ea000edb3582c5902ac5341576153b0bb37cf7e74d78f894",
+        "download_url": "https://osf.io/download/67bd87f48753964bd4bd622e/"
+      },
+      {
+        "id": "67bd87ae7f49e6daddbd61df",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "e8871db38c07e6cab253b6b7c26194658a74e1e4d7eb5ce92b21d506802a048a",
+        "download_url": "https://osf.io/download/67bd87ae7f49e6daddbd61df/"
+      },
+      {
+        "id": "67bd87b062c9999e7a80650a",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd87b062c9999e7a80650a/"
+      },
+      {
+        "id": "67bd87b35d416f9fb22e90b2",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-3_events.tsv",
+        "bytes": 9577,
+        "version": 1,
+        "sha256": "d3e8d4a215bdf121f44f6c1f2079b2082dc7230753f4ece2940fb6ad0f6810f5",
+        "download_url": "https://osf.io/download/67bd87b35d416f9fb22e90b2/"
+      },
+      {
+        "id": "67bd87fc62c9999e7a806566",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-3_meg.fif",
+        "bytes": 1428007175,
+        "version": 1,
+        "sha256": "1ef65aeb75ce30dbd16e212622a639956e2988b11dbead10caa18a2fec1ce8e5",
+        "download_url": "https://osf.io/download/67bd87fc62c9999e7a806566/"
+      },
+      {
+        "id": "67bd87f809a3ac164b806836",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "b4d7ba76c59d7c40aff5faaa35ec25e2a2db48e783de2b18b98c1842001601a0",
+        "download_url": "https://osf.io/download/67bd87f809a3ac164b806836/"
+      },
+      {
+        "id": "67bd87fa1d5f9537ff2e98d6",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd87fa1d5f9537ff2e98d6/"
+      },
+      {
+        "id": "67bd87fd6874ea3dfc806c63",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-4_events.tsv",
+        "bytes": 9560,
+        "version": 1,
+        "sha256": "81e616f983be5203daebc5787b517056cc2a30236bbb07efb30dee989cc02b4e",
+        "download_url": "https://osf.io/download/67bd87fd6874ea3dfc806c63/"
+      },
+      {
+        "id": "67bd88e185c4e3d7e1557234",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-4_meg.fif",
+        "bytes": 1420047019,
+        "version": 1,
+        "sha256": "4d5eb19241234c01b8911feac49bcba934a667fb11e50846576183a25a887dad",
+        "download_url": "https://osf.io/download/67bd88e185c4e3d7e1557234/"
+      },
+      {
+        "id": "67bd880064813b23002e9a81",
+        "path": "/english-native-english-conversation/sub-E14/meg/sub-E14_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "b12dc912fd4f85c29241eb1f457da32bee9ba10c6c2df01a29133a3790a47fa6",
+        "download_url": "https://osf.io/download/67bd880064813b23002e9a81/"
+      },
+      {
+        "id": "67bd8aa764813b23002e9cb2",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_coordsystem.json",
+        "bytes": 1670,
+        "version": 1,
+        "sha256": "7cc2d41a6082adc9b62b7b4af243349c239a8fcd04800c595e28d0b04684b3cb",
+        "download_url": "https://osf.io/download/5cnke/"
+      },
+      {
+        "id": "67bd89ca266f6c78fb55685e",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/gekvt/"
+      },
+      {
+        "id": "67bd89ce1e2d3c91e655691b",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-1_events.tsv",
+        "bytes": 9708,
+        "version": 1,
+        "sha256": "c93407d2327632d1902dce515be54b967c5b08e5cb5a330e7b3c81ff0cca66fd",
+        "download_url": "https://osf.io/download/w9sx4/"
+      },
+      {
+        "id": "67bd8a1662c9999e7a806877",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-1_meg.fif",
+        "bytes": 1477361627,
+        "version": 1,
+        "sha256": "e1e4b4a003d507e718a2cab123fbe095894d11610bae86c860bd39ab88718051",
+        "download_url": "https://osf.io/download/t9syc/"
+      },
+      {
+        "id": "67bd89e95bb047fe6dbd5c83",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "45dd38dda7f1af04116cea0343120a90c53367de03db38026f9affc65a7464cd",
+        "download_url": "https://osf.io/download/tuybf/"
+      },
+      {
+        "id": "67bd89eb524954e26c2e9d25",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/wehj5/"
+      },
+      {
+        "id": "67bd89ee7dbb6d44759fbd0d",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-2_events.tsv",
+        "bytes": 9567,
+        "version": 1,
+        "sha256": "08177e868230aa98b8f121af9dbe0a1346b028fc0cc3cc11afc906186e5ef946",
+        "download_url": "https://osf.io/download/rzxms/"
+      },
+      {
+        "id": "67bd8a2cd5db8634899fbdc0",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-2_meg.fif",
+        "bytes": 1423232299,
+        "version": 1,
+        "sha256": "330fe8b8d8ed5ca63b410c47db564f0a178f66eb24d8f8d91a4512639a398292",
+        "download_url": "https://osf.io/download/u9bvf/"
+      },
+      {
+        "id": "67bd8a1809a3ac164b806945",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "f5a2471c05550ca044c5be375a497f15e86e3817d21a86628d5b52293dff72e5",
+        "download_url": "https://osf.io/download/c6ybu/"
+      },
+      {
+        "id": "67bd8a1b64813b23002e9c80",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/bgu9j/"
+      },
+      {
+        "id": "67bd8a1e5d416f9fb22e9309",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-3_events.tsv",
+        "bytes": 9539,
+        "version": 1,
+        "sha256": "057cea6fd035a82ad96a65a56784c4088cb2a60a647911c33fd8b7080f2dba42",
+        "download_url": "https://osf.io/download/7g4md/"
+      },
+      {
+        "id": "67bd8a9f524954e26c2e9d8f",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-3_meg.fif",
+        "bytes": 1426416363,
+        "version": 1,
+        "sha256": "79130bd88039786e383a674e29a364a95eb6597d26729c208a8c2d4d4afd6662",
+        "download_url": "https://osf.io/download/2xn4u/"
+      },
+      {
+        "id": "67bd8a3038623fe603806b2a",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "fc24689f27c545f81ea0950e4126034bd401f3031e9c5851a87a476ea6958715",
+        "download_url": "https://osf.io/download/7tsed/"
+      },
+      {
+        "id": "67bd8a338753964bd4bd64ff",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/mzsuf/"
+      },
+      {
+        "id": "67bd8a388c84e9b51f556e22",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-4_events.tsv",
+        "bytes": 9575,
+        "version": 1,
+        "sha256": "3b1ffecd0234d36a7a04ad36c1a87b0e32bfc5439a59501b6f330b95d24a0724",
+        "download_url": "https://osf.io/download/p6j58/"
+      },
+      {
+        "id": "67bd8ab41d5f9537ff2e9aee",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-4_meg.fif",
+        "bytes": 1424824355,
+        "version": 1,
+        "sha256": "4ef3e114b3f38e34a177e83b01842d8561c5b309e426368b2b828ec326206632",
+        "download_url": "https://osf.io/download/67bd8ab41d5f9537ff2e9aee/"
+      },
+      {
+        "id": "67bd8aa2d5db8634899fbe07",
+        "path": "/english-native-english-conversation/sub-E15/meg/sub-E15_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "7c36426086964b458e5c79b64c0e3c5b023211120e346ed37da4a6c0b3458d0f",
+        "download_url": "https://osf.io/download/nyufp/"
+      },
+      {
+        "id": "67bd8efd6be7698b6e9fb17f",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_coordsystem.json",
+        "bytes": 1739,
+        "version": 1,
+        "sha256": "2dd1ff9183f36188b5f70aac0e67ddd72fd9bbb3006f59a306d12d771a996b65",
+        "download_url": "https://osf.io/download/67bd8efd6be7698b6e9fb17f/"
+      },
+      {
+        "id": "67bd8f17266f6c78fb556a35",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd8f17266f6c78fb556a35/"
+      },
+      {
+        "id": "67bd8e16d21acae450bd6251",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-1_events.tsv",
+        "bytes": 9745,
+        "version": 1,
+        "sha256": "c77932e90039cc22566ad2751eb96329ad2a1464a4f503ef8a0116d7f41605a4",
+        "download_url": "https://osf.io/download/67bd8e16d21acae450bd6251/"
+      },
+      {
+        "id": "67bd8ec2c2fda68cb92e92f6",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-1_meg.fif",
+        "bytes": 1480546015,
+        "version": 1,
+        "sha256": "7f86205b61ad5261eadbe256daff6da5369fdeec95f6128aad4ea91133f6a8ab",
+        "download_url": "https://osf.io/download/67bd8ec2c2fda68cb92e92f6/"
+      },
+      {
+        "id": "67bd8e1a38623fe603806c8b",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "1c824c6164e68693a4e5c94a35fbc538f8b975bb13cb22c63cb17712ad332600",
+        "download_url": "https://osf.io/download/67bd8e1a38623fe603806c8b/"
+      },
+      {
+        "id": "67bd8e1c8753964bd4bd6750",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd8e1c8753964bd4bd6750/"
+      },
+      {
+        "id": "67bd8e1f8753964bd4bd6755",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-2_events.tsv",
+        "bytes": 9577,
+        "version": 1,
+        "sha256": "f37b9d762078d74db37b102ec4a37c83918468e25fd986b3273b74f38811cf95",
+        "download_url": "https://osf.io/download/67bd8e1f8753964bd4bd6755/"
+      },
+      {
+        "id": "67bd8e9f6874ea3dfc807374",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-2_meg.fif",
+        "bytes": 1420048451,
+        "version": 1,
+        "sha256": "c64871821236f58a4d8289b0602a38726f94d7ff7b76e856d56ae8ef07a73de5",
+        "download_url": "https://osf.io/download/67bd8e9f6874ea3dfc807374/"
+      },
+      {
+        "id": "67bd8ea17dbb6d44759fc16a",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "b12dc912fd4f85c29241eb1f457da32bee9ba10c6c2df01a29133a3790a47fa6",
+        "download_url": "https://osf.io/download/67bd8ea17dbb6d44759fc16a/"
+      },
+      {
+        "id": "67bd8ea38c84e9b51f55706b",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd8ea38c84e9b51f55706b/"
+      },
+      {
+        "id": "67bd8ea65d416f9fb22e97c9",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-3_events.tsv",
+        "bytes": 9702,
+        "version": 1,
+        "sha256": "1dde7dfcb7d92f91d63932c0bdbe89a840c67b47a1013c8db013812f092797bc",
+        "download_url": "https://osf.io/download/67bd8ea65d416f9fb22e97c9/"
+      },
+      {
+        "id": "67bd8ef6c2fda68cb92e930c",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-3_meg.fif",
+        "bytes": 1466217515,
+        "version": 1,
+        "sha256": "f5fa14f09fc9f1541fcb121669ca7d66efd9f1f28ebcbffe1d3ae30b2a686639",
+        "download_url": "https://osf.io/download/67bd8ef6c2fda68cb92e930c/"
+      },
+      {
+        "id": "67bd8ec66be7698b6e9fb163",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "c9e8940594e43ca0567c3421b1e0766be8d6e3e871c77ad8ca5541d923861af2",
+        "download_url": "https://osf.io/download/67bd8ec66be7698b6e9fb163/"
+      },
+      {
+        "id": "67bd8ec9fae86d64069fb68b",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd8ec9fae86d64069fb68b/"
+      },
+      {
+        "id": "67bd8ecc7dbb6d44759fc17f",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-4_events.tsv",
+        "bytes": 9744,
+        "version": 1,
+        "sha256": "558c6e44e4b75c8d66d860b3affaaaa0c9a9e791a119b04a29ea3ec774d39525",
+        "download_url": "https://osf.io/download/67bd8ecc7dbb6d44759fc17f/"
+      },
+      {
+        "id": "67bd8f106be7698b6e9fb192",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-4_meg.fif",
+        "bytes": 1412088535,
+        "version": 1,
+        "sha256": "d74cc36b7eb3d7a6be2321a392df9d1fd937b1393a1ed49d29cd03812d72ed57",
+        "download_url": "https://osf.io/download/67bd8f106be7698b6e9fb192/"
+      },
+      {
+        "id": "67bd8efa8753964bd4bd67f0",
+        "path": "/english-native-english-conversation/sub-E16/meg/sub-E16_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "24c35f07abc38a976a5c3f4227658bacd66ee164a93b6495c12f54694d5d568a",
+        "download_url": "https://osf.io/download/67bd8efa8753964bd4bd67f0/"
+      },
+      {
+        "id": "67be25ca90de80e6bb806bdf",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_coordsystem.json",
+        "bytes": 1743,
+        "version": 1,
+        "sha256": "a1f5653bd70f7a3851d552bf81b079cb7b6fca8034ec84121084be8ce80d08c2",
+        "download_url": "https://osf.io/download/67be25ca90de80e6bb806bdf/"
+      },
+      {
+        "id": "67be28d011ba44ce978063c4",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be28d011ba44ce978063c4/"
+      },
+      {
+        "id": "67bd91122f492a069bbd57c6",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-1_events.tsv",
+        "bytes": 9718,
+        "version": 1,
+        "sha256": "c0c21551bc2203a0a941160bdb3da854d0af867d4a2bfdbc6784ec4912a93f09",
+        "download_url": "https://osf.io/download/67bd91122f492a069bbd57c6/"
+      },
+      {
+        "id": "67bd9152fd9d44dac880610e",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-1_meg.fif",
+        "bytes": 1488504775,
+        "version": 1,
+        "sha256": "2fdfe995cb97e05448e4b264938557ad66fb5b8f8f145597cd38ab0058b5f906",
+        "download_url": "https://osf.io/download/67bd9152fd9d44dac880610e/"
+      },
+      {
+        "id": "67bd9117b6ea2f90a8806745",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "146aba1e52258a0df3cdc7fc2d6fba233d95843c73b6b585d9904e07ffd88be5",
+        "download_url": "https://osf.io/download/67bd9117b6ea2f90a8806745/"
+      },
+      {
+        "id": "67bd911964813b23002e9f98",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd911964813b23002e9f98/"
+      },
+      {
+        "id": "67bd911e8a96787577bd57cb",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-2_events.tsv",
+        "bytes": 9567,
+        "version": 1,
+        "sha256": "641b282c847410910ccd5448c9ed8ca0400873625b10684a0054096971f81cf0",
+        "download_url": "https://osf.io/download/67bd911e8a96787577bd57cb/"
+      },
+      {
+        "id": "67bd9161b862955601bd57f9",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-2_meg.fif",
+        "bytes": 1440743579,
+        "version": 1,
+        "sha256": "f5b26fd50cb0bf380af270d5fa96bea1235e900ba6d1fb5ae2716b1393164e6a",
+        "download_url": "https://osf.io/download/67bd9161b862955601bd57f9/"
+      },
+      {
+        "id": "67bd915595aaf7d5992e9823",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "c13cf02fc18821616dcf48b592ebe3a344c491fa7e09df020679f86796fa092a",
+        "download_url": "https://osf.io/download/67bd915595aaf7d5992e9823/"
+      },
+      {
+        "id": "67bd91588c84e9b51f557255",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd91588c84e9b51f557255/"
+      },
+      {
+        "id": "67bd915b2c300fd68d9fb051",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-3_events.tsv",
+        "bytes": 9563,
+        "version": 1,
+        "sha256": "4ad2484fd8093ffe94d3f6271b5c88bce4cc0b915fb6a50c8b19d76472eb1acc",
+        "download_url": "https://osf.io/download/67bd915b2c300fd68d9fb051/"
+      },
+      {
+        "id": "67bd92391652648ae19fb110",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-3_meg.fif",
+        "bytes": 1421639183,
+        "version": 1,
+        "sha256": "5a5bd573fab47ee274f9360c10af27c2bd263fa1b26ccbbbda6e4e108874b103",
+        "download_url": "https://osf.io/download/67bd92391652648ae19fb110/"
+      },
+      {
+        "id": "67bd9165fd9d44dac8806110",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "92dd299617672f29073c3bdc63feef4d55986b57a41091aaea8eb48043a3d35f",
+        "download_url": "https://osf.io/download/67bd9165fd9d44dac8806110/"
+      },
+      {
+        "id": "67bd916a1e2d3c91e6556ea4",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd916a1e2d3c91e6556ea4/"
+      },
+      {
+        "id": "67bd9170fd9d44dac8806121",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-4_events.tsv",
+        "bytes": 9597,
+        "version": 1,
+        "sha256": "965a2e62e892cbe2cd63ec6994393a2c41644f1b7048c51017938ebe9c7fa76a",
+        "download_url": "https://osf.io/download/67bd9170fd9d44dac8806121/"
+      },
+      {
+        "id": "67bd924efd9d44dac88061cf",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-4_meg.fif",
+        "bytes": 1424823247,
+        "version": 1,
+        "sha256": "f7c85c94424a80c007e0bcb22bf2dd239c5f3ac631b279b1128b43ef1f998c85",
+        "download_url": "https://osf.io/download/67bd924efd9d44dac88061cf/"
+      },
+      {
+        "id": "67be28e311ba44ce978063e1",
+        "path": "/english-native-english-conversation/sub-E17/meg/sub-E17_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "7c36426086964b458e5c79b64c0e3c5b023211120e346ed37da4a6c0b3458d0f",
+        "download_url": "https://osf.io/download/67be28e311ba44ce978063e1/"
+      },
+      {
+        "id": "67be2a1178b4b93025bd6892",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_coordsystem.json",
+        "bytes": 1660,
+        "version": 1,
+        "sha256": "1898b6164af7768ac58f87a996343ddabf136aaae5e1df055f2cb9e539b53eff",
+        "download_url": "https://osf.io/download/v4c2y/"
+      },
+      {
+        "id": "67be2a728ccddb3af72e934f",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/96tjz/"
+      },
+      {
+        "id": "67be292fbb2b2d16ef2ea08d",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-1_events.tsv",
+        "bytes": 9925,
+        "version": 1,
+        "sha256": "7f859a55981a1c6e997c4748750560c24166c06eeeb8f07a127a4131327ce213",
+        "download_url": "https://osf.io/download/9d8bx/"
+      },
+      {
+        "id": "67be297f8ccddb3af72e92e0",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-1_meg.fif",
+        "bytes": 1491689687,
+        "version": 1,
+        "sha256": "7fb3466ee1120d4c7dc17814af1761bbe96ab3635ea5a1c2a1c09d0076a0c349",
+        "download_url": "https://osf.io/download/snt4m/"
+      },
+      {
+        "id": "67be2932f19ce8ca4e55656a",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "9dd433e1e2d4c709a10a50cf35d8d1b21a609e748b05a40bca1ca39d860650e7",
+        "download_url": "https://osf.io/download/67be2932f19ce8ca4e55656a/"
+      },
+      {
+        "id": "67be2935cb0681a6209fb1ea",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be2935cb0681a6209fb1ea/"
+      },
+      {
+        "id": "67be293afb0ecab792806410",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-2_events.tsv",
+        "bytes": 9596,
+        "version": 1,
+        "sha256": "230fcca8886773553cee11773bc40b07f63df865281567609ded2563f2a89efa",
+        "download_url": "https://osf.io/download/62upw/"
+      },
+      {
+        "id": "67be2998ca5ba2b0ba2e9285",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-2_meg.fif",
+        "bytes": 1432784123,
+        "version": 1,
+        "sha256": "aa1f9e1b7cb5b0fb362d75c6ef24de29b2f50740aaa5e08b576bb880c20bda5b",
+        "download_url": "https://osf.io/download/67be2998ca5ba2b0ba2e9285/"
+      },
+      {
+        "id": "67be2984222c4e242d9fbd2a",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "491d908d6c40226d5740ef6eaa8d8e1c5ac0ff939e9924f18bc84c11d13ab447",
+        "download_url": "https://osf.io/download/zf29s/"
+      },
+      {
+        "id": "67be298893a28bf53955660e",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be298893a28bf53955660e/"
+      },
+      {
+        "id": "67be298a78b4b93025bd6840",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-3_events.tsv",
+        "bytes": 9567,
+        "version": 1,
+        "sha256": "31c148e8bf8f867863ddb0c39c584d28e7ac5218b30fdcc2f175f10cd2e2dfad",
+        "download_url": "https://osf.io/download/67be298a78b4b93025bd6840/"
+      },
+      {
+        "id": "67be2a08f19ce8ca4e556668",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-3_meg.fif",
+        "bytes": 1431192047,
+        "version": 1,
+        "sha256": "3cc77a3dd58fdd316b0d477ed0259b6379d78063c408480c56dc7ff7dbc15691",
+        "download_url": "https://osf.io/download/67be2a08f19ce8ca4e556668/"
+      },
+      {
+        "id": "67be299c266c6408209fb24d",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "e84234edcc50674b760e29a2fac70fe9c2d81a16a0ca33a0ce6a60a9c9d9699f",
+        "download_url": "https://osf.io/download/67be299c266c6408209fb24d/"
+      },
+      {
+        "id": "67be299ff19ce8ca4e5565dc",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be299ff19ce8ca4e5565dc/"
+      },
+      {
+        "id": "67be29a37cdd6f37242e922c",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-4_events.tsv",
+        "bytes": 9564,
+        "version": 1,
+        "sha256": "60c42a70c879a2ea7c82cea383cc96321bd0fc90ba4408c5f18a5b3b675cca9d",
+        "download_url": "https://osf.io/download/67be29a37cdd6f37242e922c/"
+      },
+      {
+        "id": "67be2ae8875a511f28bd584e",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-4_meg.fif",
+        "bytes": 1423231887,
+        "version": 1,
+        "sha256": "f700181dd0da7564f8df4ff032f6f64e8740d7c021bc71f9e26594092d122fba",
+        "download_url": "https://osf.io/download/vawzu/"
+      },
+      {
+        "id": "67be2a0b058fb19ee3bd5b1f",
+        "path": "/english-native-english-conversation/sub-E18/meg/sub-E18_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "f5a2471c05550ca044c5be375a497f15e86e3817d21a86628d5b52293dff72e5",
+        "download_url": "https://osf.io/download/67be2a0b058fb19ee3bd5b1f/"
+      },
+      {
+        "id": "67be323cf19ce8ca4e556a56",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_coordsystem.json",
+        "bytes": 1785,
+        "version": 1,
+        "sha256": "34038ea69d08db64156d71958e125714b17d7c449ee4605b15107463ea2242ca",
+        "download_url": "https://osf.io/download/67be323cf19ce8ca4e556a56/"
+      },
+      {
+        "id": "67be35cc11ba44ce97806a33",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be35cc11ba44ce97806a33/"
+      },
+      {
+        "id": "67be30db515c3b7e84bd5904",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-1_events.tsv",
+        "bytes": 9723,
+        "version": 1,
+        "sha256": "ec3281663f26b6ac9bd69b862a907d96056cf34fff95e7caf118218148293991",
+        "download_url": "https://osf.io/download/67be30db515c3b7e84bd5904/"
+      },
+      {
+        "id": "67be353bf19ce8ca4e556d99",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-1_meg.fif",
+        "bytes": 1488506611,
+        "version": 1,
+        "sha256": "79fd517bb4d06761f8ebb8b72f6fc4a593efba0115301f9aaabce0ab9c50e272",
+        "download_url": "https://osf.io/download/67be353bf19ce8ca4e556d99/"
+      },
+      {
+        "id": "67be30e6ca5ba2b0ba2e96f2",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "146aba1e52258a0df3cdc7fc2d6fba233d95843c73b6b585d9904e07ffd88be5",
+        "download_url": "https://osf.io/download/67be30e6ca5ba2b0ba2e96f2/"
+      },
+      {
+        "id": "67be30eaa72722b3158067ae",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be30eaa72722b3158067ae/"
+      },
+      {
+        "id": "67be30ed07168b92b69fb33b",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-2_events.tsv",
+        "bytes": 9594,
+        "version": 1,
+        "sha256": "c3c30deec4fac6a57985408472f29157ed77f3f129bcb3ea779b6a64d836edb2",
+        "download_url": "https://osf.io/download/67be30ed07168b92b69fb33b/"
+      },
+      {
+        "id": "67be3128be604767d72e95e0",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-2_meg.fif",
+        "bytes": 1442337435,
+        "version": 1,
+        "sha256": "49cfe1bcaf0605475c39732191d7ffe1faa72121e5b71f2df2cfb7f80fb02764",
+        "download_url": "https://osf.io/download/67be3128be604767d72e95e0/"
+      },
+      {
+        "id": "67be3130ca5ba2b0ba2e96fa",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "19a99dae8cfdb766cdccc923b054f4cb95e14b668d14f78abc6b602613cc3b4d",
+        "download_url": "https://osf.io/download/67be3130ca5ba2b0ba2e96fa/"
+      },
+      {
+        "id": "67be3133266c6408209fb77a",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be3133266c6408209fb77a/"
+      },
+      {
+        "id": "67be31369e145fe7a89fbea3",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-3_events.tsv",
+        "bytes": 9559,
+        "version": 1,
+        "sha256": "bcb85192cb7c661463d6b146e73b2d373b4ba7d5bc8dbdbc6a7dc8e732e2b926",
+        "download_url": "https://osf.io/download/67be31369e145fe7a89fbea3/"
+      },
+      {
+        "id": "67be3178266c6408209fb795",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-3_meg.fif",
+        "bytes": 1426417091,
+        "version": 1,
+        "sha256": "c513876a04f37b2a9261abd074c480c0a4af4070fcfc22a330a52a92a84d130b",
+        "download_url": "https://osf.io/download/67be3178266c6408209fb795/"
+      },
+      {
+        "id": "67be317b515c3b7e84bd59b1",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "fc24689f27c545f81ea0950e4126034bd401f3031e9c5851a87a476ea6958715",
+        "download_url": "https://osf.io/download/67be317b515c3b7e84bd59b1/"
+      },
+      {
+        "id": "67be317d5c57558e5655688e",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be317d5c57558e5655688e/"
+      },
+      {
+        "id": "67be3180515c3b7e84bd59b5",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-4_events.tsv",
+        "bytes": 9597,
+        "version": 1,
+        "sha256": "6738ceaa4c04e8e6f57ae441ad5b23d4f242aecbfeba88dd706964e50b55a103",
+        "download_url": "https://osf.io/download/67be3180515c3b7e84bd59b5/"
+      },
+      {
+        "id": "67be32321415e955edbd5f39",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-4_meg.fif",
+        "bytes": 1466217891,
+        "version": 1,
+        "sha256": "f26c8ce67b7c0a87c7df4d6970eb8c061047879b7d060c13d4ef7ddf4e2e675d",
+        "download_url": "https://osf.io/download/67be32321415e955edbd5f39/"
+      },
+      {
+        "id": "67be3236222c4e242d9fc1ab",
+        "path": "/english-native-english-conversation/sub-E19/meg/sub-E19_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "c9e8940594e43ca0567c3421b1e0766be8d6e3e871c77ad8ca5541d923861af2",
+        "download_url": "https://osf.io/download/67be3236222c4e242d9fc1ab/"
+      },
+      {
+        "id": "67bd7185baebfe5dc980628e",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_coordsystem.json",
+        "bytes": 1779,
+        "version": 1,
+        "sha256": "f47d9a5a8a2616a063ecfae90408eebe054dc142853746b6686361d023ae3a4a",
+        "download_url": "https://osf.io/download/agp8h/"
+      },
+      {
+        "id": "67bd70d1a7c45ffe429fb151",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/zyn3s/"
+      },
+      {
+        "id": "67bd70d4f367aaaec62e9151",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-1_events.tsv",
+        "bytes": 9789,
+        "version": 1,
+        "sha256": "b6691e695d60c97117e9a2ef1ac3f7b9e2ece3c41c72364d55ba25856798372b",
+        "download_url": "https://osf.io/download/67bd70d4f367aaaec62e9151/"
+      },
+      {
+        "id": "67bd713ea7c45ffe429fb188",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-1_meg.fif",
+        "bytes": 1552184639,
+        "version": 1,
+        "sha256": "b3903a2161c61836fce95b0ce4fd3b14ad2e9e3d7ab493dca013fc5ff50c4c44",
+        "download_url": "https://osf.io/download/ynrfv/"
+      },
+      {
+        "id": "67bd70dea66339f1d2556634",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "cb3f1a8ec8d39fbabbcee4770acf7d782397a91626184e790bdae757d45ade33",
+        "download_url": "https://osf.io/download/46ctr/"
+      },
+      {
+        "id": "67bd70e1a7c45ffe429fb15a",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/n6vde/"
+      },
+      {
+        "id": "67bd70e4ee831a4cd39fb0c7",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-2_events.tsv",
+        "bytes": 9562,
+        "version": 1,
+        "sha256": "4af8755d6420d79e542b30d5655a8960d938c2f6b6eafa8421adf861fb9a67f7",
+        "download_url": "https://osf.io/download/fd4ck/"
+      },
+      {
+        "id": "67bd71496eb4b49d239fb1ff",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-2_meg.fif",
+        "bytes": 1450292707,
+        "version": 1,
+        "sha256": "7e858fe76be29ecd8dfbe55d2bcf9f6c893c77cd7688c1e8f8a8300b028f35bb",
+        "download_url": "https://osf.io/download/67bd71496eb4b49d239fb1ff/"
+      },
+      {
+        "id": "67bd7141cc1ebd780e55649c",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "3156342f12f3f7bba0fa62b2533b419e45c906aa96a85548191a8c0873d0b618",
+        "download_url": "https://osf.io/download/k28xd/"
+      },
+      {
+        "id": "67bd7143d89418dfa580631e",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd7143d89418dfa580631e/"
+      },
+      {
+        "id": "67bd7146162a37cc6fbd5916",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-3_events.tsv",
+        "bytes": 9569,
+        "version": 1,
+        "sha256": "379fca0339dbeb5fd9f87823fae6192104b2f64e3a1543d00f6d0fdeefe9e9e8",
+        "download_url": "https://osf.io/download/67bd7146162a37cc6fbd5916/"
+      },
+      {
+        "id": "67bd717f8e7b4a595c8060a8",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-3_meg.fif",
+        "bytes": 1447108623,
+        "version": 1,
+        "sha256": "070dce614597024275ce51a2d8c0ed28f86cb631167069416fc0adda600c2c93",
+        "download_url": "https://osf.io/download/srbk8/"
+      },
+      {
+        "id": "67bd714dd89418dfa5806323",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "542df009dd3d618194c3289c9fffc5170a027540ec2d0dfbb9aa719967a7cbf3",
+        "download_url": "https://osf.io/download/67bd714dd89418dfa5806323/"
+      },
+      {
+        "id": "67bd7150baebfe5dc9806179",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd7150baebfe5dc9806179/"
+      },
+      {
+        "id": "67bd7153962c59cd04bd59f1",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-4_events.tsv",
+        "bytes": 9558,
+        "version": 1,
+        "sha256": "99bfbfa08eee8cfb51d75c041f5e311942db66816ee8dc41bca2d58c24b0aa57",
+        "download_url": "https://osf.io/download/67bd7153962c59cd04bd59f1/"
+      },
+      {
+        "id": "67bd718b12950d9b07bd586a",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-4_meg.fif",
+        "bytes": 1445516595,
+        "version": 1,
+        "sha256": "bdf65d34e9e61b7f29d96e0905f23b61eae2e0015a5257ddf6d102d6eb5c6afe",
+        "download_url": "https://osf.io/download/8me6j/"
+      },
+      {
+        "id": "67bd71822b6db8bfaf80620e",
+        "path": "/english-native-english-conversation/sub-E2/meg/sub-E2_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "455352231ad6bf4919a087da35a2b7bcaefb5729b8fc086256cbdc0d5927143d",
+        "download_url": "https://osf.io/download/67bd71822b6db8bfaf80620e/"
+      },
+      {
+        "id": "67be36f68ccddb3af72e97de",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_coordsystem.json",
+        "bytes": 1743,
+        "version": 1,
+        "sha256": "78155d1f3459205bfad08e2c8fbc31b189fe7915bf1318e34a034b2110cc5c89",
+        "download_url": "https://osf.io/download/67be36f68ccddb3af72e97de/"
+      },
+      {
+        "id": "67be361b8ccddb3af72e97be",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be361b8ccddb3af72e97be/"
+      },
+      {
+        "id": "67be361f11ba44ce97806a41",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-1_events.tsv",
+        "bytes": 9706,
+        "version": 1,
+        "sha256": "b55623695625f9cfad5bc7322e1e157e0e0a2a809fda854c9d129cb69bae1f54",
+        "download_url": "https://osf.io/download/qcj2v/"
+      },
+      {
+        "id": "67be36a65d56d9e200556f5b",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-1_meg.fif",
+        "bytes": 1480545131,
+        "version": 1,
+        "sha256": "0406660fd3c3cef7415868178d2d9a662f1834dfb1657349d88d4b660fff4b2b",
+        "download_url": "https://osf.io/download/9c63b/"
+      },
+      {
+        "id": "67be3632ca5ba2b0ba2e99bb",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "1c824c6164e68693a4e5c94a35fbc538f8b975bb13cb22c63cb17712ad332600",
+        "download_url": "https://osf.io/download/67be3632ca5ba2b0ba2e99bb/"
+      },
+      {
+        "id": "67be3635012c367a43806933",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67be3635012c367a43806933/"
+      },
+      {
+        "id": "67be3639be604767d72e99a4",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-2_events.tsv",
+        "bytes": 9548,
+        "version": 1,
+        "sha256": "9b61064f8535697a8866bd0fee27341477b5d882e0b6ae5018c13df841e4615c",
+        "download_url": "https://osf.io/download/67be3639be604767d72e99a4/"
+      },
+      {
+        "id": "67be36b4012c367a43806978",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-2_meg.fif",
+        "bytes": 1426415795,
+        "version": 1,
+        "sha256": "6694b3701fb43698cd76f8d299f0dae16723a8c688fff5fc896e1a1e70fc91f3",
+        "download_url": "https://osf.io/download/u89nh/"
+      },
+      {
+        "id": "67be36a9875a511f28bd6140",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "fc24689f27c545f81ea0950e4126034bd401f3031e9c5851a87a476ea6958715",
+        "download_url": "https://osf.io/download/9vesf/"
+      },
+      {
+        "id": "67be36abaa175e4d21bd5918",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/ma5nu/"
+      },
+      {
+        "id": "67be36ae62e78d81572e9609",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-3_events.tsv",
+        "bytes": 9587,
+        "version": 1,
+        "sha256": "872b79cb2a7cae5bd5772b8a053b606bcbb808ac9073642d8e6f70bbc85d8c42",
+        "download_url": "https://osf.io/download/t5sdn/"
+      },
+      {
+        "id": "67be36f1a72722b315806e69",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-3_meg.fif",
+        "bytes": 1469400679,
+        "version": 1,
+        "sha256": "f8e7ea3875b8484a528161ee3f34fd2fa20297fd3e33597bb31e364bd051dfc0",
+        "download_url": "https://osf.io/download/67be36f1a72722b315806e69/"
+      },
+      {
+        "id": "67be36b75d56d9e200556f71",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "cad6844816191e707dd692276f552e8938c8150fe8232c3e191986236f6376e1",
+        "download_url": "https://osf.io/download/67be36b75d56d9e200556f71/"
+      },
+      {
+        "id": "67be36ba62e78d81572e9611",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/bxkj7/"
+      },
+      {
+        "id": "67be36bd636e4e8f3b9fb117",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-4_events.tsv",
+        "bytes": 9614,
+        "version": 1,
+        "sha256": "528fc305020e5a75c11fc6c58816c2f61b9b367b0bd196fda81a28981de85393",
+        "download_url": "https://osf.io/download/67be36bd636e4e8f3b9fb117/"
+      },
+      {
+        "id": "67be36fea72722b315806e86",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-4_meg.fif",
+        "bytes": 1431191959,
+        "version": 1,
+        "sha256": "89cc01ad68cec49272aeb6d966dda001995b9bf4c0311e8a13f2a68ed1b42cd5",
+        "download_url": "https://osf.io/download/qa4ke/"
+      },
+      {
+        "id": "67be36f3aa175e4d21bd5942",
+        "path": "/english-native-english-conversation/sub-E20/meg/sub-E20_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "e84234edcc50674b760e29a2fac70fe9c2d81a16a0ca33a0ce6a60a9c9d9699f",
+        "download_url": "https://osf.io/download/pwdvt/"
+      },
+      {
+        "id": "67bd7364d89418dfa580659e",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_coordsystem.json",
+        "bytes": 1666,
+        "version": 1,
+        "sha256": "7720dfc48e74f8243f761932b75053594cdabfccab713cfcdf3eaaa233273956",
+        "download_url": "https://osf.io/download/8fzca/"
+      },
+      {
+        "id": "67bd72a0b6ea2f90a88060b2",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/mfpb4/"
+      },
+      {
+        "id": "67bd72a1524954e26c2e9181",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-1_events.tsv",
+        "bytes": 9586,
+        "version": 1,
+        "sha256": "cfa213f05e4908a24fe608eb884610a41be7ef6e2949c6b1853dc73814a5b931",
+        "download_url": "https://osf.io/download/9y8a6/"
+      },
+      {
+        "id": "67bd72e8850067a5152e90c3",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-1_meg.fif",
+        "bytes": 1448703799,
+        "version": 1,
+        "sha256": "498a33aab405edab333d09a6e4197b9598838075dc534c01fc6f39ca5cf60fe0",
+        "download_url": "https://osf.io/download/ky7q3/"
+      },
+      {
+        "id": "67bd72a6162a37cc6fbd59bf",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "2dce1c71cb11c0bd95fcf0a6fa1e552ef17ef92b748976eb64c7291b5b610910",
+        "download_url": "https://osf.io/download/ncqwp/"
+      },
+      {
+        "id": "67bd72a93ce6e072a19fb0f0",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/n7vda/"
+      },
+      {
+        "id": "67bd72ac38623fe60380611a",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-2_events.tsv",
+        "bytes": 9568,
+        "version": 1,
+        "sha256": "214aab2a47d16b23c1e745d86b183c16cb7296055bce1b365bfe1eb576b7bda1",
+        "download_url": "https://osf.io/download/tdurz/"
+      },
+      {
+        "id": "67bd72f3d6155ec36c2e9381",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-2_meg.fif",
+        "bytes": 1437559551,
+        "version": 1,
+        "sha256": "4c060a3ae874a12296e35b4ec270a4dfa76733d88426b0f81f06741c2f15d4a3",
+        "download_url": "https://osf.io/download/kyq5e/"
+      },
+      {
+        "id": "67bd72eb6eb4b49d239fb2da",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "1fc6229ff007bfc09c07fa37b50eb30277b1f0447f05b8d3b39872deb88e8f29",
+        "download_url": "https://osf.io/download/8v9hf/"
+      },
+      {
+        "id": "67bd72efa66339f1d255673f",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/s4fum/"
+      },
+      {
+        "id": "67bd72f3baebfe5dc980636c",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-3_events.tsv",
+        "bytes": 9600,
+        "version": 1,
+        "sha256": "b1b4b85cdc8d94db23708a8b9034d7aeeb4274366ab8d63b7abeba407dc5d9a2",
+        "download_url": "https://osf.io/download/pa24z/"
+      },
+      {
+        "id": "67bd735d524954e26c2e91cc",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-3_meg.fif",
+        "bytes": 1455071951,
+        "version": 1,
+        "sha256": "840112ebd69b286485a7d8a314bd22b604c910fc56da189bfd324f17e7226e82",
+        "download_url": "https://osf.io/download/gktby/"
+      },
+      {
+        "id": "67bd72f748ca4acae4bd5897",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "d0b826ee4ba97092dd444c80326fbf35a9c3db35949b4ab068b311f2ca1191b1",
+        "download_url": "https://osf.io/download/m6q2z/"
+      },
+      {
+        "id": "67bd72f912950d9b07bd58a0",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/vfqen/"
+      },
+      {
+        "id": "67bd72fcbac0a8dd008060da",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-4_events.tsv",
+        "bytes": 9559,
+        "version": 1,
+        "sha256": "c57015fdeb2ae91af1c83bf6ea2eb1d124cf362bb0b1de16304cbfdf6864d04b",
+        "download_url": "https://osf.io/download/68h5g/"
+      },
+      {
+        "id": "67bd7363162a37cc6fbd5a11",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-4_meg.fif",
+        "bytes": 1421639231,
+        "version": 1,
+        "sha256": "a81fe44a83a4bda655ee0405b51ca928c5f7c0e52b2f37b3287715be6c77f75f",
+        "download_url": "https://osf.io/download/zmkxw/"
+      },
+      {
+        "id": "67bd73629def000394bd586f",
+        "path": "/english-native-english-conversation/sub-E3/meg/sub-E3_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "92dd299617672f29073c3bdc63feef4d55986b57a41091aaea8eb48043a3d35f",
+        "download_url": "https://osf.io/download/xp9mg/"
+      },
+      {
+        "id": "67bd74561567552f159fb17e",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_coordsystem.json",
+        "bytes": 1812,
+        "version": 1,
+        "sha256": "392bd5cdc7f95e378459b9f12cfb1543436d7d06b563a8dc631823431807a4ac",
+        "download_url": "https://osf.io/download/67bd74561567552f159fb17e/"
+      },
+      {
+        "id": "67bd748bf367aaaec62e92c9",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd748bf367aaaec62e92c9/"
+      },
+      {
+        "id": "67bd73ce6eb4b49d239fb34c",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-1_events.tsv",
+        "bytes": 9720,
+        "version": 1,
+        "sha256": "7c5d2cac0fabacf952e0a4d9637279cd12e497bd46ca1b8bef2b3b49eaec0638",
+        "download_url": "https://osf.io/download/67bd73ce6eb4b49d239fb34c/"
+      },
+      {
+        "id": "67bd7405f367aaaec62e92aa",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-1_meg.fif",
+        "bytes": 1475771019,
+        "version": 1,
+        "sha256": "d2f3462814203f1cc894d5948d33de2febd357b4d5409704060485f76d026367",
+        "download_url": "https://osf.io/download/67bd7405f367aaaec62e92aa/"
+      },
+      {
+        "id": "67bd73d06eb4b49d239fb34e",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "bf029225e1e69a6c195756d2f156651d99247ba5a005a6a9f478125def1d30ff",
+        "download_url": "https://osf.io/download/67bd73d06eb4b49d239fb34e/"
+      },
+      {
+        "id": "67bd73d19f5f54fdee2e905e",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd73d19f5f54fdee2e905e/"
+      },
+      {
+        "id": "67bd73d512950d9b07bd58d6",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-2_events.tsv",
+        "bytes": 9552,
+        "version": 1,
+        "sha256": "4a2bd8156e3cc7d210d92645f893236df854a5ffd33633bd3dfe1e55c54fd8db",
+        "download_url": "https://osf.io/download/67bd73d512950d9b07bd58d6/"
+      },
+      {
+        "id": "67bd740da55802b6a8bd5afe",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-2_meg.fif",
+        "bytes": 1415273543,
+        "version": 1,
+        "sha256": "76519a741bf4f50264c965c16138a3c6a2f5cae55ce7ca0da105ae00a91d5f24",
+        "download_url": "https://osf.io/download/67bd740da55802b6a8bd5afe/"
+      },
+      {
+        "id": "67bd740848ca4acae4bd58ad",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "40941e252925715996d4964c4f4ed8db118e03e0cf1baa042a690892ef8964c3",
+        "download_url": "https://osf.io/download/67bd740848ca4acae4bd58ad/"
+      },
+      {
+        "id": "67bd74098e7b4a595c8060ec",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd74098e7b4a595c8060ec/"
+      },
+      {
+        "id": "67bd740c46499c51909fb0f7",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-3_events.tsv",
+        "bytes": 9582,
+        "version": 1,
+        "sha256": "b90708fb747069c27b835f9dd54b45c805a20a218dcfbf7ae78a184e39972cde",
+        "download_url": "https://osf.io/download/67bd740c46499c51909fb0f7/"
+      },
+      {
+        "id": "67bd74431567552f159fb17c",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-3_meg.fif",
+        "bytes": 1424825791,
+        "version": 1,
+        "sha256": "5cbf1f66c172cb6938fc09c7795c5cff3c2054535531d98ed470d188fe374992",
+        "download_url": "https://osf.io/download/67bd74431567552f159fb17c/"
+      },
+      {
+        "id": "67bd74101ff23a95c39fb07c",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "7c36426086964b458e5c79b64c0e3c5b023211120e346ed37da4a6c0b3458d0f",
+        "download_url": "https://osf.io/download/67bd74101ff23a95c39fb07c/"
+      },
+      {
+        "id": "67bd741395aaf7d5992e9124",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd741395aaf7d5992e9124/"
+      },
+      {
+        "id": "67bd74167d878822699fb040",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-4_events.tsv",
+        "bytes": 9536,
+        "version": 1,
+        "sha256": "c5f95e989d5615f83dedc52befa888d8455d5ac9d407902210d7936a136640e9",
+        "download_url": "https://osf.io/download/67bd74167d878822699fb040/"
+      },
+      {
+        "id": "67bd7450cc1ebd780e556565",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-4_meg.fif",
+        "bytes": 1415273551,
+        "version": 1,
+        "sha256": "5de2081763337e900da48700ba17637b4a883c3ab2ac2ba31bb8b5fc90224e40",
+        "download_url": "https://osf.io/download/67bd7450cc1ebd780e556565/"
+      },
+      {
+        "id": "67bd7453dd481620c02e9091",
+        "path": "/english-native-english-conversation/sub-E3b/meg/sub-E3b_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "40941e252925715996d4964c4f4ed8db118e03e0cf1baa042a690892ef8964c3",
+        "download_url": "https://osf.io/download/67bd7453dd481620c02e9091/"
+      },
+      {
+        "id": "67bd7614e7cf94a676bd57dc",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_coordsystem.json",
+        "bytes": 1743,
+        "version": 1,
+        "sha256": "389ef2bf72cd02d6b60bbd55eff963e3b83a5b1fcab407676452648bff2ff7d9",
+        "download_url": "https://osf.io/download/67bd7614e7cf94a676bd57dc/"
+      },
+      {
+        "id": "67bd762a266f6c78fb55636b",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd762a266f6c78fb55636b/"
+      },
+      {
+        "id": "67bd758ef367aaaec62e9343",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-1_events.tsv",
+        "bytes": 9726,
+        "version": 1,
+        "sha256": "9f3110921d378bfa088e9dbf0246e92fdb056cbff996711c5e3797ef5ad48651",
+        "download_url": "https://osf.io/download/67bd758ef367aaaec62e9343/"
+      },
+      {
+        "id": "67bd766f85c4e3d7e15563e2",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-1_meg.fif",
+        "bytes": 1521937603,
+        "version": 1,
+        "sha256": "df9712169bf9e99fde1c6194dc098ef88305839a98043cb85ddf97e564bcc6f5",
+        "download_url": "https://osf.io/download/67bd766f85c4e3d7e15563e2/"
+      },
+      {
+        "id": "67bd7591d5db8634899fb04b",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "cfd738e3fa9149331eda5a040ccbf3fea7c37fb7d30ea796ba58e1655fef7553",
+        "download_url": "https://osf.io/download/67bd7591d5db8634899fb04b/"
+      },
+      {
+        "id": "67bd7594524954e26c2e92a9",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd7594524954e26c2e92a9/"
+      },
+      {
+        "id": "67bd7598bac0a8dd0080613c",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-2_events.tsv",
+        "bytes": 9559,
+        "version": 1,
+        "sha256": "5d8e7718389df30d7726025b62e4603ecfa236f94c62bd486aedf64ba4a63820",
+        "download_url": "https://osf.io/download/67bd7598bac0a8dd0080613c/"
+      },
+      {
+        "id": "67bd75ff93cbdcaba9bd594f",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-2_meg.fif",
+        "bytes": 1424823395,
+        "version": 1,
+        "sha256": "b12add6309334a1bd9eb15ca34539c6a6785b529a9eb89c2a8f24bd17c755000",
+        "download_url": "https://osf.io/download/67bd75ff93cbdcaba9bd594f/"
+      },
+      {
+        "id": "67bd75ca85c4e3d7e15563a1",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "7c36426086964b458e5c79b64c0e3c5b023211120e346ed37da4a6c0b3458d0f",
+        "download_url": "https://osf.io/download/67bd75ca85c4e3d7e15563a1/"
+      },
+      {
+        "id": "67bd75cd68387b531f9fb0ff",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd75cd68387b531f9fb0ff/"
+      },
+      {
+        "id": "67bd75d12b6db8bfaf80649d",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-3_events.tsv",
+        "bytes": 9584,
+        "version": 1,
+        "sha256": "cefba367f8ab4e57950c73c31f705ae1b086330041efa7a8e238b1f28c294e63",
+        "download_url": "https://osf.io/download/67bd75d12b6db8bfaf80649d/"
+      },
+      {
+        "id": "67bd760cd6155ec36c2e961e",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-3_meg.fif",
+        "bytes": 1440743743,
+        "version": 1,
+        "sha256": "7acb07878b141330b5d2a24baafaf990e68b4910268fc8bb14bac967863f00c6",
+        "download_url": "https://osf.io/download/67bd760cd6155ec36c2e961e/"
+      },
+      {
+        "id": "67bd760232d35e7c869fb0ba",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "c13cf02fc18821616dcf48b592ebe3a344c491fa7e09df020679f86796fa092a",
+        "download_url": "https://osf.io/download/67bd760232d35e7c869fb0ba/"
+      },
+      {
+        "id": "67bd7605d89418dfa5806769",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd7605d89418dfa5806769/"
+      },
+      {
+        "id": "67bd760832d35e7c869fb0bc",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-4_events.tsv",
+        "bytes": 9592,
+        "version": 1,
+        "sha256": "9828c3818fe983f7ab838d850fb09001da1da1d6cbcbd9f3a9427cdee9f30829",
+        "download_url": "https://osf.io/download/67bd760832d35e7c869fb0bc/"
+      },
+      {
+        "id": "67bd764785c4e3d7e15563ce",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-4_meg.fif",
+        "bytes": 1410495179,
+        "version": 1,
+        "sha256": "41c24f8dd623a42e33e5286a7c51363109a6085b406982ce259591b2a8f1503f",
+        "download_url": "https://osf.io/download/67bd764785c4e3d7e15563ce/"
+      },
+      {
+        "id": "67bd761076421a96968060da",
+        "path": "/english-native-english-conversation/sub-E4/meg/sub-E4_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "83dac3d5e2a10798cb23e55e3507397dad84641e12e61a0173fb1dc8eb72fd3d",
+        "download_url": "https://osf.io/download/67bd761076421a96968060da/"
+      },
+      {
+        "id": "67bd779a266f6c78fb5563c4",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_coordsystem.json",
+        "bytes": 1774,
+        "version": 1,
+        "sha256": "1452d29740025d27ed6253d03b8e42a45b145f46c820c1094803a667a62d0ade",
+        "download_url": "https://osf.io/download/67bd779a266f6c78fb5563c4/"
+      },
+      {
+        "id": "67bd76e4c654cc713a5563ce",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd76e4c654cc713a5563ce/"
+      },
+      {
+        "id": "67bd76e4d5db8634899fb0e9",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-1_events.tsv",
+        "bytes": 9757,
+        "version": 1,
+        "sha256": "7701cb60319e5e6de925d0315874a22495aca0cdf8039f95e30db217dafbc538",
+        "download_url": "https://osf.io/download/67bd76e4d5db8634899fb0e9/"
+      },
+      {
+        "id": "67bd7740eca0717d2c556407",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-1_meg.fif",
+        "bytes": 1526712803,
+        "version": 1,
+        "sha256": "a8f7e8f4a17f318e76b7893e4b61eda00a88702f3f6b106c60ac61e5be56f291",
+        "download_url": "https://osf.io/download/67bd7740eca0717d2c556407/"
+      },
+      {
+        "id": "67bd76e7c654cc713a5563d0",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "6f4b6fad0782575de21f6c4ee4a8e457aa02f19278c9c633607e8dbd91b7eb0d",
+        "download_url": "https://osf.io/download/67bd76e7c654cc713a5563d0/"
+      },
+      {
+        "id": "67bd76e98c84e9b51f556423",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd76e98c84e9b51f556423/"
+      },
+      {
+        "id": "67bd76ec2b6db8bfaf806533",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-2_events.tsv",
+        "bytes": 9554,
+        "version": 1,
+        "sha256": "c2780f81066bc00d8732f4aee4b246e29c6848bb91f77d5ef9042da15e4c2f2c",
+        "download_url": "https://osf.io/download/2qy7h/"
+      },
+      {
+        "id": "67bd77418e7b4a595c806197",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-2_meg.fif",
+        "bytes": 1455071123,
+        "version": 1,
+        "sha256": "924c306fc075af3a8314373e5484aa35d9a0355e82d3b518d2e3c27321a90664",
+        "download_url": "https://osf.io/download/xhvqb/"
+      },
+      {
+        "id": "67bd775acec9326cac2e915a",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "d0b826ee4ba97092dd444c80326fbf35a9c3db35949b4ab068b311f2ca1191b1",
+        "download_url": "https://osf.io/download/67bd775acec9326cac2e915a/"
+      },
+      {
+        "id": "67bd775a524954e26c2e935f",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/fy8qs/"
+      },
+      {
+        "id": "67bd775d6eb4b49d239fb4a8",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-3_events.tsv",
+        "bytes": 9575,
+        "version": 1,
+        "sha256": "2c8ec8e4a78d4d0b883e3cd25100f5785fd38f0a96cc87be3fb3a492927c307b",
+        "download_url": "https://osf.io/download/pxdc3/"
+      },
+      {
+        "id": "67bd779266e3f994749fb09d",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-3_meg.fif",
+        "bytes": 1442334863,
+        "version": 1,
+        "sha256": "28786f2c1e44ba82c51ae97ca0752bf5b0de963a0452894ed0469a872c2777b0",
+        "download_url": "https://osf.io/download/67bd779266e3f994749fb09d/"
+      },
+      {
+        "id": "67bd776093cbdcaba9bd5a4e",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "19a99dae8cfdb766cdccc923b054f4cb95e14b668d14f78abc6b602613cc3b4d",
+        "download_url": "https://osf.io/download/6dpmw/"
+      },
+      {
+        "id": "67bd7763eca0717d2c556416",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/j6ze5/"
+      },
+      {
+        "id": "67bd7765d89418dfa580698b",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-4_events.tsv",
+        "bytes": 9583,
+        "version": 1,
+        "sha256": "446a5e9abb8fc3a3d56a395571fde6adeb9ad92c882761db954bf329853745dc",
+        "download_url": "https://osf.io/download/ax5f4/"
+      },
+      {
+        "id": "67bd779dcec9326cac2e9166",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-4_meg.fif",
+        "bytes": 1432782675,
+        "version": 1,
+        "sha256": "147b932681cef535cfc1e351fc6ec085d74a66a6260b14023f319120991d3c5d",
+        "download_url": "https://osf.io/download/3tx45/"
+      },
+      {
+        "id": "67bd77967dbb6d44759fb27e",
+        "path": "/english-native-english-conversation/sub-E5/meg/sub-E5_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "491d908d6c40226d5740ef6eaa8d8e1c5ac0ff939e9924f18bc84c11d13ab447",
+        "download_url": "https://osf.io/download/9c5ru/"
+      },
+      {
+        "id": "67bd78be8e7b4a595c8061bc",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_coordsystem.json",
+        "bytes": 1785,
+        "version": 1,
+        "sha256": "e695a67079587dfdb8fc439a12b03ba8095345752820b29b9ebaf7748ecf5ba5",
+        "download_url": "https://osf.io/download/67bd78be8e7b4a595c8061bc/"
+      },
+      {
+        "id": "67bd781e3ad901f49b5566b9",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd781e3ad901f49b5566b9/"
+      },
+      {
+        "id": "67bd781ed89418dfa5806a52",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-1_events.tsv",
+        "bytes": 9857,
+        "version": 1,
+        "sha256": "5093345ebd01675ac7da68f2342dd4bcf207dd4f1df1b93b07ce3a4df480be67",
+        "download_url": "https://osf.io/download/67bd781ed89418dfa5806a52/"
+      },
+      {
+        "id": "67bd786c7f49e6daddbd5964",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-1_meg.fif",
+        "bytes": 1615867983,
+        "version": 1,
+        "sha256": "e39beb16c23936dc398a52dbadbcca5a11dd947179114e3ad2363a59f750480c",
+        "download_url": "https://osf.io/download/67bd786c7f49e6daddbd5964/"
+      },
+      {
+        "id": "67bd782185c4e3d7e15565d2",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-1_meg.json",
+        "bytes": 764,
+        "version": 1,
+        "sha256": "62b54fec7aa5fabd7f48a0937ded165f0a3ce5cf2353205e47d79e6033cda656",
+        "download_url": "https://osf.io/download/67bd782185c4e3d7e15565d2/"
+      },
+      {
+        "id": "67bd7823f367aaaec62e94a2",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd7823f367aaaec62e94a2/"
+      },
+      {
+        "id": "67bd782793cbdcaba9bd5b40",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-2_events.tsv",
+        "bytes": 10323,
+        "version": 1,
+        "sha256": "98d5afa5832f24c1a3878c9b69282ece25287d88e0a031493d502a51c537b3a1",
+        "download_url": "https://osf.io/download/67bd782793cbdcaba9bd5b40/"
+      },
+      {
+        "id": "67bd786d93cbdcaba9bd5b65",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-2_meg.fif",
+        "bytes": 1418456019,
+        "version": 1,
+        "sha256": "50a02f96e76dacbbf27b123a3128eca5cd25440d14034e3608d7946cdffe69bd",
+        "download_url": "https://osf.io/download/67bd786d93cbdcaba9bd5b65/"
+      },
+      {
+        "id": "67bd7871f367aaaec62e94ee",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "d27de00660d546f819fceaf5be0bec856a70e71b6d0684f7c7db358735f88f46",
+        "download_url": "https://osf.io/download/67bd7871f367aaaec62e94ee/"
+      },
+      {
+        "id": "67bd7873baebfe5dc980662b",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd7873baebfe5dc980662b/"
+      },
+      {
+        "id": "67bd7876d89418dfa5806ade",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-3_events.tsv",
+        "bytes": 9600,
+        "version": 1,
+        "sha256": "23bb2bc8e4984200076632fc5d802d82bbcddac3685a7853d913ac3141c079eb",
+        "download_url": "https://osf.io/download/67bd7876d89418dfa5806ade/"
+      },
+      {
+        "id": "67bd78b58ee2cd992ebd58b9",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-3_meg.fif",
+        "bytes": 1440744103,
+        "version": 1,
+        "sha256": "00429760598f4d9801e45ad2f8297670bb68e886f58955d2dddbf84236f9d598",
+        "download_url": "https://osf.io/download/67bd78b58ee2cd992ebd58b9/"
+      },
+      {
+        "id": "67bd78793ad901f49b556701",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "c13cf02fc18821616dcf48b592ebe3a344c491fa7e09df020679f86796fa092a",
+        "download_url": "https://osf.io/download/67bd78793ad901f49b556701/"
+      },
+      {
+        "id": "67bd787bd5db8634899fb1b5",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd787bd5db8634899fb1b5/"
+      },
+      {
+        "id": "67bd787fc9fd946b8b2e9241",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-4_events.tsv",
+        "bytes": 9561,
+        "version": 1,
+        "sha256": "977cd1fb69ea01c897a58873c9bf873f620d04169097860a37d419d03f39bb3e",
+        "download_url": "https://osf.io/download/67bd787fc9fd946b8b2e9241/"
+      },
+      {
+        "id": "67bd78e17f49e6daddbd59a1",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-4_meg.fif",
+        "bytes": 1423231679,
+        "version": 1,
+        "sha256": "286fd472237c3bf7955a50918be1989e862c07be8740563876aa6553539dd6cf",
+        "download_url": "https://osf.io/download/67bd78e17f49e6daddbd59a1/"
+      },
+      {
+        "id": "67bd78ba7f59fc242ebd582b",
+        "path": "/english-native-english-conversation/sub-E6/meg/sub-E6_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "f5a2471c05550ca044c5be375a497f15e86e3817d21a86628d5b52293dff72e5",
+        "download_url": "https://osf.io/download/67bd78ba7f59fc242ebd582b/"
+      },
+      {
+        "id": "67bd79ac85c4e3d7e1556696",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_coordsystem.json",
+        "bytes": 1738,
+        "version": 1,
+        "sha256": "8309a3f23ff24c94cde5afbfc5f6ad16961b24a583f9fd9d08f03f276eed447d",
+        "download_url": "https://osf.io/download/jgm93/"
+      },
+      {
+        "id": "67bd79cb86edde90d49fb0b2",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/9a5pt/"
+      },
+      {
+        "id": "67bd79cff367aaaec62e95a2",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-1_events.tsv",
+        "bytes": 9827,
+        "version": 1,
+        "sha256": "f2b9b627a6c54645b92d9567c6c264f28d1d69379c9bd5f5bc1365ddcafc8677",
+        "download_url": "https://osf.io/download/yh3ac/"
+      },
+      {
+        "id": "67bd7a0f3ce6e072a19fb352",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-1_meg.fif",
+        "bytes": 1582437435,
+        "version": 1,
+        "sha256": "5ba08596da9166cfae7be1d265e36951ddbff7b2bc295399f5e11977c5c359e5",
+        "download_url": "https://osf.io/download/fqzrd/"
+      },
+      {
+        "id": "67bd79e6d21acae450bd5a9d",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "5a0e91f1f70020e6aaf307a454470ec9c9df1e603b55301421264e4cb28f9949",
+        "download_url": "https://osf.io/download/r5pjn/"
+      },
+      {
+        "id": "67bd79e8d89418dfa5806d04",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/3tw2g/"
+      },
+      {
+        "id": "67bd79407dbb6d44759fb300",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-2_events.tsv",
+        "bytes": 9666,
+        "version": 1,
+        "sha256": "16149def2c989c95dbe2a94ebacd48967a65521c12d6d28ecdfe1fb9302d385c",
+        "download_url": "https://osf.io/download/nw58h/"
+      },
+      {
+        "id": "67bd79a62b6db8bfaf806700",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-2_meg.fif",
+        "bytes": 1418457891,
+        "version": 1,
+        "sha256": "fbc1b48770178ad3f351eb98210836e4b9f77a5783e80c24a0a18677cda195ab",
+        "download_url": "https://osf.io/download/y94hs/"
+      },
+      {
+        "id": "67bd79429f7c8b90b6bd5837",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "d27de00660d546f819fceaf5be0bec856a70e71b6d0684f7c7db358735f88f46",
+        "download_url": "https://osf.io/download/9beu4/"
+      },
+      {
+        "id": "67bd7945d21acae450bd5a4f",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/jpqhx/"
+      },
+      {
+        "id": "67bd794885c4e3d7e1556666",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-3_events.tsv",
+        "bytes": 9675,
+        "version": 1,
+        "sha256": "0c386991c5918219454595f82cef3854e83137538a978e95ee47da816304424e",
+        "download_url": "https://osf.io/download/67bd794885c4e3d7e1556666/"
+      },
+      {
+        "id": "67bd799b3ad901f49b55683c",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-3_meg.fif",
+        "bytes": 1445522359,
+        "version": 1,
+        "sha256": "1f80e8df5411dde639d613ab65d605b0d890cc51ad170aefded53cc06a3bedfb",
+        "download_url": "https://osf.io/download/m2cnq/"
+      },
+      {
+        "id": "67bd799e2b6db8bfaf8066fa",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "455352231ad6bf4919a087da35a2b7bcaefb5729b8fc086256cbdc0d5927143d",
+        "download_url": "https://osf.io/download/mjgyz/"
+      },
+      {
+        "id": "67bd79a095aaf7d5992e91db",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/5vbjp/"
+      },
+      {
+        "id": "67bd79a37f59fc242ebd5843",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-4_events.tsv",
+        "bytes": 9636,
+        "version": 1,
+        "sha256": "406e1d8a33dc3f36c8c8f559e412b271ed731ee6ad1884154a6b9b0c5db8824d",
+        "download_url": "https://osf.io/download/3rk7q/"
+      },
+      {
+        "id": "67bd79e37f49e6daddbd5a38",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-4_meg.fif",
+        "bytes": 1420049891,
+        "version": 1,
+        "sha256": "ce85a94ec19187bd4e51b749ba43407fa6cbc4d51f70c29216289561f61fa837",
+        "download_url": "https://osf.io/download/b2nys/"
+      },
+      {
+        "id": "67bd79a885c4e3d7e155668f",
+        "path": "/english-native-english-conversation/sub-E7/meg/sub-E7_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "b12dc912fd4f85c29241eb1f457da32bee9ba10c6c2df01a29133a3790a47fa6",
+        "download_url": "https://osf.io/download/94xb6/"
+      },
+      {
+        "id": "67bd7ac732d35e7c869fb4a7",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_coordsystem.json",
+        "bytes": 1789,
+        "version": 1,
+        "sha256": "2d0afe875199c67c05e30b330c606a6f5ff763a883acb74e0cf821c73df451c3",
+        "download_url": "https://osf.io/download/fh2d9/"
+      },
+      {
+        "id": "67bd7a7632d35e7c869fb47f",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/6qws8/"
+      },
+      {
+        "id": "67bd7a7ad6155ec36c2e9ae1",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-1_events.tsv",
+        "bytes": 9941,
+        "version": 1,
+        "sha256": "ec05bbd50309c88766649abb667c376aeff527a14402362a860bfa0a8f314085",
+        "download_url": "https://osf.io/download/b23xg/"
+      },
+      {
+        "id": "67bd7ab795aaf7d5992e9206",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-1_meg.fif",
+        "bytes": 1507612779,
+        "version": 1,
+        "sha256": "b548a1569e57bf8c17bb7487961ffa48ccebca247fef856cfab0e9005b9e69b7",
+        "download_url": "https://osf.io/download/3gs4b/"
+      },
+      {
+        "id": "67bd7a83d89418dfa5806d72",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "721a9e0887eb2b891aac2607e59a7f61b2d8067f6b4ab477c3e40e42e0ce1929",
+        "download_url": "https://osf.io/download/a4n8y/"
+      },
+      {
+        "id": "67bd7a852b6db8bfaf8067ca",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/pgq9w/"
+      },
+      {
+        "id": "67bd7a8885c4e3d7e15566f2",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-2_events.tsv",
+        "bytes": 9658,
+        "version": 1,
+        "sha256": "9448f3c3db02193b5c410c4348fef42ed6caf55883f0fa1792828bff720398cf",
+        "download_url": "https://osf.io/download/rz7eu/"
+      },
+      {
+        "id": "67bd7ac12b6db8bfaf8067ec",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-2_meg.fif",
+        "bytes": 1429602791,
+        "version": 1,
+        "sha256": "0dea0ca0fe1c7c4f91dd1cfcb4dbf6b3bee79f318524620ceef9acfaede27133",
+        "download_url": "https://osf.io/download/ev3zy/"
+      },
+      {
+        "id": "67bd7abb7f49e6daddbd5a98",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "52985febe591397895f8b71f0fa48e2c5aa8f82dc491d6c9bc08d333963696eb",
+        "download_url": "https://osf.io/download/yx6e7/"
+      },
+      {
+        "id": "67bd7abdf367aaaec62e9663",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/67bd7abdf367aaaec62e9663/"
+      },
+      {
+        "id": "67bd7abf850067a5152e92bc",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-3_events.tsv",
+        "bytes": 9558,
+        "version": 1,
+        "sha256": "789b39a898c556d40e4a3ed675c868589ddec4d93279a5f06546c77c89ff85e3",
+        "download_url": "https://osf.io/download/ney64/"
+      },
+      {
+        "id": "67bd7af6a7c45ffe429fb45e",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-3_meg.fif",
+        "bytes": 1423234543,
+        "version": 1,
+        "sha256": "45229ea3f63f01ac217238c188c4aeca3e855110403c0187a8bfb737fc39cdc9",
+        "download_url": "https://osf.io/download/jz7xu/"
+      },
+      {
+        "id": "67bd7ac3d6155ec36c2e9b1a",
+        "path": "/english-native-english-conversation/sub-E8/meg/sub-E8_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "f5a2471c05550ca044c5be375a497f15e86e3817d21a86628d5b52293dff72e5",
+        "download_url": "https://osf.io/download/b6ywg/"
+      },
+      {
+        "id": "67bd7ba274996c50e1bd5846",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_coordsystem.json",
+        "bytes": 1705,
+        "version": 1,
+        "sha256": "9a1e2eb43efd76935286d8bb4a168fcaf7d9368e7f45b5d1a9596c2af727977e",
+        "download_url": "https://osf.io/download/9zpfy/"
+      },
+      {
+        "id": "67bd7bbbd5db8634899fb34c",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-1_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/58xrm/"
+      },
+      {
+        "id": "67bd7bbed89418dfa5806e5f",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-1_events.tsv",
+        "bytes": 11401,
+        "version": 1,
+        "sha256": "4ed20115bb49b21f76fb58135ed79e589e9562c161cb3d70df56711cc2597529",
+        "download_url": "https://osf.io/download/xevs7/"
+      },
+      {
+        "id": "67bd7c02baebfe5dc98067c0",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-1_meg.fif",
+        "bytes": 1541042471,
+        "version": 1,
+        "sha256": "a8e8891c18836fd3a600f36b1539792293c1a4a2807cff910193fe2b1ab658db",
+        "download_url": "https://osf.io/download/esdkm/"
+      },
+      {
+        "id": "67bd7b4c850067a5152e92cd",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-1_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "a3e7318de0a27d096c21ec5eaab331534d832b41632825acc2db806f5ff59ccb",
+        "download_url": "https://osf.io/download/q4sg8/"
+      },
+      {
+        "id": "67bd7b4b95aaf7d5992e9224",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-2_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/ajskm/"
+      },
+      {
+        "id": "67bd7b4ed21acae450bd5b24",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-2_events.tsv",
+        "bytes": 12171,
+        "version": 1,
+        "sha256": "4421419f7aa9dd4e8d8f7134e13b61aead5a57b96710263b328b645b2d76c1f0",
+        "download_url": "https://osf.io/download/vbfqt/"
+      },
+      {
+        "id": "67bd7b9d86edde90d49fb117",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-2_meg.fif",
+        "bytes": 1412088167,
+        "version": 1,
+        "sha256": "a78baa4376955d2d8dd04237715b8e34d92f7d0e12ae08e6f09153d79fafa9c3",
+        "download_url": "https://osf.io/download/s83b2/"
+      },
+      {
+        "id": "67bd7b5232d35e7c869fb51e",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-2_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "24c35f07abc38a976a5c3f4227658bacd66ee164a93b6495c12f54694d5d568a",
+        "download_url": "https://osf.io/download/6vcg9/"
+      },
+      {
+        "id": "67bd7b54850067a5152e92cf",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-3_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/wn6d4/"
+      },
+      {
+        "id": "67bd7b57266f6c78fb556455",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-3_events.tsv",
+        "bytes": 9562,
+        "version": 1,
+        "sha256": "ac3ec2cbfb0b8c300be61597444d012287bf1d99fa9e92e91c0c6f8ff22a25f8",
+        "download_url": "https://osf.io/download/4ua5d/"
+      },
+      {
+        "id": "67bd7b8feca0717d2c5564c2",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-3_meg.fif",
+        "bytes": 1424823499,
+        "version": 1,
+        "sha256": "a16f509c68184a1b720088d4ab92bee5ffe9aa7fbc7dd6534aa6ec3c46ed1de2",
+        "download_url": "https://osf.io/download/jg4ws/"
+      },
+      {
+        "id": "67bd7b93baebfe5dc9806762",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-3_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "7c36426086964b458e5c79b64c0e3c5b023211120e346ed37da4a6c0b3458d0f",
+        "download_url": "https://osf.io/download/3e2d7/"
+      },
+      {
+        "id": "67bd7b96a993b951ac55639c",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-4_channels.tsv",
+        "bytes": 26812,
+        "version": 1,
+        "sha256": "fcd08a6eb89da6890a3f12deeeb22810459a9c755bf3cdc0cd403e3350006f1d",
+        "download_url": "https://osf.io/download/sqbh4/"
+      },
+      {
+        "id": "67bd7b99d6155ec36c2e9bbe",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-4_events.tsv",
+        "bytes": 9559,
+        "version": 1,
+        "sha256": "623129184de3066f04d63e7ba7effb85d84dcca5eba80da18d02593da05476e9",
+        "download_url": "https://osf.io/download/3hxaq/"
+      },
+      {
+        "id": "67bd7bd47f49e6daddbd5b27",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-4_meg.fif",
+        "bytes": 1416863339,
+        "version": 1,
+        "sha256": "f1561922946f65394c41722846870b573ce54b4d30f327badbbb8a40f9fa72d5",
+        "download_url": "https://osf.io/download/eupx3/"
+      },
+      {
+        "id": "67bd7ba032d35e7c869fb54c",
+        "path": "/english-native-english-conversation/sub-E9/meg/sub-E9_task-en_run-4_meg.json",
+        "bytes": 763,
+        "version": 1,
+        "sha256": "e8871db38c07e6cab253b6b7c26194658a74e1e4d7eb5ce92b21d506802a048a",
+        "download_url": "https://osf.io/download/rcp8u/"
+      }
+    ],
+    "largest_recording_directory_fif_GB": 5.898299784,
+    "largest_physical_subject_with_all_sessions_fif_GB": 11.494118436,
+    "E3b_subject_mapping": {
+      "sub-E3b": "sub-E3"
+    }
+  },
+  "karaone": {
+    "date": "2026-10-13",
+    "source": "https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html",
+    "published_size_GB": 24,
+    "method": "HTTP HEAD only; no archive downloaded",
+    "complete_header_inventory": true,
+    "measured_archive_bytes": 24824165739,
+    "measured_archive_GB": 24.824165739,
+    "largest_archive_GB": 2.406099915,
+    "files": [
+      {
+        "subject": "MM05",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM05.tar.bz2",
+        "bytes": 2185187287,
+        "etag": "\"823f4fd7-51c21b65a9092\"",
+        "last_modified": "Fri, 31 Jul 2015 01:26:42 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM08",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM08.tar.bz2",
+        "bytes": 2406099915,
+        "etag": "\"8f6a2bcb-51c21cb18ec3c\"",
+        "last_modified": "Fri, 31 Jul 2015 01:32:30 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM09",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM09.tar.bz2",
+        "bytes": 1680491378,
+        "etag": "\"642a4372-51c21d98402c4\"",
+        "last_modified": "Fri, 31 Jul 2015 01:36:32 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM10",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM10.tar.bz2",
+        "bytes": 1795507310,
+        "etag": "\"6b05446e-51c21e8c8990e\"",
+        "last_modified": "Fri, 31 Jul 2015 01:40:48 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM11",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM11.tar.bz2",
+        "bytes": 1965955198,
+        "etag": "\"752e187e-51c21f9aa65b8\"",
+        "last_modified": "Fri, 31 Jul 2015 01:45:31 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM12",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM12.tar.bz2",
+        "bytes": 2267226428,
+        "etag": "\"8723213c-51c220d13d1be\"",
+        "last_modified": "Fri, 31 Jul 2015 01:50:57 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM14",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM14.tar.bz2",
+        "bytes": 2235746733,
+        "etag": "\"8542c9ad-51c2220275ee0\"",
+        "last_modified": "Fri, 31 Jul 2015 01:56:17 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM15",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM15.tar.bz2",
+        "bytes": 1267824862,
+        "etag": "\"4b9178de-51c222b223434\"",
+        "last_modified": "Fri, 31 Jul 2015 01:59:21 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM16",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM16.tar.bz2",
+        "bytes": 1294645285,
+        "etag": "\"4d2ab825-51c22373380de\"",
+        "last_modified": "Fri, 31 Jul 2015 02:02:44 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM18",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM18.tar.bz2",
+        "bytes": 1312049275,
+        "etag": "\"4e34487b-51c22433191f6\"",
+        "last_modified": "Fri, 31 Jul 2015 02:06:05 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM19",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM19.tar.bz2",
+        "bytes": 1441329114,
+        "etag": "\"55e8efda-51c224fc8cd9a\"",
+        "last_modified": "Fri, 31 Jul 2015 02:09:36 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM20",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM20.tar.bz2",
+        "bytes": 1353503916,
+        "etag": "\"50acd4ac-51c225b93236d\"",
+        "last_modified": "Fri, 31 Jul 2015 02:12:54 GMT",
+        "status": 200
+      },
+      {
+        "subject": "MM21",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/MM21.tar.bz2",
+        "bytes": 1269040318,
+        "etag": "\"4ba404be-51c2266f002d6\"",
+        "last_modified": "Fri, 31 Jul 2015 02:16:05 GMT",
+        "status": 200
+      },
+      {
+        "subject": "P02",
+        "url": "https://www.cs.toronto.edu/~complingweb/data/karaOne/P02.tar.bz2",
+        "bytes": 2349558720,
+        "etag": "\"8c0b6bc0-51c227b63ed65\"",
+        "last_modified": "Fri, 31 Jul 2015 02:21:48 GMT",
+        "status": 200
+      }
+    ]
+  },
+  "ds004408": {
+    "source": "data/raw/ds004408/acquisition.json",
+    "dataset_revision": "b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be",
+    "files": 1946,
+    "download_bytes": 20083249467,
+    "eeg_bytes": 19435625984,
+    "original_eeg_format": "IEEE_FLOAT_32, 128 channels, 512 Hz",
+    "processed_eeg_200_plus_64_float32_upper_estimate_GB": 10.021494648,
+    "estimation_caveat": "Same channel and time count; before trimming, QC, compression; processed audio and metadata added separately."
+  },
+  "brennan2019": {
+    "catalog_source": "https://eegdash.org/api/dataset/eegdash.dataset.NM000180.html",
+    "catalog_approximate_GB": 3.8,
+    "exact_bytes_verified": false
+  },
+  "processed_storage_planning_GB": {
+    "ds004408": [
+      10,
+      11
+    ],
+    "brennan2019": [
+      2,
+      3
+    ],
+    "etard_english_clean_lb_mb_hb": [
+      3,
+      8
+    ],
+    "kymata_english_eeg_only": [
+      5,
+      6
+    ],
+    "karaone_eeg_audio_labels": [
+      2,
+      3
+    ],
+    "total_data_only": [
+      22,
+      31
+    ],
+    "status": "Planning estimates; not measured processed files."
+  },
+  "etard": {
+    "source": "https://zenodo.org/records/7778289",
+    "published_approximate_archive_GB": {
+      "eeg.zip": 19.2,
+      "audiobooks.zip": 1.9,
+      "total": 21.1
+    },
+    "exact_bytes_verified": false,
+    "selected_processing_scope": "English clean/lb/mb/hb only; full archives also contain unused conditions/languages."
+  },
+  "processed_storage_formula": "duration_seconds * EEG_channels * (200+64) * 4 bytes, plus processed audio/labels; KaraOne can omit neural64; no replicated EEG windows."
+}

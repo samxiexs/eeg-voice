@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "scope": "synthetic small-input real-model interface check, no training or scientific evaluation",
+  "revisions": {
+    "wavlm": "efa81aae7ff777e464159e0f877d54eac5b84f81",
+    "vocos": "0feb3fdd929bcd6649e0e7c5a688cf7dd012ef21",
+    "whisper": "e8727524f962ee844a7319d92be39ac1bd25655a",
+    "reve": "dc2a075c287bb2f6c04ee5875bd79535a0f7dba6",
+    "reve_positions": "befa5b57a455b77cf302daf610c2e9ed8140bace"
+  },
+  "reve_parameters": 69189632,
+  "official_output_shape": [
+    1,
+    4,
+    7,
+    512
+  ],
+  "aligned_output_shape": [
+    1,
+    200,
+    768
+  ],
+  "lora_trainable_parameters": 98304,
+  "all_outputs_finite": true,
+  "coordinate_source": "official pinned brain-bzh/reve-positions",
+  "coordinate_unit": "metres",
+  "weight_bytes": 276773456
+}
