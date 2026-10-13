@@ -1,0 +1,22 @@
+{
+  "dataset_revision": "b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be",
+  "source_matches": true,
+  "header_unit_multiplier": 1e-06,
+  "source_url": "https://www.data.cnspworkshop.net/data/datasetCND_LalorNatSpeech.zip",
+  "archive_member": "LalorNatSpeech/dataCND/dataSub7.mat",
+  "source_sha256": "33d742fc0607e252d7db16bd95750e302f396c52847de9d39e87dc3126342660",
+  "source_fs": 128,
+  "openneuro_subject": "sub-008",
+  "openneuro_run": 1,
+  "source_subject": 7,
+  "eeg_sha256": "fac51bb34641dec820f96f39079c9b15a5f878ce27acdbd3371c8fc412e5c0f1",
+  "channel_dc_relative_error": 2.0586599136322032e-07,
+  "dynamic_correlation_min": 0.9887882341665623,
+  "dynamic_correlation_median": 0.9999510403143692,
+  "source_over_nominal_mne_numeric_ac_scale": 0.9998656623369241,
+  "interpretation": "BrainVision's nominal volt values numerically match the original CND values; multiplying them by 1e6 again creates an export-unit discrepancy. Restore native CND numbers and interpret them as microvolts using BioSemi gain/range and source amplitude evidence.",
+  "absolute_unit_caveat": "CND struct has no explicit unit field. Numeric restoration is directly verified; the microvolt interpretation is inferred from acquisition scale, not an author-issued unit correction.",
+  "manufacturer_reference": "https://www.biosemi.com/faq/adjust_gain.htm",
+  "pybv_reference": "https://pybv.readthedocs.io/en/stable/generated/pybv.write_brainvision.html",
+  "calibration_scope": "fixed corpus-export correction; no per-record scaling fit; no decoder outcomes used"
+}

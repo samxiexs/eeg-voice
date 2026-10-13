@@ -1,21 +1,16 @@
-# Python 3.12. Install a CUDA-matched PyTorch build first on CUDA servers.
-# Local development uses the root .venv-aligned-local environment.
-
-torch>=2.5,<3.0
-torchaudio>=2.5,<3.0
-
-numpy>=1.26
-pandas>=2.2
-scipy>=1.13
-mne>=1.8
-h5py>=3.11
-PyYAML>=6
-soundfile>=0.12
-
-requests>=2.31
-openpyxl>=3.1
-transformers>=4.40
-huggingface_hub>=0.23
-matplotlib>=3.8
-pytest>=8.0
-tqdm>=4.66
+# Python 3.12. Install a matching torch/torchaudio pair for your device.
+torch>=2.6,<3
+torchaudio>=2.6,<3
+numpy>=1.26,<3
+scipy>=1.13,<2
+mne>=1.8,<2
+PyYAML>=6,<7
+soundfile>=0.12,<1
+transformers>=4.44,<5
+huggingface_hub>=0.24,<1
+vocos==0.1.0
+openai-whisper>=20240930
+praatio>=6,<7
+matplotlib>=3.8,<4
+pytest>=8,<10
+tqdm>=4.66,<5

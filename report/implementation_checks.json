@@ -1,0 +1,58 @@
+{
+  "status": "VERIFIED_CODE_CONTRACTS",
+  "scientific_performance": "UNVERIFIED; no oracle/EEG training or TRF physiology gate has run",
+  "dataset_files": 1946,
+  "eeg_recordings": 380,
+  "audio_pairs": 20,
+  "dataset_revision": "b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be",
+  "training_source": "data/raw/ds004408/sub-007/eeg/sub-007_task-listening_run-01_eeg.vhdr",
+  "accepted_source_windows": 77,
+  "rejected_source_windows": 0,
+  "wavlm_shape": [
+    1,
+    200,
+    768
+  ],
+  "mel_shape": [
+    1,
+    100,
+    376
+  ],
+  "waveform_samples": 96000,
+  "vocos_input_gradient": true,
+  "cfm_neural_gradient": true,
+  "trf_for_gradient_check": "synthetic weights, not a fitted scientific forward model",
+  "environment": {
+    "python": "3.12.13",
+    "platform": "macOS-27.2-arm64-arm-64bit",
+    "packages": {
+      "torch": "2.11.0",
+      "torchaudio": "2.11.0",
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "mne": "1.12.0",
+      "transformers": "4.57.6",
+      "huggingface_hub": "0.36.2",
+      "vocos": "0.1.0",
+      "praatio": "6.2.2",
+      "openai-whisper": "20250625"
+    },
+    "config_hash": "79f7aaf1a781c1f86f6021ea8893506d111f4ebba1a6ed91fb557240e387da75"
+  },
+  "asr_smoke": {
+    "reference": "had been with him but after 40 days without a fish the boy s parents had",
+    "original": "had been with him but after 40 days without a fish the boy is parents had",
+    "copy": "had been with him but after 40 days without a fish the boy is parents had"
+  },
+  "unit_tests": {
+    "tests": 28,
+    "failures": 0,
+    "errors": 0,
+    "run_after_initial_implementation_completed": true
+  },
+  "unit_calibration_audit": "report/dataset_unit_audit.json",
+  "tested_devices": [
+    "cpu"
+  ],
+  "formal_training_matrix_run": false
+}

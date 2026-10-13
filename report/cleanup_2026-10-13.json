@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-13",
+  "authorization": "user-requested replacement of failed legacy pipeline",
+  "removed_paths": [
+    "data",
+    "artifacts",
+    "models",
+    "outputs",
+    "logs",
+    "docs",
+    "node_modules",
+    "tests",
+    "scripts",
+    "eegspeech",
+    "configs",
+    "report/figures",
+    "report/05_improvement_plan_2026-10-13.md",
+    "report/04_foundation_models.md",
+    "report/01_methods.md",
+    "report/02_results.md",
+    "report/03_framework.md"
+  ],
+  "retained": [
+    "report/06_execution_plan_2026-10-13.md",
+    "Paper-ECoG-EEG",
+    ".venv-aligned-local",
+    ".git"
+  ],
+  "runtime_tests_during_implementation": false
+}

@@ -1,0 +1,5 @@
+{
+  "wavlm": {"repo_id": "microsoft/wavlm-base", "revision": null, "local_dir": "wavlm-base"},
+  "vocos": {"repo_id": "charactr/vocos-mel-24khz", "revision": null, "local_dir": "vocos-mel-24khz"},
+  "whisper": {"repo_id": "openai/whisper-small.en", "revision": null, "local_dir": "whisper-small.en"}
+}

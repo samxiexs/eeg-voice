@@ -1,0 +1,115 @@
+version: perceived-flow-v1
+paths:
+  raw: data/raw/ds004408
+  artifacts: artifacts/perceived_flow
+  outputs: outputs/perceived_flow
+  models: models
+  logs: logs/perceived_flow
+dataset:
+  id: ds004408
+  revision: b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be
+  subjects: [sub-001, sub-002, sub-003, sub-004, sub-005, sub-006, sub-007, sub-008, sub-009, sub-010, sub-011, sub-012, sub-013, sub-014, sub-015, sub-016, sub-017, sub-018, sub-019]
+  alignment_source: pinned_dataset_readme_and_run_order
+  run_audio: {1: audio01, 2: audio02, 3: audio03, 4: audio04, 5: audio05, 6: audio06, 7: audio07, 8: audio08, 9: audio09, 10: audio10, 11: audio11, 12: audio12, 13: audio13, 14: audio14, 15: audio15, 16: audio16, 17: audio17, 18: audio18, 19: audio19, 20: audio20}
+  eeg_start_seconds: 0.0
+  # Restore the original authors' numeric EEG scale for this pinned export.
+  # Evidence and the physical-unit interpretation are recorded explicitly.
+  header_unit_multiplier: 0.000001
+  unit_calibration_report: report/dataset_unit_audit.json
+preprocessing:
+  eeg_rate: 128
+  neural_rate: 64
+  channels: 128
+  highpass: 0.5
+  lowpass: 40.0
+  neural_lowpass: 15.0
+  fir_seconds: 8.0
+  guard_seconds: 10.0
+  flat_uv: 0.1
+  peak_to_peak_uv: 400.0
+  max_bad_fraction: 0.1
+  max_rejection_fraction: 0.2
+  roi_centers: [Fz, Cz, T7, T8, POz]
+window:
+  seconds: 4.0
+  train_stride: 2.0
+  evaluation_stride: 4.0
+  eeg_left: 1.0
+  eeg_right: 1.5
+  teacher_left: 1.0
+  teacher_right: 1.0
+audio:
+  sample_rate: 24000
+  teacher_rate: 16000
+  mel_bins: 100
+  n_fft: 1024
+  hop_length: 256
+  teacher_layer: 6
+  teacher_dim: 768
+encoder:
+  width: 128
+  roi_width: 32
+  dilations: [1, 2, 4, 8, 16, 32]
+  dropout: 0.1
+  lags_seconds: [0.0, 0.05, 0.1, 0.2, 0.3, 0.5]
+  adapter_rank: 16
+  contrast_temperature: 0.07
+  contrast_weight: 0.1
+  envelope_weight: 0.1
+  onset_weight: 0.05
+flow:
+  width: 256
+  layers: 6
+  heads: 4
+  null_fraction: 0.1
+  sample_steps: 32
+  neural_steps: 8
+trf:
+  lags: 33
+  ridge: [0.01, 0.1, 1.0, 10.0, 100.0]
+  permutations: 500
+  min_shift_seconds: 2.0
+  fdr: 0.05
+  max_channels: 32
+  min_channels: 8
+  min_subject_fraction: 0.8
+  min_validation_r: 0.05
+  variance_floor: 0.1
+training:
+  seeds: [11, 22, 33]
+  oracle_steps: 10000
+  encoder_steps: 20000
+  flow_steps: 30000
+  encoder_batch: 64
+  flow_batch: 32
+  microbatch: 8
+  oracle_lr: 0.0002
+  encoder_lr: 0.0003
+  flow_lr: 0.0001
+  joint_encoder_lr: 0.00001
+  joint_after: 5000
+  weight_decay: 0.01
+  grad_clip: 1.0
+  warmup_steps: 1000
+  validate_every: 2000
+  validation_windows_per_audio: 10
+  encoder_joint_weight: 0.1
+  neural_every: 4
+  neural_weight: 0.1
+  neural_ramp_end: 10000
+  amp: true
+evaluation:
+  generation_seeds: [0, 1, 2]
+  retrieval_candidates: 20
+  wrong_min_seconds: 10.0
+  bootstrap: 10000
+  copy_max_wer_delta_pp: 5.0
+  oracle_max_wer: 0.4
+  oracle_max_wer_delta_pp: 15.0
+adapter:
+  seconds: 60
+  start_seconds: 10.0
+  steps: 100
+  batch: 16
+  lr: 0.001
+  residual_penalty: 0.001

@@ -1,0 +1,16 @@
+{
+  "version": "subject-and-content-v1",
+  "audio": {
+    "train": ["audio01", "audio02", "audio03", "audio04", "audio05", "audio06", "audio07", "audio08", "audio09", "audio10", "audio11", "audio12", "audio13", "audio14"],
+    "validation": ["audio15", "audio16", "audio17"],
+    "test": ["audio18", "audio19", "audio20"]
+  },
+  "development_subjects": ["sub-001", "sub-002", "sub-003"],
+  "test_folds": {
+    "F0": ["sub-004", "sub-005", "sub-006"],
+    "F1": ["sub-007", "sub-008", "sub-009"],
+    "F2": ["sub-010", "sub-011", "sub-012"],
+    "F3": ["sub-013", "sub-014", "sub-015"],
+    "F4": ["sub-016", "sub-017", "sub-018", "sub-019"]
+  }
+}
