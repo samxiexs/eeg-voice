@@ -13,7 +13,8 @@ from .inference import condition_from_output, native_decode, eeg_only
 def wrong_time_mapping(rows, minimum=10.0):
     groups = defaultdict(list)
     for i, row in enumerate(rows):
-        key = (row_source(row), str(row.get('subject', 'audio')), str(row.get('recording', row.get('audio'))))
+        # Same person and same canonical stimulus; repetitions of a stimulus are one pool.
+        key = (row_source(row), str(row.get('subject', 'audio')), str(row.get('canonical_audio', row.get('recording', row.get('audio')))))
         groups[key].append(i)
     mapping = {}
     for indices in groups.values():

@@ -25,6 +25,9 @@ ARPABET={
  'CH':('affricate','postalveolar'),'JH':('voiced','affricate','postalveolar'),'M':('voiced','nasal','labial'),'N':('voiced','nasal','alveolar'),'NG':('voiced','nasal','velar'),'L':('voiced','approximant','alveolar'),'R':('voiced','approximant','postalveolar'),'W':('voiced','approximant','labial','velar','rounded'),'Y':('voiced','approximant','palatal')}
 
 
+_AUDITORY_KERNEL=signal.firwin(1601,[1,8],pass_zero=False,fs=200,window='hamming')
+
+
 def auditory_filter(x):
     """Fixed 1–8Hz, 8sec Hamming FIR; x[time,channel], no fitted parameters."""
     x=np.asarray(x,dtype=np.float64);kernel=signal.firwin(1601,[1,8],pass_zero=False,fs=200,window='hamming')
@@ -132,16 +135,22 @@ def _window_rows(cfg):
                 result.append({**compact,'id':key,'record_id':r['id'],'start':float(start),'canonical_start':r['audio_start']+float(start),
                                'canonical_audio':f"{dataset}:{r['audio']}",'channel_mask':valid.tolist(),'content_split':split,
                                'condition':r['metadata'].get('condition','clean'),'audio_path':manifest['contents'][r['audio']]['path']})
-    atomic_json(cfg.dir('processed')/'window_qc.json',{'config_hash':cfg.hash,'windows':qc})
+    atomic_json(cfg.dir('processed')/'window_qc.json',{'windows':qc})
     return result
 
 
+_ROWS={}
+
+
 def all_rows(cfg):
+    """Window list keyed by the data contract only, so configs that differ in training settings share it."""
     path=cfg.dir('processed')/'windows.json';registry=cfg.registry()
+    key=fingerprint({'preprocessing':cfg['preprocessing'],'window':cfg['window'],'registry':registry['registry_hash']})
+    if key in _ROWS:return _ROWS[key]
     if path.exists():
         saved=read_json(path)
-        if saved['config_hash']==cfg.hash and saved['registry_hash']==registry['registry_hash']:return saved['rows']
-    rows=_window_rows(cfg);atomic_json(path,{'config_hash':cfg.hash,'registry_hash':registry['registry_hash'],'rows':rows})
+        if saved.get('window_hash')==key:_ROWS[key]=saved['rows'];return saved['rows']
+    rows=_window_rows(cfg);atomic_json(path,{'window_hash':key,'registry_hash':registry['registry_hash'],'rows':rows});_ROWS[key]=rows
     return rows
 
 
@@ -180,19 +189,24 @@ def _phonemes(content,start):
 
 class TargetCache:
     """One bounded native target cache per unique canonical crop, never person."""
-    def __init__(self,cfg):self.cfg=cfg;self.audio=None;self.manifests={};self.tiers={}
+    def __init__(self,cfg):
+        self.cfg=cfg;self.audio=None;self.manifests={};self.tiers={};self.memory={}
+        self.fixed={'audio':cfg['audio'],'models':cfg.models,'frontend_sha':digest(Path(__file__).parent/'neural.py')}
     def get(self,row):
         cfg=self.cfg;folder=cfg.dir('processed')/row['dataset']
         if row['dataset'] not in self.manifests:self.manifests[row['dataset']]=read_json(folder/'manifest.json')
         c=self.manifests[row['dataset']]['contents'][row['audio']]
         # Phoneme tiers can be added after ingest; cached targets must not outlive the labels they were built from.
         tier=self.tiers.setdefault((row['dataset'],row['audio']),fingerprint(c.get('phonemes',[])))
-        key=fingerprint({'wave':c['sha256'],'phonemes':tier,'start':row['canonical_start'],'seconds':4,'audio':cfg['audio'],'models':cfg.models,'frontend_sha':digest(Path(__file__).parent/'neural.py')})
+        key=fingerprint({'wave':c['sha256'],'phonemes':tier,'start':row['canonical_start'],'seconds':4,**self.fixed})
+        if key in self.memory:return self.memory[key]
         dest=cfg.dir('artifacts')/'target_cache';path=dest/(key+'.npz');dest.mkdir(parents=True,exist_ok=True)
         with manifest_lock(dest):
             if path.exists():
                 os.utime(path,None)
-                with np.load(path,allow_pickle=False) as z:return {k:z[k].copy() for k in z.files}
+                with np.load(path,allow_pickle=False) as z:value={k:z[k].copy() for k in z.files}
+                if len(self.memory)<2500:self.memory[key]=value
+                return value
             from eegspeech.perceived_audio import FrozenAudio
             from .neural import AcousticFrontend
             if self.audio is None:self.audio=FrozenAudio(cfg,device='cpu')
@@ -261,11 +275,10 @@ class WindowDataset(Dataset):
         meta=self._record_meta[str(record)]
         x=np.load(record/'eeg.npy',mmap_mode='r');a=round((start-left)*200);eeg=np.array(x[:,a:a+1300].T,dtype=np.float32)
         if eeg.shape!=(1300,len(meta['names'])):raise ValueError('Truncated processed EEG context')
-        key=str(record)
-        if key not in self._auditory:
-            # Keep support inside content; bounded single-record resident cache.
-            self._auditory.clear();self._auditory[key]=auditory_filter(np.array(x.T))
-        auditory=np.array(self._auditory[key][a:a+1300])
+        # The 8 s FIR needs 800 samples on each side; windows keep a 10 s guard, so the support is real EEG
+        # of the same record and the result equals filtering the whole record.
+        if a<800 or a+2100>x.shape[1]:auditory=auditory_filter(np.array(x.T))[a:a+1300]
+        else:auditory=signal.fftconvolve(np.asarray(x[:,a-800:a+2100].T,dtype=np.float64),_AUDITORY_KERNEL[:,None],mode='valid',axes=0).astype(np.float32)
         y=np.load(record/'neural.npy',mmap_mode='r');b=round(start*64);bc=round((start-left)*64)
         neural=np.array(y[:,b:b+256].T);neural_context=np.array(y[:,bc:bc+416].T)
         good=np.asarray(r['channel_mask'],bool)
