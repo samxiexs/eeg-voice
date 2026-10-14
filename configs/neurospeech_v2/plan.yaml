@@ -130,6 +130,14 @@ storage:
   token_cache_bytes: 1000000000
   residual_cache_bytes: 1000000000
   delete_verified_raw: true
+imagined:                 # KaraOne transfer: generation from imagined EEG with the frozen listened-speech model
+  core_seconds: 2.0       # generated audio; 95 % of the spoken prompts are shorter
+  left: 1.0               # EEG context before / after the core; 4.5 s in total fits inside the 5 s imagined state
+  right: 1.5
+  steps: 3000
+  batch: 16
+  lr: 0.0003
+  validate_every: 250
 subject_policy:
   brennan2019: authors_analyzed   # participants.tsv 'analyzed' of the release: quality control of Brennan & Hale (2019)
 protocols:

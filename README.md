@@ -5,7 +5,7 @@ Project root: `speech_decoding/`. Two generations of the pipeline live here.
 - **v1 (implemented, unit-tested):** ds004408 perceived-speech EEG → TCN predicting WavLM temporal features → CFM → Vocos native Mel → 24 kHz waveform. Entry point `scripts/perceived_flow.py`, code in `eegspeech/*.py`.
 - **v2.1 NeuroSpeech (current research plan):** four English perceived-speech sources plus KaraOne for the later imagined-speech transfer, REVE adaptation, physiology-guided alignment and neural-consistent CFM. Entry point `scripts/neurospeech.py`, code in `eegspeech/neurospeech/`. Data ingest is implemented; **no v2.1 model has been trained or evaluated.**
 
-[Current research plan: NeuroSpeech v2.1](report/07_neurospeech_research_plan_2026-10-13.md) · [Chinese original of the plan](report/07_neurospeech_research_plan_2026-10-13.zh.md) · [Report index](report/README.md) · Chinese originals of this file and the report index are kept as `README.zh.md`.
+[Current research plan: NeuroSpeech v2.1](report/neurospeech_research_plan_2026-10-13.md) · [Progress report: data stage](report/neurospeech_progress_2026-10-13.md) ([中文](report/neurospeech_progress_2026-10-13.zh.md)) · [Chinese original of the plan](report/neurospeech_research_plan_2026-10-13.zh.md) · [Report index](report/README.md) · Chinese originals of this file and the report index are kept as `README.zh.md`.
 
 ## NeuroSpeech v2.1
 
@@ -49,7 +49,7 @@ python scripts/neurospeech.py annotate etard
 |---|---|---|---|
 | Brennan2019 | phonemes | MFA on the official word table | MFA word onsets against the official word times: median 12–21 ms, 95th percentile 45–58 ms |
 | Etard | transcripts, word times, phonemes | The stories are chapters of *The Children of Odin* (Project Gutenberg 24737; the original Zenodo 7086209 stimulus files are named `odin_<chapter>_<part>`). The reference words are the book's; a Whisper draft only locates each passage and its pauses; MFA gives word and phoneme times | 95–99.6 % of the book words in each passage are confirmed by the draft; MFA and draft word onsets differ by a median of 40–50 ms |
-| Kymata English | speaker-overlap annotation (three speakers, none released) | `configs/neurospeech_v2/content_masks.json`: speech-level sound inside pauses of the released word tier (18 stretches, about 7 s of 401 s); windows overlapping them are dropped | none available. Speech that overlaps a transcribed word is not detected; the file is marked `human_review: false` |
+| Kymata English | speaker-overlap annotation (three speakers, none released) | `configs/neurospeech_v2/content_masks.json`: speech-level sound inside pauses of the released word tier (15 intervals, 11.4 s of 401 s); windows overlapping them are dropped | none available. Speech that overlaps a transcribed word is not detected; the file is marked `human_review: false` |
 
 The plan (§6.1) asks for a manual sample of 200 boundaries per source; the automatic checks above stand in for it and no manual review has been done.
 
@@ -71,6 +71,26 @@ python scripts/neurospeech.py prepare
 ```
 
 `prepare` builds the content registry, splits and window list from the processed store and trains nothing. The remaining commands train or evaluate and have **not been run**: `copy-gate`, `oracle`, `trf`, `encoder`, `reliability`, `flow`, `evaluate [--mode zero-shot|few-shot|noise]`, `freeze`, `report`; each takes `--protocol P1|P2 --fold F0..F4|external --seed 11|22|33 --system S0..S3 --device cuda`.
+
+### Imagined speech as generation (transfer from the listened-speech model)
+
+Code in `eegspeech/neurospeech/imagined.py`; **not run**, because it needs a trained listened-speech model first.
+
+- **Path:** imagined EEG → frozen listened-speech encoder → re-timer → the same continuous condition → frozen flow generator → waveform. The re-timer is the only trained part and starts as an identity, so before transfer training the model is exactly the listened-speech model applied to imagined EEG. There is no classifier; prompt identity is used only in the measures and the split.
+- **Target:** imagination has no audio, so the regression target is the first 2 s of the same trial's spoken recording.
+- **Window:** 4.5 s of EEG inside the 5 s imagined state gives 2 s of audio (KaraOne: 1,913 trials, 14 people, 11 prompts).
+- **Two tests:** unseen people (`--split subject --held 0..3`: three held-out people per fold, two development people), and an unseen prompt (`--split prompt --held pat`: one prompt never used for transfer). The second is the one that separates generation from reproducing memorized sounds.
+- **Controls:** imagined EEG of another prompt from the same person, rest EEG of the same trial, and an empty condition; plus the zero-shot model without the re-timer (`--zero-shot`).
+- **Measures on the generated audio:** similarity to the person's own spoken recording in the speech-model feature space, Mel error, and the rank of the true prompt among the 11 using other people's recordings. A fixed listening set is written for every control.
+- **Limits:** eleven short prompts cannot show free-form imagined speech, and the spoken recording is a stand-in for what was imagined, with unknown timing.
+
+```bash
+python scripts/neurospeech.py imagined-transfer --split subject --held 0 --device cuda
+```
+
+```bash
+python scripts/neurospeech.py imagined-evaluate --split subject --held 0 --device cuda
+```
 
 ## v1 pipeline (single dataset)
 

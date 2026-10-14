@@ -1,52 +1,44 @@
 # EEG-to-Speech 研究方案改进版：NeuroSpeech
 
-**NeuroSpeech: Physiology-Guided EEG-to-Speech Generation with Foundation Models**
+NeuroSpeech: Physiology-Guided EEG-to-Speech Generation with Foundation Models
 
 研究性暂定名称，不作为最终论文标题。日期：2026-10-13；版本：`neurospeech_plan_v2.1`。
-
-## Material Passport
-
-- Origin Skill / Mode：academic-research-suite / experiment-agent / plan。
-- 依据：用户提出的 Foundation Model、生理对齐、可靠度、Simulation 与跨被试学习要求，以及新增 Kymata 英文部分、KaraOne 和仅保留处理后数据的存储约束；项目 v1 文档及公开原始资料。
-- 资料核查日期：2026-10-13。数据规模与模型接口来自下文链接的官方仓库、作者数据记录、模型配置及原始论文；训练参数与放行阈值是本项目提出的起始协议。
-- Verification Status：**PLANNED / UNVERIFIED**。公开来源、Kymata 英文目录及文件体积已核查，KaraOne 官方归档已通过 HTTP HEAD 核对大小；未下载新增神经记录或媒体内容，未运行训练或数据预处理。下载后的可用配对时长、有效人数、同步误差、模型性能均待验证。
-- 版本关系：本文件取代 [v1 执行方案](06_execution_plan_2026-10-13.md) 的研究范围与实验设计。现有代码仍对应单数据集 TCN 版本，不能标记为已实现本方案。
 
 ## 1. 核心问题与三个技术贡献
 
 核心研究目标：将通用 EEG Foundation Model 适配成具有听觉任务先验的时序编码器，在同时留出语音内容与被试的条件下恢复连续英语语音，并检验跨数据集迁移。
 
-| 技术贡献 | 要回答的问题 | 必须提供的证据 |
-|---|---|---|
+
+| 技术贡献                                        | 要回答的问题                                                                  | 必须提供的证据                                                     |
+| ------------------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | Speech-specific EEG Foundation Model Adaptation | REVE 的预训练表示与听觉生理分支结合，是否比直接使用 REVE 或小型编码器更有用？ | 固定生成器下的 encoder 对照、LoRA / 生理分支消融、真实未见被试结果 |
-| Physiology-guided Cross-modal Alignment | 时序、节律和音素相关监督能否产生更可用、可校准的 EEG 条件？ | 局部特征对齐、音素边界诊断、可靠度校准、正确 / 错配条件差异 |
-| Neural-consistent Conditional Flow Matching | 经过独立验证的听觉前向模型能否约束生成轨迹并改善语音内容？ | 前向模型放行、完整可微轨迹、加入神经项的配对 WER 改善及条件对照 |
+| Physiology-guided Cross-modal Alignment         | 时序、节律和音素相关监督能否产生更可用、可校准的 EEG 条件？                   | 局部特征对齐、音素边界诊断、可靠度校准、正确 / 错配条件差异        |
+| Neural-consistent Conditional Flow Matching     | 经过独立验证的听觉前向模型能否约束生成轨迹并改善语音内容？                    | 前向模型放行、完整可微轨迹、加入神经项的配对 WER 改善及条件对照    |
 
 跨被试对抗学习与 TRF Simulation 都进入上述编码器的训练流程；它们各有固定消融，不另建独立生成架构。主生成器只使用一套 CFM，基础模型只选择 REVE-Base。
 
-阶段一固定为 **Perceived Speech**。只有真实 EEG 条件表现出稳定的内容恢复与条件依赖后，才设计 Imagined Speech 迁移协议。本版本不把感知语音结果当作想象语音效果。
+阶段一固定为 Perceived Speech。只有真实 EEG 条件表现出稳定的内容恢复与条件依赖后，才设计 Imagined Speech 迁移协议。本版本不把感知语音结果当作想象语音效果。
 
 ## 2. 数据固定为五个来源，按任务分阶段使用
 
-**Perceived 阶段使用四个英语 EEG 来源：ds004408、Brennan2019、Etard 英语条件、Kymata 英文部分；KaraOne 明确进入后续 Imagined / Articulated 迁移阶段。**新增数据不新增生成器路线。
+Perceived 阶段使用四个英语 EEG 来源：ds004408、Brennan2019、Etard 英语条件、Kymata 英文部分；KaraOne 明确进入后续 Imagined / Articulated 迁移阶段。新增数据不新增生成器路线。
 
 ### 2.1 来源、角色与准确口径
 
-| 数据集 | 固定来源 | 公开规模与材料 | 本项目用途 |
-|---|---|---|---|
-| ds004408 | OpenNeuro；沿用项目快照 `b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be` | 19 人、128 通道 BioSemi、512 Hz；20 段《The Old Man and the Sea》刺激；词和音素 TextGrid | 主训练、对齐和生理监督、跨被试重建 |
-| Brennan2019 | NeMAR `nm000180`；保留原始 Deep Blue 来源对应关系 | 公开版本 45 人；约 12.4 分钟《Alice in Wonderland》语音，分为 12 个刺激段；60 个头皮 EEG 通道，另有 VEOG 与 AUD；500 Hz | 四数据集联合训练；独立协议中整体留出，检验跨数据集迁移 |
-| Etard EEG | Zenodo 对齐 HDF5 版本，记录号 `7778289`；原始版本 `7086209` | 英语 session 18 人、64 通道；英语 clean、lb / mb / hb、fM / fW 条件；作者转换脚本记录 EEG 为 1000 Hz | 只用英语 clean 配对训练；英语 lb / mb / hb 用于额外噪声鲁棒性评估 |
-| Kymata Soto Language Dataset，英文部分 | 用户指定的 Scientific Data 论文；OSF `qdzgh` 下 `english-native-english-conversation/` | 20 名英语被试；70 通道 EEG 与 MEG 同时记录、1000 Hz；同一400秒英语对话重复呈现；已有词 / 音素时间标注 | 第四个 Perceived 来源，增加自然对话与电极布局；只用 EEG，重叠发声段按锁定标注 mask |
-| KaraOne / KARA ONE | University of Toronto 官方14个分被试归档 | 14人；64通道 EEG cap、1000 Hz；7个音节 / 音素提示和4个英语词；包含提示、想象、发声阶段 | 后续 Imagined / Articulated 迁移与音系验证；按真实状态分段，不能作为连续英语听觉材料混入 P1 |
 
-上述规模是发布规模，最终有效人数由固定 QC 决定。[ds004408 官方说明](https://raw.githubusercontent.com/OpenNeuroDatasets/ds004408/b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be/README)、[Brennan2019 数据仓库](https://github.com/nemarDatasets/nm000180)、[Etard 对齐版](https://zenodo.org/records/7778289)、[Etard 原始版](https://zenodo.org/records/7086209)、[Etard 英语 session 名单](https://zenodo.org/records/7778289/files/session_info.json?download=1)、[作者转换脚本](https://zenodo.org/records/7778289/files/align_data.py?download=1)。
+| 数据集                                 | 固定来源                                                                              | 公开规模与材料                                                                                                          | 本项目用途                                                                                  |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| ds004408                               | OpenNeuro；沿用项目快照`b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be`                     | 19 人、128 通道 BioSemi、512 Hz；20 段《The Old Man and the Sea》刺激；词和音素 TextGrid                                | 主训练、对齐和生理监督、跨被试重建                                                          |
+| Brennan2019                            | NeMAR`nm000180`；保留原始 Deep Blue 来源对应关系                                      | 公开版本 45 人；约 12.4 分钟《Alice in Wonderland》语音，分为 12 个刺激段；60 个头皮 EEG 通道，另有 VEOG 与 AUD；500 Hz | 四数据集联合训练；独立协议中整体留出，检验跨数据集迁移                                      |
+| Etard EEG                              | Zenodo 对齐 HDF5 版本，记录号`7778289`；原始版本 `7086209`                            | 英语 session 18 人、64 通道；英语 clean、lb / mb / hb、fM / fW 条件；作者转换脚本记录 EEG 为 1000 Hz                    | 只用英语 clean 配对训练；英语 lb / mb / hb 用于额外噪声鲁棒性评估                           |
+| Kymata Soto Language Dataset，英文部分 | 用户指定的 Scientific Data 论文；OSF`qdzgh` 下 `english-native-english-conversation/` | 20 名英语被试；70 通道 EEG 与 MEG 同时记录、1000 Hz；同一400秒英语对话重复呈现；已有词 / 音素时间标注                   | 第四个 Perceived 来源，增加自然对话与电极布局；只用 EEG，重叠发声段按锁定标注 mask          |
+| KaraOne / KARA ONE                     | University of Toronto 官方14个分被试归档                                              | 14人；64通道 EEG cap、1000 Hz；7个音节 / 音素提示和4个英语词；包含提示、想象、发声阶段                                  | 后续 Imagined / Articulated 迁移与音系验证；按真实状态分段，不能作为连续英语听觉材料混入 P1 |
+
+[ds004408 官方说明](https://raw.githubusercontent.com/OpenNeuroDatasets/ds004408/b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be/README)、[Brennan2019 数据仓库](https://github.com/nemarDatasets/nm000180)、[Etard 对齐版](https://zenodo.org/records/7778289)、[Etard 原始版](https://zenodo.org/records/7086209)、[Etard 英语 session 名单](https://zenodo.org/records/7778289/files/session_info.json?download=1)、[作者转换脚本](https://zenodo.org/records/7778289/files/align_data.py?download=1)。
 
 新增来源：[Kymata 原始论文](https://www.nature.com/articles/s41597-026-06579-8)、[Kymata 官方数据](https://osf.io/qdzgh/)、[KaraOne 官方说明与归档](https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html)。Kymata 的英文材料为多名说话人的连续对话，单声道文件不等于单说话人；加入主训练前需确定重叠发声 / 无法可靠对齐的 mask，保留正常轮流发言段。KaraOne 的有效头皮导联数按文件核对，不将64通道cap误写成所有文件固定64个有效 EEG 输入。
 
-**人数和重复呈现次数不能等同于独立语音增加。**Brennan 的45人重复听约12.4分钟材料；Kymata 英文也只有同一400秒对话。四个 Perceived 来源名义人数合计102，KaraOne 另14人，最终各阶段有效人数单独报告。Kymata 的 `sub-E3b` 是 E3 的第二会话，归入同一人，不能计为第21人或跨被试fold。主结果使用单次呈现的 EEG，同一内容各次重复在同一内容split内，统计以被试为单位。
-
-Etard v2 明确区分英语与 Dutch session。本轮排除 Dutch、Dutch 中嵌入的英语片段及双说话人 fM / fW；lb / mb / hb 按对齐版的 babble-noise 条件解释，不自行替换成一般的高斯噪声或统一 SNR。
+人数和重复呈现次数不能等同于独立语音增加.Brennan 的45人重复听约12.4分钟材料；Kymata 英文也只有同一400秒对话。四个 Perceived 来源名义人数合计102，KaraOne 另14人，最终各阶段有效人数单独报告。Kymata 的 `sub-E3b` 是 E3 的第二会话，归入同一人，不能计为第21人或跨被试fold。主结果使用单次呈现的 EEG，同一内容各次重复在同一内容split内，统计以被试为单位。
 
 ### 2.2 分批下载、配对审计与处理后保留
 
@@ -54,15 +46,15 @@ Etard v2 明确区分英语与 Dutch session。本轮排除 Dutch、Dutch 中嵌
 
 同步审计必须按 recording 完成：
 
-1. **ds004408：**官方说明明确声明 EEG 与刺激起点已对齐，可将零偏移作为有来源的初始值；仍须保存 run 与 WAV / TextGrid 的对应证据、持续时间核验和可用事件核验。不能仅在配置里写 `offset=0`、`drift=0` 就把逐 run 审计标成完成。
-2. **Brennan：**利用 AUD 与真实 WAV 做音频同步核验，并对照逐词 `events.tsv` 的 EEG 时间轴与 `stim_file`。该重发布版连续 `.vmrk` 不保留原分段触发，不能假设从 `.vmrk` 就能恢复全部起点。[官方说明](https://github.com/nemarDatasets/nm000180)
-3. **Etard：**使用作者已对齐的 HDF5，复核条件、part 与 WAV 对应；英语 lb / mb / hb 在语音前后各有一秒噪声，按发布说明剔除这两端，记录音频时间原点的相应平移。[对齐版说明](https://zenodo.org/records/7778289)
-4. **Kymata 英文：**限定OSF的 `english-native-english-conversation/`，只取 `sub-E*/meg/*_task-en_*` 的 FIF / events / channels / coordsystem及英语 audio / phoneme / word 标注。使用 `STI101` 的 audio repetition触发及发布的时间修正核验每个400秒区间；触发、EOG、ECG及MEG不进入编码器。处理时从混合 FIF 中选取EEG，并保存其坐标 / 时间映射。[英文文件大小与路径审计](dataset_storage_audit_2026-10-13.json)
-5. **KaraOne：**保存 `epoch_inds.mat`、`ID.txt` / `ID_p.txt` 的有效提示顺序与trial状态，对齐 CNT EEG 和对应发声 WAV；imagined区间不能与后续真实发声波形当作严格同步的 EEG–Audio 对。EEG-only任务不下载或不解包保留 Kinect 3D / animation 媒体。
+1. ds004408：官方说明明确声明 EEG 与刺激起点已对齐，可将零偏移作为有来源的初始值；仍须保存 run 与 WAV / TextGrid 的对应证据、持续时间核验和可用事件核验。不能仅在配置里写 `offset=0`、`drift=0` 就把逐 run 审计标成完成。
+2. Brennan：利用 AUD 与真实 WAV 做音频同步核验，并对照逐词 `events.tsv` 的 EEG 时间轴与 `stim_file`。该重发布版连续 `.vmrk` 不保留原分段触发，不能假设从 `.vmrk` 就能恢复全部起点。[官方说明](https://github.com/nemarDatasets/nm000180)
+3. Etard：使用作者已对齐的 HDF5，复核条件、part 与 WAV 对应；英语 lb / mb / hb 在语音前后各有一秒噪声，按发布说明剔除这两端，记录音频时间原点的相应平移。[对齐版说明](https://zenodo.org/records/7778289)
+4. Kymata 英文：限定OSF的 `english-native-english-conversation/`，只取 `sub-E*/meg/*_task-en_*` 的 FIF / events / channels / coordsystem及英语 audio / phoneme / word 标注。使用 `STI101` 的 audio repetition触发及发布的时间修正核验每个400秒区间；触发、EOG、ECG及MEG不进入编码器。处理时从混合 FIF 中选取EEG，并保存其坐标 / 时间映射。[英文文件大小与路径审计](dataset_storage_audit_2026-10-13.json)
+5. KaraOne：保存 `epoch_inds.mat`、`ID.txt` / `ID_p.txt` 的有效提示顺序与trial状态，对齐 CNT EEG 和对应发声 WAV；imagined区间不能与后续真实发声波形当作严格同步的 EEG–Audio 对。EEG-only任务不下载或不解包保留 Kinect 3D / animation 媒体。
 
 可测量的同步残差以 10 ms 为目标上限，异常记录隔离审计。只有来源声明而没有监测信号的记录标为 `source-aligned`，有独立测量证据的标为 `measured-aligned`；两者都保留证据等级。偏移与漂移只能由来源和同步信号确定，不能用测试集模型分数反推。
 
-**AUD、Sound、MIC、EOG、EMG 和 STIM 不进入 EEG Encoder。**先读通道类型再选头皮 EEG；监测音频进入编码器会形成直接音频泄漏。同步信号与事件只能用于配对 / QC。
+AUD、Sound、MIC、EOG、EMG 和 STIM 不进入 EEG Encoder。先读通道类型再选头皮 EEG；监测音频进入编码器会形成直接音频泄漏。同步信号与事件只能用于配对 / QC。
 
 单位修正按数据来源分别审计。现有 ds004408 的数值尺度修正及绝对 µV 解释限制沿用 [单位审计](dataset_unit_audit.json)；不得把其 `1e-6` 修正复制给 Brennan 或 Etard。
 
@@ -74,7 +66,7 @@ Etard v2 明确区分英语与 Dutch session。本轮排除 Dutch、Dutch 中嵌
 - 同一 clean 语音及其 noisy 版本共享 content ID；不同被试听同一材料也共享 ID。
 - 跨数据集的相同 passage 进入同一内容组，尤其核对英语有声书材料是否有重叠。
 - 自动相似度用于筛查，重复映射须保留原始证据；普通短语相同不直接把整个故事合并。
-- **Etard 是否跨条件重复使用相同语音，当前尚未下载核验。**训练前必须导出 clean ↔ lb / mb / hb 的对应表，而不是预先认定它们独立。
+- Etard 是否跨条件重复使用相同语音，当前尚未下载核验。训练前必须导出 clean ↔ lb / mb / hb 的对应表，而不是预先认定它们独立。
 - Kymata 英文同一时间片的全部 repetitions / E3第二会话共用内容ID；不能把另一重复的相同声音划到测试作为未见内容。
 - KaraOne 单独使用 prompt / trial / state 身份登记，重复提示和同一trial的子窗不跨split；不与连续语音的内容组混用。
 
@@ -82,42 +74,43 @@ Etard v2 明确区分英语与 Dutch session。本轮排除 Dutch、Dutch 中嵌
 
 ### 2.4 数据体积、磁盘预算与只保留处理后的数据
 
-以下统一采用十进制 **GB=10^9 bytes**。下载总量、处理时峰值、最终保留量是不同口径；未实际预处理的大小明确标为估算。
+以下统一采用十进制 GB=10^9 bytes。下载总量、处理时峰值、最终保留量是不同口径；未实际预处理的大小明确标为估算。
 
-| 来源 | 原始下载体积与证据 | 本次使用范围 | 最终processed数据预算 | 临时周转占用（另加5 GB余量） |
-|---|---|---|---|---|
-| ds004408 | **20.083 GB**；本地1946文件acquisition清单求和，EEG占19.436 GB | 19人、20个英语刺激 | **10–11 GB，估算** | 逐recording约1–2 GB额外占用，不同时保存完整原始与完整processed副本 |
-| Brennan2019 | **约3.8 GB**；NeMAR/EEGDash目录规模，非逐文件实测 | 45人、EEG / AUD同步与12个音频段 | **2–3 GB，估算** | 逐人约1–2 GB额外占用；原始AUD核验完成后只留同步记录 |
-| Etard | **约21.1 GB**发布包：eeg.zip约19.2 GB、audiobooks.zip约1.9 GB | 只留英语clean、lb / mb / hb的processed EEG / audio | **3–8 GB，估算** | 若必须下载整包，额外预留约25–30 GB；逐个HDF5成员处理，不完整解包全部语种 / 条件 |
-| Kymata 英文 | **117.767 GB**：已逐文件统计英语任务FIF及选定audio / sidecars；其中81个混合FIF为117.609 GB，最大单文件**1.616 GB** | 严格限定英文目录与task-en；只保留EEG | **5–6 GB，估算** | 按单个run下载→处理→删除，周转约3–4 GB；不将117.767 GB同时落盘 |
-| KaraOne | **24.824 GB**：官方14个tar.bz2的HEAD Content-Length求和；最大单包**2.406 GB**；官网概述约24 GB | 仅EEG、所需WAV、prompt / trial / state / electrode元数据 | **2–3 GB，估算** | 每次一个被试包，建议约4–8 GB；选择性解包CNT / 标签 / WAV，跳过Kinect大文件 |
+
+| 来源        | 原始下载体积与证据                                                                                         | 本次使用范围                                             | 最终processed数据预算 | 临时周转占用（另加5 GB余量）                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------- |
+| ds004408    | 20.083 GB；本地1946文件acquisition清单求和，EEG占19.436 GB                                                 | 19人、20个英语刺激                                       | 10–11 GB，估算       | 逐recording约1–2 GB额外占用，不同时保存完整原始与完整processed副本              |
+| Brennan2019 | 约3.8 GB；NeMAR/EEGDash目录规模，非逐文件实测                                                              | 45人、EEG / AUD同步与12个音频段                          | 2–3 GB，估算         | 逐人约1–2 GB额外占用；原始AUD核验完成后只留同步记录                             |
+| Etard       | 约21.1 GB发布包：eeg.zip约19.2 GB、audiobooks.zip约1.9 GB                                                  | 只留英语clean、lb / mb / hb的processed EEG / audio       | 3–8 GB，估算         | 若必须下载整包，额外预留约25–30 GB；逐个HDF5成员处理，不完整解包全部语种 / 条件 |
+| Kymata 英文 | 117.767 GB：已逐文件统计英语任务FIF及选定audio / sidecars；其中81个混合FIF为117.609 GB，最大单文件1.616 GB | 严格限定英文目录与task-en；只保留EEG                     | 5–6 GB，估算         | 按单个run下载→处理→删除，周转约3–4 GB；不将117.767 GB同时落盘                 |
+| KaraOne     | 24.824 GB：官方14个tar.bz2的HEAD Content-Length求和；最大单包2.406 GB；官网概述约24 GB                     | 仅EEG、所需WAV、prompt / trial / state / electrode元数据 | 2–3 GB，估算         | 每次一个被试包，建议约4–8 GB；选择性解包CNT / 标签 / WAV，跳过Kinect大文件      |
 
 证据：[本次存储审计清单](dataset_storage_audit_2026-10-13.json)、[Brennan目录体积](https://eegdash.org/api/dataset/eegdash.dataset.NM000180.html)、[Etard官方文件大小](https://zenodo.org/records/7778289)、[KaraOne官方分包](https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html)。Kymata体积来自OSF英文目录的公开文件元数据，不包括俄语、MRI、视觉帧、empty-room与纯MEG校准文件；它不是整个OSF项目的大小。
 
-**Kymata英文下载白名单已经核对：**根路径为 `english-native-english-conversation/`；公开目录包含 `sub-E1`–`sub-E20` 和 `sub-E3b`；保留所有英文task-en逻辑run所需FIF及小型sidecars、`stimuli/audio/` 的声音和文字标注。黑名单为 `russian-native-russian-conversation/`、`anat/`、`stimuli/visual/`、`task-emptyroom`、MEG校准文件。不使用“下载整个项目后删俄语”的方式。
+Kymata英文下载白名单已经核对：根路径为 `english-native-english-conversation/`；公开目录包含 `sub-E1`–`sub-E20` 和 `sub-E3b`；保留所有英文task-en逻辑run所需FIF及小型sidecars、`stimuli/audio/` 的声音和文字标注。黑名单为 `russian-native-russian-conversation/`、`anat/`、`stimuli/visual/`、`task-emptyroom`、MEG校准文件。不使用“下载整个项目后删俄语”的方式。
 
 FIF同时封装EEG与MEG，服务器文件层面不能靠选通道只下载EEG字节；必须临时读取所选英文FIF，提取EEG后删除源FIF。若某个逻辑run有split文件，先核对完整分片集合再处理，周转大小按该run所有分片求和。
 
 processed体积估算采用以下基准：保留200 Hz float32 EEG与64 Hz float32低频EEG，持续时间为T、有效通道为C时，数组上界约为 `T×C×(200+64)×4 bytes`，再加共享audio / 标签 / receipt。ds004408按原始EEG字节及264/512率比估出约10.02 GB；Kymata按发布时长与70通道估约4.9 GB，预留为5–6 GB。KaraOne的Imagined阶段无需保存听觉TRF目标，因此可只保留200 Hz基准EEG。QC、裁剪与无损压缩可减少体积，但不预先保证压缩比；Etard需处理首个英语被试后重新测算。
 
-**长期只保留这些处理后材料：**
+长期只保留这些处理后材料：
 
 - `data/processed/neurospeech/{dataset}/base/`：来源单位已校准、固定滤波 / 重采样后的连续EEG或有支持区的trial shards；物理单位保存，不按fold复制，也不提前混入测试统计。
 - 英语声音每个canonical内容只保留一份可用于目标和评分的24 kHz单声道无损processed音频；需要的clean / noise声音分别登记。16 kHz teacher输入按需重采样，不另存全套重复WAV。
 - 原始事件的必要小型副本、trial / state / split / 内容身份、通道 / 坐标 / mask、标注及质量、时间变换、源文件URL / revision / SHA256、预处理参数和processed SHA256。
-- 所有60秒校准块在原始输入仍存在时**单独在预算内处理**，只使用该60秒的滤波 / 上下文；保存专用processed calibration shards。不能在删除raw之后从借用了区间外信息的全run滤波结果切出60秒，声称满足校准预算。
+- 所有60秒校准块在原始输入仍存在时单独在预算内处理，只使用该60秒的滤波 / 上下文；保存专用processed calibration shards。不能在删除raw之后从借用了区间外信息的全run滤波结果切出60秒，声称满足校准预算。
 
-**执行清理顺序：**先冻结处理参数与内容 / 校准区间；逐个run或被试包下载并校验；在临时目录处理；重新打开输出核对形状、通道、时长、时间映射、有限值、同步 / QC、音频与标注对应；确认正式读取器能只依赖processed读取样本；原子发布processed与receipt后，立即删除该批压缩包、原始CNT / FIF / EEG / HDF5、无用媒体与临时中间数组，再继续下一批。失败时保留当前批源输入和错误记录，修复后才清理，不能留下空processed却删了唯一输入。
+执行清理顺序：先冻结处理参数与内容 / 校准区间；逐个run或被试包下载并校验；在临时目录处理；重新打开输出核对形状、通道、时长、时间映射、有限值、同步 / QC、音频与标注对应；确认正式读取器能只依赖processed读取样本；原子发布processed与receipt后，立即删除该批压缩包、原始CNT / FIF / EEG / HDF5、无用媒体与临时中间数组，再继续下一批。失败时保留当前批源输入和错误记录，修复后才清理，不能留下空processed却删了唯一输入。
 
 此处的核验只检查数据合同和预处理，不运行训练或打开模型的最终测试效果。小型源metadata保留属于可复现记录；大体积原始采样不永久留盘。以后改变滤波 / QC等源处理，需要按receipt重新下载对应源文件。
 
 现有已校验的ds004408原始文件可直接进入这一逐批流程，无需重新下载；在v2.1的processed读取合同和专用校准块核验完成后再逐批释放。当前v1依赖raw的命令必须先迁移，不能直接删掉raw后继续沿用旧入口。
 
-**缓存和模型也限制磁盘占用：**1–8 Hz听觉分支输入从processed基准信号按支持区在线派生，不再存第三套完整EEG；切窗只存索引，不复制重叠EEG窗；WavLM / Mel只按唯一内容与crop ID缓存，所有被试共享；P1/P2、fold和OOF共享只读processed基准，拟合统计与checkpoint分别隔离。REVE大token缓存采用上限LRU或不落盘，不生成18个完整数据副本。
+缓存和模型也限制磁盘占用：1–8 Hz听觉分支输入从processed基准信号按支持区在线派生，不再存第三套完整EEG；切窗只存索引，不复制重叠EEG窗；WavLM / Mel只按唯一内容与crop ID缓存，所有被试共享；P1/P2、fold和OOF共享只读processed基准，拟合统计与checkpoint分别隔离。REVE大token缓存采用上限LRU或不落盘，不生成18个完整数据副本。
 
 不确定性OOF仅保存每帧误差汇总、预测方差及样本ID，不保存全部768维预测副本；TRF covariance流式累计，Simulation残差block按需从processed神经目标与相应OOF前向模型计算，缓存设硬上限，不按fold / seed复制完整残差EEG。这些限制必须进入读取器与缓存实现，避免处理后数据变小而衍生缓存再次占满磁盘。
 
-五来源processed数据合计预算 **约22–31 GB**；Perceived四来源先占约20–28 GB，KaraOne到迁移阶段再下载。共享teacher缓存上限2–4 GB、公开权重约3–5 GB、主模型 / 当前resume checkpoint预算4–6 GB，试听与报告约1–2 GB，长期工作集计划约**32–48 GB**。这些模型 / 缓存数值是预算，需要首批实测更新。
+五来源processed数据合计预算 约22–31 GB；Perceived四来源先占约20–28 GB，KaraOne到迁移阶段再下载。共享teacher缓存上限2–4 GB、公开权重约3–5 GB、主模型 / 当前resume checkpoint预算4–6 GB，试听与报告约1–2 GB，长期工作集计划约32–48 GB。这些模型 / 缓存数值是预算，需要首批实测更新。
 
 按上述逐批模式，Kymata不会增加118 GB常驻占用。Etard整包路径仍可能把峰值推到约60–80 GB；若服务器支持可靠的ZIP Range读取，可只取目标成员降低峰值，否则必须预留整包空间，不能假称能按英语条件下载部分eeg.zip。每批下载前要求可用空间≥该批源包+所需解包成员+新processed输出+至少5 GB余量；不足则停止该批，不启动全量并发下载。目录清理日志记录实际释放量。
 
@@ -129,20 +122,21 @@ processed体积估算采用以下基准：保留200 Hz float32 EEG与64 Hz float
 
 ds004408、Brennan2019、Etard clean 和 Kymata English 联合训练，使用干净英语、单个说话人活跃的可对齐声音片段；Kymata允许正常轮流发言，可靠标注的重叠声音段排除主训练。四个来源采用固定内容划分和五个被试测试fold。
 
-**内容划分：**优先按完整刺激段分组，约 70% / 15% / 15% 分为 train / validation / test，每个来源至少保留一个验证和测试内容组。小规模来源按整数组调整并报告实际比例；不为了凑比例切成随机相邻窗口。ds004408 在跨来源去重不产生冲突时保留 audio01–14 / 15–17 / 18–20；Brennan 与 Etard 的具体 ID 在数据审计后以固定 seed=20261013 生成并冻结，本文件不冒充已检查过其全部文件。
+内容划分：优先按完整刺激段分组，约 70% / 15% / 15% 分为 train / validation / test，每个来源至少保留一个验证和测试内容组。小规模来源按整数组调整并报告实际比例；不为了凑比例切成随机相邻窗口。ds004408 在跨来源去重不产生冲突时保留 audio01–14 / 15–17 / 18–20；Brennan 与 Etard 的具体 ID 在数据审计后以固定 seed=20261013 生成并冻结，本文件不冒充已检查过其全部文件。
 
 Kymata仅有一段400秒声音，按canonical音频时间建立固定约60秒内容block，并在边界保留完整guard；全部被试 / repetitions / E3第二会话沿用同一block split。词、音素与speaker-overlap mask也在该时间轴登记，不能以不同重复run作为不同刺激。
 
 如果一个来源的 canonical 刺激过少，使用预先定义的连续内容 block，而不是随机切窗。block 边界两侧排除至少 10 秒；完整滤波、REVE 全窗口注意力、teacher 上下文和声学标注的支持区均须属于同一 block。报告此时评估的是同一故事中的未见片段。
 
-**被试划分：**ds004408的sub-001–003、Brennan的5人、Etard英语session的2人、Kymata英语的3人固定为开发验证人；后三组按真实名单与固定seed生成。Kymata将E3b合并至E3后再划分，同一人的全部会话 / runs / repetitions不可跨fold。其余人按来源均衡分为五组；当前fold排除开发人和测试人。
+被试划分：ds004408的sub-001–003、Brennan的5人、Etard英语session的2人、Kymata英语的3人固定为开发验证人；后三组按真实名单与固定seed生成。Kymata将E3b合并至E3后再划分，同一人的全部会话 / runs / repetitions不可跨fold。其余人按来源均衡分为五组；当前fold排除开发人和测试人。
 
-| 用途 | 被试 | 内容 |
-|---|---|---|
-| 正式拟合 | 当前 fold 训练人 | train 内容 |
-| checkpoint /超参数选择 | 固定开发人 | validation 内容 |
-| TRF 生理放行 | 当前 fold 训练人 | validation 内容；只评分 |
-| 最终主测试 | 当前 fold 测试人 | test 内容 |
+
+| 用途                   | 被试             | 内容                    |
+| ------------------------ | ------------------ | ------------------------- |
+| 正式拟合               | 当前 fold 训练人 | train 内容              |
+| checkpoint /超参数选择 | 固定开发人       | validation 内容         |
+| TRF 生理放行           | 当前 fold 训练人 | validation 内容；只评分 |
+| 最终主测试             | 当前 fold 测试人 | test 内容               |
 
 每名非开发被试只贡献一次自己的 held-out 结果。所有标准化、可靠度校准、TRF、残差模型、中心被试选择和模拟噪声统计仅来自当前 fold 的训练部分。
 
@@ -150,12 +144,12 @@ Kymata仅有一段400秒声音，按canonical音频时间建立固定约60秒内
 
 P2使用ds004408 + Etard clean + Kymata English训练，Brennan整体不参与开发。源侧训练 / 开发划分沿用固定内容规则；源侧全部非开发被试用于训练，不运行五个目标侧fold。KaraOne不进入此Perceived协议。
 
-**P2 必须从原始公开预训练权重重新建立独立流水线。**P1 已经训练过 Brennan 的 encoder、CFM、oracle、TRF、可靠度校准器和统计量都不能拿来初始化 P2。语音 oracle 也只用 P2 源侧训练音频；外部评估前不使用 Brennan 目标音频预训练生成器。
+P2 必须从原始公开预训练权重重新建立独立流水线。P1 已经训练过 Brennan 的 encoder、CFM、oracle、TRF、可靠度校准器和统计量都不能拿来初始化 P2。语音 oracle 也只用 P2 源侧训练音频；外部评估前不使用 Brennan 目标音频预训练生成器。
 
 外部测试包含两种预先声明的结果：
 
-- **Zero-shot：**全部通过 QC 的 Brennan 被试使用冻结源模型、源侧缩放统计和真实 montage。不能拟合 Brennan 全 session 的均值、方差、可靠度、TRF 或重新选择模型。
-- **60 秒监督校准：**每人只用预先指定的 60 秒连续 EEG 及对应已知语音更新小型 Adapter。全体目标被试的最终测试排除同一 calibration 内容池及其上下文 guard，使两种结果在相同测试内容上比较。校准池由元数据确定，不能按结果挑选。
+- Zero-shot：全部通过 QC 的 Brennan 被试使用冻结源模型、源侧缩放统计和真实 montage。不能拟合 Brennan 全 session 的均值、方差、可靠度、TRF 或重新选择模型。
+- 60 秒监督校准：每人只用预先指定的 60 秒连续 EEG 及对应已知语音更新小型 Adapter。全体目标被试的最终测试排除同一 calibration 内容池及其上下文 guard，使两种结果在相同测试内容上比较。校准池由元数据确定，不能按结果挑选。
 
 外部测试的所有阈值和 Adapter 设置在源侧开发集锁定。先完成 P2 源侧开发并锁定公共架构、损失和停止规则，再进行包含 Brennan 的 P1 开发；不能把在 P1 Brennan 上观察到的效果反过来用于选择 P2 配置。缺少完整 calibration block 的被试仍进入 zero-shot，few-shot 报告缺失。Brennan 只有一个故事的有限材料，外部成功支持一次独立实验室 / 语料迁移，不能等同于任意故事、语言或 narrator 泛化。
 
@@ -171,18 +165,19 @@ P2使用ds004408 + Etard clean + Kymata English训练，Brennan整体不参与�
 
 ## 4. 共同时间接口与预处理
 
-| 对象 | 固定起始设置 |
-|---|---|
-| EEG 主输入 | 来源单位审计；头皮 EEG；有效导联 CAR；0.5–40 Hz；重采样 200 Hz |
-| 听觉分支 | 从同一物理 EEG 提取 1–8 Hz，保留真实时间原点；重采样 200 Hz |
-| TRF / neural target | 主信号另作 15 Hz 低通，重采样 64 Hz |
-| EEG 布局 | 使用真实坐标或有来源的标准montage；Perceived来源保留C=128 / 60 / 64 / 70，具体有效导联按文件核对 |
-| 标准化 | 以来源平衡的训练 EEG 拟合共享缩放统计；跨布局使用共享标量尺度，不能需要新布局的测试通道统计 |
-| 核心声音窗口 | 4 秒；训练 stride=2 秒；验证 / 测试 stride=4 秒 |
-| EEG 上下文 | 音频核心 [a,a+4] 对应 EEG [a−1,a+5.5]，200 Hz 下为 1300 点 |
-| Audio teacher | 16 kHz，音频 crop [a−1,a+5]；保留核心内 WavLM 帧 |
-| 生成声音 | 24 kHz，Vocos 原生 100-bin log-Mel；固定 4 秒 |
-| 边界 | 默认 guard≥10 秒；实际 FIR / resampling 支持更长时扩大并重新记录 |
+
+| 对象                | 固定起始设置                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| EEG 主输入          | 来源单位审计；头皮 EEG；有效导联 CAR；0.5–40 Hz；重采样 200 Hz                                  |
+| 听觉分支            | 从同一物理 EEG 提取 1–8 Hz，保留真实时间原点；重采样 200 Hz                                     |
+| TRF / neural target | 主信号另作 15 Hz 低通，重采样 64 Hz                                                              |
+| EEG 布局            | 使用真实坐标或有来源的标准montage；Perceived来源保留C=128 / 60 / 64 / 70，具体有效导联按文件核对 |
+| 标准化              | 以来源平衡的训练 EEG 拟合共享缩放统计；跨布局使用共享标量尺度，不能需要新布局的测试通道统计      |
+| 核心声音窗口        | 4 秒；训练 stride=2 秒；验证 / 测试 stride=4 秒                                                  |
+| EEG 上下文          | 音频核心 [a,a+4] 对应 EEG [a−1,a+5.5]，200 Hz 下为 1300 点                                      |
+| Audio teacher       | 16 kHz，音频 crop [a−1,a+5]；保留核心内 WavLM 帧                                                |
+| 生成声音            | 24 kHz，Vocos 原生 100-bin log-Mel；固定 4 秒                                                    |
+| 边界                | 默认 guard≥10 秒；实际 FIR / resampling 支持更长时扩大并重新记录                                |
 
 使用离线 zero-phase FIR；每个 kernel、重采样器支持长度和边界扩展方式都写入 preprocessing manifest。按内容 block 独立处理，边界反射不能借用另一 split 的真实 EEG。REVE 可以看完整 6.5 秒 crop，因此即便存在正响应延迟窗口，这仍是离线重建，不能称实时。
 
@@ -230,15 +225,15 @@ REVE 的预训练与本项目的 speech-specific adaptation 分开命名。本�
 
 固定一个轻量分支，hidden=128，时间主干为 6 个双卷积残差 TCN block，kernel=3、dilation={1,2,4,8,16,32}，LayerNorm、dropout=0.1。
 
-- **低频语音追踪：**输入 1–8 Hz EEG，保留与包络 / 节奏相关的变化。
-- **响应延迟：**在音频时刻 t 查询 EEG 时刻 t+δ，δ={0,50,100,200,300,500} ms；权重为训练学习的 softmax。此窗口表示刺激后的响应，不能使用 t−δ 的相反符号。
-- **软空间先验：**用电极到 Fz、Cz、T7、T8、POz 模板位置的距离构造 attention bias；强度从小值初始化并可学习。全部有效头皮电极仍可被选择，不把头皮坐标当作精确听觉皮层定位。
+- 低频语音追踪：输入 1–8 Hz EEG，保留与包络 / 节奏相关的变化。
+- 响应延迟：在音频时刻 t 查询 EEG 时刻 t+δ，δ={0,50,100,200,300,500} ms；权重为训练学习的 softmax。此窗口表示刺激后的响应，不能使用 t−δ 的相反符号。
+- 软空间先验：用电极到 Fz、Cz、T7、T8、POz 模板位置的距离构造 attention bias；强度从小值初始化并可学习。全部有效头皮电极仍可被选择，不把头皮坐标当作精确听觉皮层定位。
 
 在 200 Hz 下该 TCN 理论感受野为 253 点，约 1.265 秒；右侧 1.5 秒上下文覆盖其半感受野和最大 0.5 秒响应延迟。额外融合层必须检查是否扩大所需上下文。
 
 ### 5.3 融合与时序 heads
 
-固定采用 **Auditory 时间查询 → REVE tokens 的 Cross-Attention，再作 gated residual fusion**，融合宽度 256、4 heads、2 层。它同时保留预训练上下文与局部听觉序列，不能简单平均两个分支。
+固定采用 Auditory 时间查询 → REVE tokens 的 Cross-Attention，再作 gated residual fusion，融合宽度 256、4 heads、2 层。它同时保留预训练上下文与局部听觉序列，不能简单平均两个分支。
 
 融合后输出：768 维 WavLM 均值序列、envelope / onset 节律序列、音素边界及音系特征概率、内容 / 节律两类可靠度。音素 head 只作辅助监督，生成时不输入目标音素串或真实时间戳。
 
@@ -248,9 +243,9 @@ REVE 的预训练与本项目的 speech-specific adaptation 分开命名。本�
 
 ### 6.1 固定语音目标
 
-1. **WavLM：**冻结 `microsoft/wavlm-base`，第 6 个 Transformer block 输出，768 维，16 kHz 音频。卷积 stride=320、感受野=400 样本，名义帧间隔 20 ms；帧中心由实际卷积参数计算。[官方配置](https://huggingface.co/microsoft/wavlm-base/blob/main/config.json)
-2. **Envelope / onset：**25 ms RMS、正部相邻帧差分，64 Hz。另提取 8 个固定频带的平滑 envelope，服务于 TRF；不另训练声学 teacher。
-3. **Phoneme-related targets：**优先使用 ds004408 的已有 TextGrid；Brennan / Etard 使用来源文本和同一冻结英语 forced aligner，统一映射为音素边界与固定音系特征表。
+1. WavLM：冻结 `microsoft/wavlm-base`，第 6 个 Transformer block 输出，768 维，16 kHz 音频。卷积 stride=320、感受野=400 样本，名义帧间隔 20 ms；帧中心由实际卷积参数计算。[官方配置](https://huggingface.co/microsoft/wavlm-base/blob/main/config.json)
+2. Envelope / onset：25 ms RMS、正部相邻帧差分，64 Hz。另提取 8 个固定频带的平滑 envelope，服务于 TRF；不另训练声学 teacher。
+3. Phoneme-related targets：优先使用 ds004408 的已有 TextGrid；Brennan / Etard 使用来源文本和同一冻结英语 forced aligner，统一映射为音素边界与固定音系特征表。
 
 新标注工具固定为 MFA `english_us_arpa` acoustic / dictionary 配对，版本与文件 checksum 写入 manifest；不同英语口音需质量检查。[MFA 官方用法](https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner/blob/main/docs/source/first_steps/index.rst)、[模型适用范围](https://huggingface.co/MontrealCorpusTools/english_us_arpa)
 
@@ -285,7 +280,7 @@ e_t=\operatorname{stopgrad}\left(\operatorname{mean}_d(\mu_{t,d}-H_{A,t,d})^2\ri
 
 节律分支使用同样定义。对 head 输入 stop-gradient，避免不确定性目标反向改写内容表示；方差限制在 [1e−4,10] 的标准化误差尺度内。
 
-**校准必须来自训练侧 out-of-fold：**在每个正式训练集合中做三折被试 / 内容分组；第 k 个副本排除对应被试组与内容组训练，在双重留出的训练侧交叉部分预测。用这些 OOF 误差拟合单调的 log-variance 校准关系，再为全训练 encoder 固定校准器。B1 / B2 训练同时使用 `L_align+0.05L_var`；OOF 副本重复同一 B1 / B2 日程，其任何标准化、TRF、中心选择与模拟统计也须排除对应留出组。OOF 副本是校准成本，必须计入计算预算。
+校准必须来自训练侧 out-of-fold：在每个正式训练集合中做三折被试 / 内容分组；第 k 个副本排除对应被试组与内容组训练，在双重留出的训练侧交叉部分预测。用这些 OOF 误差拟合单调的 log-variance 校准关系，再为全训练 encoder 固定校准器。B1 / B2 训练同时使用 `L_align+0.05L_var`；OOF 副本重复同一 B1 / B2 日程，其任何标准化、TRF、中心选择与模拟统计也须排除对应留出组。OOF 副本是校准成本，必须计入计算预算。
 
 CFM 的输入可靠度定义为 `R=1/(1+calibrated_variance)`，内容与节律分别 gating。训练 / 推理都使用同一 EEG 可计算的 head；不能训练时使用真实误差 gating、测试时换成预测误差。
 
@@ -319,7 +314,7 @@ CFM 固定 6 层 time-conditioned Transformer、hidden=256、4 heads、AdaLN 时
 
 正式采样固定 32 步 Heun，生成种子 0、1、2，在窗口内平均指标，不挑最好样本。初始状态是纯噪声，推理不需要真实 Mel、WavLM、文本、词数或真实句长。
 
-**固定音色条件的操作定义：**所有样本使用同一个可学习 style token，维度 128；只在对应协议的训练音频 oracle 阶段学习，之后冻结。该条件不依赖被试或测试声音。本轮仍以真实 native Mel 作为监督，因此固定 token 本身不能保证所有输出已转换为同一 narrator；把“条件固定”与“实际音色完全一致”分开报告。主要终点是内容，不把额外 speaker similarity 当成功门槛。
+固定音色条件的操作定义：所有样本使用同一个可学习 style token，维度 128；只在对应协议的训练音频 oracle 阶段学习，之后冻结。该条件不依赖被试或测试声音。本轮仍以真实 native Mel 作为监督，因此固定 token 本身不能保证所有输出已转换为同一 narrator；把“条件固定”与“实际音色完全一致”分开报告。主要终点是内容，不把额外 speaker similarity 当成功门槛。
 
 可借鉴 NeuroSonic 的 time-conditioned generator / ODE 设计，其官方代码与 checkpoint 已发布；预训练模型的特征接口、训练来源与本项目不同，不能未经兼容性 / 重叠审计就直接当作本轮 oracle。主实验统一使用本协议训练音频训练的 oracle 初始化。[MICCAI 论文](https://papers.miccai.org/miccai-2026/0711-Paper4295.html)、[作者代码](https://github.com/Y-Research-SBU/NeuroSonic)、[公开 checkpoint](https://huggingface.co/Y-Research-Group/NeuroSonic)
 
@@ -378,7 +373,7 @@ E_{\mathrm{sim}}=F_s(\phi(A))+\epsilon_s.
 
 模拟器只使用当前训练人、训练音频、训练 TRF 和 cross-fitted 残差。残差按连续 block 重采样，保留时间 / 空间相关，不能替换成任意白噪声；扰动范围由训练人的增益、延迟、空间混合和已观察伪影统计限定。保存生成种子、原始来源和模拟参数。
 
-采用真实样本 80%、模拟样本 20% 的辅助混合，simulation loss 起始权重 0.1。**模拟样本只监督节律 head 与节律表示的一致性，不参与 WavLM 内容回归、音素损失或真实 EEG–Audio 对比项。**仅把低频 TRF 合成信号与某段音频绑定，再要求其恢复完整 WavLM，会把人为的训练关联误当成真实神经语义。
+采用真实样本 80%、模拟样本 20% 的辅助混合，simulation loss 起始权重 0.1。模拟样本只监督节律 head 与节律表示的一致性，不参与 WavLM 内容回归、音素损失或真实 EEG–Audio 对比项。仅把低频 TRF 合成信号与某段音频绑定，再要求其恢复完整 WavLM，会把人为的训练关联误当成真实神经语义。
 
 真实数据承担主要内容训练；模拟数据不得来自被留出的内容，即使音频本身公开也不行。不能模拟测试人的个体 TRF。对其效果用“真实训练”和“真实 + 模拟训练”在未见真实被试上的配对消融判断。
 
@@ -388,11 +383,11 @@ Simulation 的保留规则固定为：三个训练种子的真实开发集、来
 
 跨被试训练直接作用于融合后的共享 EEG 表示。SAM-Net 的 C-SA 提供方法动机，但其原始任务为 EEG-to-Video；本项目下面的语音训练日程是明确的改编，不声称已经原样复现或验证。[CVPR 原论文](https://openaccess.thecvf.com/content/CVPR2026/html/Han_Cross-Subject_EEG-to-Video_Reconstruction_and_Beyond_CVPR_2026_paper.html)
 
-1. **先稳定内容表示：**所有训练人联合完成真实数据 alignment warmup，不加入 GRL。
-2. **加入 subject adversarial head：**对融合序列作 mask-aware 时间汇总后预测训练人 ID；每个来源内部有一个 classifier，经 GRL 降低身份信息。不能把来源与 subject 一一对应的分类器当成纯 subject 去除。
-3. **确定中心：**在同一来源、相同训练刺激 / 时间 anchors 上计算各训练人的表示距离，选择 medoid。不能用不同故事平均表示相似度排序，更不能使用测试人选中心。
-4. **渐进组织采样：**按照到中心的距离，把中心附近25%→50%→100%训练人作为主采样池；每阶段保留20%全训练人replay，P1四来源平衡，P2仅源侧三来源平衡。中心不是唯一训练对象。
-5. **GRL 日程：**在 LoRA adaptation 的前 10k 更新后启用，随后 10k 内从 0 升至 0.05。若开发 WavLM 误差连续两次验证相对启用前恶化>10%，仅允许将上限减半一次至0.025；再次触发则停止GRL并记录失败。此规则在源侧预先冻结，不能在测试后调整。
+1. 先稳定内容表示：所有训练人联合完成真实数据 alignment warmup，不加入 GRL。
+2. 加入 subject adversarial head：对融合序列作 mask-aware 时间汇总后预测训练人 ID；每个来源内部有一个 classifier，经 GRL 降低身份信息。不能把来源与 subject 一一对应的分类器当成纯 subject 去除。
+3. 确定中心：在同一来源、相同训练刺激 / 时间 anchors 上计算各训练人的表示距离，选择 medoid。不能用不同故事平均表示相似度排序，更不能使用测试人选中心。
+4. 渐进组织采样：按照到中心的距离，把中心附近25%→50%→100%训练人作为主采样池；每阶段保留20%全训练人replay，P1四来源平衡，P2仅源侧三来源平衡。中心不是唯一训练对象。
+5. GRL 日程：在 LoRA adaptation 的前 10k 更新后启用，随后 10k 内从 0 升至 0.05。若开发 WavLM 误差连续两次验证相对启用前恶化>10%，仅允许将上限减半一次至0.025；再次触发则停止GRL并记录失败。此规则在源侧预先冻结，不能在测试后调整。
 
 每个 batch 先平衡来源，再平衡真实被试与内容；避免 Brennan 的人数优势淹没其他来源。adversarial loss 只用于真实样本；Simulation 没有可作为真实身份标签的新被试。
 
@@ -404,17 +399,18 @@ Zero-shot 使用共享模型。Few-shot 仅更新融合表示后、任务 heads 
 
 训练种子固定 {11,22,33}；先以seed11完成P2源侧开发、锁定公共架构和训练规则，再完成P1/F0/11开发并冻结各协议的变体；通过后扩展矩阵。不从Brennan外部结果或P1中Brennan的效果选择P2配置。
 
-| 阶段 | 做什么 | 冻结 / 更新边界 | 起始预算和产物 |
-|---|---|---|---|
-| A0 | 四个Perceived来源的元数据 / 内容登记与split，随后逐run处理；KaraOne登记为后续来源 | 不训练模型；发布processed后清理对应raw | 大小 / 同步 / 单位receipts、content registry、有效时长、split v2.1、processed-only读取合同 |
-| A1 | native Mel→Vocos copy；真 WavLM + 节律→CFM oracle | audio teachers / Vocos 冻结；只训 CFM / style token | 每协议 / seed 上限 20k updates，batch=32，lr=2e−4；copy 与 oracle 音频 / WER |
-| A2 | TRF 嵌套 cross-fitting 与未见内容验证 | train 人与 train 内容拟合 | P_s、Σ_s、覆盖率、放行 gate |
-| B1 | 冻结 REVE，训练 Auditory Branch / fusion / temporal heads | REVE 冻结 | 10k updates，batch=32，lr=3e−4；时序对齐基础 |
-| B2 | speech LoRA adaptation，随后 GRL / curriculum / Simulation | 仅 LoRA + 新模块更新 | 30k updates，LoRA lr=1e−4，新模块 lr=3e−4；10k稳定后加入辅助机制 |
-| B3 | 三折训练侧 OOF 与可靠度校准 | 每副本排除指定训练组；不接触正式验证 / 测试 | OOF residuals、校准器、误差预测诊断；另计训练成本 |
-| C1 | 预测条件 CFM，从本协议同种子 oracle 初始化 | encoder / heads / 校准器全程冻结 | 30k updates，CFM lr=1e−4，有效 batch=32 |
-| C2 | 同一30k内，自第5k起完整系统触发NC | 普通FM和NC都只更新CFM | S2为 `L_FM`；S3另加触发式 `λ_NC L_NC` |
-| D | 全矩阵冻结，主测试 / 外部 / noise / 60s | 主测试不更新；few-shot只更新Adapter | 全部样本指标、声音、统计表、负结果 |
+
+| 阶段 | 做什么                                                                            | 冻结 / 更新边界                                     | 起始预算和产物                                                                             |
+| ------ | ----------------------------------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| A0   | 四个Perceived来源的元数据 / 内容登记与split，随后逐run处理；KaraOne登记为后续来源 | 不训练模型；发布processed后清理对应raw              | 大小 / 同步 / 单位receipts、content registry、有效时长、split v2.1、processed-only读取合同 |
+| A1   | native Mel→Vocos copy；真 WavLM + 节律→CFM oracle                               | audio teachers / Vocos 冻结；只训 CFM / style token | 每协议 / seed 上限 20k updates，batch=32，lr=2e−4；copy 与 oracle 音频 / WER              |
+| A2   | TRF 嵌套 cross-fitting 与未见内容验证                                             | train 人与 train 内容拟合                           | P_s、Σ_s、覆盖率、放行 gate                                                               |
+| B1   | 冻结 REVE，训练 Auditory Branch / fusion / temporal heads                         | REVE 冻结                                           | 10k updates，batch=32，lr=3e−4；时序对齐基础                                              |
+| B2   | speech LoRA adaptation，随后 GRL / curriculum / Simulation                        | 仅 LoRA + 新模块更新                                | 30k updates，LoRA lr=1e−4，新模块 lr=3e−4；10k稳定后加入辅助机制                         |
+| B3   | 三折训练侧 OOF 与可靠度校准                                                       | 每副本排除指定训练组；不接触正式验证 / 测试         | OOF residuals、校准器、误差预测诊断；另计训练成本                                          |
+| C1   | 预测条件 CFM，从本协议同种子 oracle 初始化                                        | encoder / heads / 校准器全程冻结                    | 30k updates，CFM lr=1e−4，有效 batch=32                                                   |
+| C2   | 同一30k内，自第5k起完整系统触发NC                                                 | 普通FM和NC都只更新CFM                               | S2为`L_FM`；S3另加触发式 `λ_NC L_NC`                                                      |
+| D    | 全矩阵冻结，主测试 / 外部 / noise / 60s                                           | 主测试不更新；few-shot只更新Adapter                 | 全部样本指标、声音、统计表、负结果                                                         |
 
 C1 / C2 是同一段 30k 更新，不累加成 60k。所有 AdamW weight_decay=0.01、gradient clip=1、1k warmup 后 cosine decay；普通网络 BF16，TRF / φ / covariance / neural loss FP32。microbatch 起始=2，梯度累积保持有效 batch；实际 GPU 用量由开发运行测量。
 
@@ -422,11 +418,11 @@ OOF对18个正式S2/S3 encoder（5个P1 fold + 1个P2协议，各3seed）最多�
 
 开始实验前冻结以下门槛：
 
-- **copy：**相同 ASR 设置下，验证 WER 相对原声音恶化≤5pp，长度误差≤1 Mel hop。
-- **oracle：**每个来源验证 WER≤40%，相对该来源 copy 恶化≤15pp；某来源失败先修复语音链路，不能让其他来源平均分掩盖。
-- **encoder：**各来源正确局部条件对齐优于≥10秒 wrong-time，按被试的配对优势 CI 下界>0；同时检查节律 / phoneme / reliability，分项失败单独报告。
-- **基础生成：**开发正确 EEG WER 低于 wrong-time 和 null，且多数开发被试同向；否则停止正式生成扩展并审计 conditioning。
-- **TRF：**按第8节门槛放行；只允许已验证来源 / 被试触发 NC。
+- copy：相同 ASR 设置下，验证 WER 相对原声音恶化≤5pp，长度误差≤1 Mel hop。
+- oracle：每个来源验证 WER≤40%，相对该来源 copy 恶化≤15pp；某来源失败先修复语音链路，不能让其他来源平均分掩盖。
+- encoder：各来源正确局部条件对齐优于≥10秒 wrong-time，按被试的配对优势 CI 下界>0；同时检查节律 / phoneme / reliability，分项失败单独报告。
+- 基础生成：开发正确 EEG WER 低于 wrong-time 和 null，且多数开发被试同向；否则停止正式生成扩展并审计 conditioning。
+- TRF：按第8节门槛放行；只允许已验证来源 / 被试触发 NC。
 
 开发人每来源只有2–5名，上述CI仅用于开发决策，不能代替正式被试泛化证据。
 
@@ -438,27 +434,29 @@ Neural / Simulation / GRL 的开发停用规则在测试前写入 model variant 
 
 ### 12.1 只保留四个主系统
 
-| 系统 | EEG 条件 | 训练支持 | 生成 |
-|---|---|---|---|
-| S0：Small Temporal | 小型 TCN，预测 WavLM 内容 | feature + local contrast，真实数据 | 同一 CFM，节律置空 / 中性 gating |
-| S1：Direct REVE | 冻结 REVE + 同一宽度时序读出 | feature + local contrast，真实数据 | 同一 CFM，节律置空 / 中性 gating |
-| S2：NeuroSpeech Alignment | REVE LoRA + Auditory Branch + multilevel alignment + calibrated reliability | 固定 GRL / curriculum，按开发规则保留 Simulation | 同一 CFM，无 NC |
-| S3：NeuroSpeech Full | 与 S2 同一 encoder 初始化和条件 | 与 S2 相同 | 同一 CFM + 已验证 NC |
 
-主要机制比较是 **S2 与 S3**，其数据、encoder 初始化、oracle、生成器、种子、普通更新数完全一致。S3 相对 S1 / S0 检验整个适配方案的实用价值，不能仅凭这个组合差异把贡献归因于某一组件。
+| 系统                      | EEG 条件                                                                    | 训练支持                                         | 生成                             |
+| --------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------- |
+| S0：Small Temporal        | 小型 TCN，预测 WavLM 内容                                                   | feature + local contrast，真实数据               | 同一 CFM，节律置空 / 中性 gating |
+| S1：Direct REVE           | 冻结 REVE + 同一宽度时序读出                                                | feature + local contrast，真实数据               | 同一 CFM，节律置空 / 中性 gating |
+| S2：NeuroSpeech Alignment | REVE LoRA + Auditory Branch + multilevel alignment + calibrated reliability | 固定 GRL / curriculum，按开发规则保留 Simulation | 同一 CFM，无 NC                  |
+| S3：NeuroSpeech Full      | 与 S2 同一 encoder 初始化和条件                                             | 与 S2 相同                                       | 同一 CFM + 已验证 NC             |
 
-P1：4系统×5fold×3seed=60次CFM训练；P2：4系统×3seed=12次，共 **72次主训练**。新增Kymata扩大同一训练集合，保持系统 / fold数量；KaraOne迁移到后续阶段单列预算。每协议 / seed共享一个oracle，共6个；S2 / S3共享B1–B3 encoder与校准器。满足冻结设置的开发运行可以复用。
+主要机制比较是 S2 与 S3，其数据、encoder 初始化、oracle、生成器、种子、普通更新数完全一致。S3 相对 S1 / S0 检验整个适配方案的实用价值，不能仅凭这个组合差异把贡献归因于某一组件。
+
+P1：4系统×5fold×3seed=60次CFM训练；P2：4系统×3seed=12次，共 72次主训练。新增Kymata扩大同一训练集合，保持系统 / fold数量；KaraOne迁移到后续阶段单列预算。每协议 / seed共享一个oracle，共6个；S2 / S3共享B1–B3 encoder与校准器。满足冻结设置的开发运行可以复用。
 
 ### 12.2 六个定点消融，不做组合网格
 
-| 消融 | 比较方式 | 回答的问题 |
-|---|---|---|
-| A1：去 LoRA | S2 encoder 只冻结 REVE，新模块同预算 | speech-specific backbone adaptation 是否有用 |
-| A2：去 Auditory Branch | REVE LoRA保留，时序fusion用同宽读出；其他监督保留 | 显式听觉时序 / 空间先验是否有额外信息 |
-| A3：去 phoneme supervision | 只令 phoneme权重为0 | 音素相关辅助目标是否改善内容线索 |
-| A4：中性 reliability gating | 同一完整条件，移除可靠度调节 | 可校准的不确定性是否帮助生成 |
-| A5：真实 vs 真实+Simulation | 其他训练机制相同 | 模拟是否提升未见真实EEG鲁棒性 |
-| A6：curriculum消融 | uniform+无GRL、uniform+GRL、progressive+GRL | 分离对抗共享表示和中心渐进采样的贡献 |
+
+| 消融                        | 比较方式                                          | 回答的问题                                   |
+| ----------------------------- | --------------------------------------------------- | ---------------------------------------------- |
+| A1：去 LoRA                 | S2 encoder 只冻结 REVE，新模块同预算              | speech-specific backbone adaptation 是否有用 |
+| A2：去 Auditory Branch      | REVE LoRA保留，时序fusion用同宽读出；其他监督保留 | 显式听觉时序 / 空间先验是否有额外信息        |
+| A3：去 phoneme supervision  | 只令 phoneme权重为0                               | 音素相关辅助目标是否改善内容线索             |
+| A4：中性 reliability gating | 同一完整条件，移除可靠度调节                      | 可校准的不确定性是否帮助生成                 |
+| A5：真实 vs 真实+Simulation | 其他训练机制相同                                  | 模拟是否提升未见真实EEG鲁棒性                |
+| A6：curriculum消融          | uniform+无GRL、uniform+GRL、progressive+GRL       | 分离对抗共享表示和中心渐进采样的贡献         |
 
 A1 / A2 / A3 / A5 / A6 首先只做 encoder-level 对齐评估，使用 P1/F0 和 P2源侧开发、三个种子。A4 的生成验证、A6 的 uniform+GRL 与完整系统生成验证各增加2协议×3seed=6次，即初始额外12次 CFM；同一encoder已有结果直接复用。只有预先声明的编码器消融发现明确机制矛盾时，才申请扩大对应生成验证范围。
 
@@ -472,7 +470,7 @@ wrong-time 对应表在训练前按样本ID确定。试听预先固定样本，�
 
 ## 13. 终点、统计与论文结论
 
-**P1 唯一主要终点：S2 WER−S3 WER。**先在每被试内汇总窗口词错误率并平均生成样本，再平均三个训练seed，按来源分别作被试宏平均，最后四来源等权。固定冻结Whisper small.en，自由greedy ASR；temperature=0、不使用目标prompt或前文条件；统一英语规范化。WER允许超过100%，不能截断成“准确率”。
+P1 唯一主要终点：S2 WER−S3 WER。先在每被试内汇总窗口词错误率并平均生成样本，再平均三个训练seed，按来源分别作被试宏平均，最后四来源等权。固定冻结Whisper small.en，自由greedy ASR；temperature=0、不使用目标prompt或前文条件；统一英语规范化。WER允许超过100%，不能截断成“准确率”。
 
 每个被试 / 训练seed / 生成seed的WER为全部窗口的总word errors除以总reference words，再对seed平均。比较系统使用相同有效窗口与reference；音素边界F1固定匹配容差为±50ms，不能按测试结果改变容差。
 
@@ -492,7 +490,7 @@ wrong-time 对应表在训练前按样本ID确定。试听预先固定样本，�
 
 启动条件：语音oracle通过；P1主要内容与条件对照有支持；P2至少显示正确EEG条件优于错配 / null，且结果不是仅由监督校准得到；Simulation / reliability / TRF机制有完整可审计记录。
 
-**迁移数据已固定为KaraOne。**达到上述门槛后再下载其14个分被试归档；届时锁定具体Imagined协议与预处理配置，复用通过Perceived验证的语音生成器与基础EEG表示，再适配任务时间接口。它已进入整体数据计划，下载与训练阶段安排在Perceived验证之后。
+迁移数据已固定为KaraOne。达到上述门槛后再下载其14个分被试归档；届时锁定具体Imagined协议与预处理配置，复用通过Perceived验证的语音生成器与基础EEG表示，再适配任务时间接口。它已进入整体数据计划，下载与训练阶段安排在Perceived验证之后。
 
 KaraOne的7个音节 / 音素与4个词作为有限提示词汇；保留stimulus、imagined、articulated的明确状态与原始trial ID。主要迁移验证先报告音系特征与11类prompt的balanced accuracy / macro-F1、被试泛化，以及固定词汇下的生成诊断。各重复trial的全部子窗共用split；模型测试时不接收提示文字、真实发声声音或Kinect信息作为输入。
 
@@ -504,17 +502,18 @@ KaraOne按被试建立固定开发 / 测试组，zero-shot与监督校准分开�
 
 ## 15. 当前项目到v2.1的实施清单
 
-| 现有组件 | v2.1需要的修改 | 完成标志 |
-|---|---|---|
+
+| 现有组件                        | v2.1需要的修改                                                                           | 完成标志                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
 | ds004408 acquisition / 单位审计 | 新增Brennan / Etard / Kymata-English reader，登记KaraOne迁移reader；保持原始checksum证据 | 四个Perceived来源manifest；KaraOne阶段 / 体积已固定 |
-| 全量raw保留 | 改为下载白名单、逐批处理、processed合同核验、原始包清理；保存60秒专用calibration shards | raw临时目录清空、读取器不依赖raw、释放量可审计 |
-| 128通道 / 128Hz数据接口 | 200Hz、真实可变montage、AUD排除、双协议split、共享训练缩放 | 时间 / 布局 / split合同通过 |
-| TCN encoder | 保留S0；新增REVE LoRA、Auditory Branch、时序fusion、phoneme heads | 明确真实token时间轴和有效mask |
-| teacher缓存 | 增加multiband / phoneme，P1/P2严格分离 | 独立训练统计及标注质量 |
-| CFM内容条件 | 内容 / 节律 / reliability独立注入，固定style条件 | EEG-only完整轨迹 |
-| TRF | mTRFpy嵌套crossfit、8-band前端、P_s与残差covariance | 每来源放行与梯度数值一致 |
-| 新训练支持 | OOF校准、TRF Simulation、GRL / curriculum | 来源追溯、固定消融 |
-| adapter / evaluation | 256维Adapter、独立P2、noise配对、四主系统统计 | 冻结后完整评估记录 |
+| 全量raw保留                     | 改为下载白名单、逐批处理、processed合同核验、原始包清理；保存60秒专用calibration shards  | raw临时目录清空、读取器不依赖raw、释放量可审计      |
+| 128通道 / 128Hz数据接口         | 200Hz、真实可变montage、AUD排除、双协议split、共享训练缩放                               | 时间 / 布局 / split合同通过                         |
+| TCN encoder                     | 保留S0；新增REVE LoRA、Auditory Branch、时序fusion、phoneme heads                        | 明确真实token时间轴和有效mask                       |
+| teacher缓存                     | 增加multiband / phoneme，P1/P2严格分离                                                   | 独立训练统计及标注质量                              |
+| CFM内容条件                     | 内容 / 节律 / reliability独立注入，固定style条件                                         | EEG-only完整轨迹                                    |
+| TRF                             | mTRFpy嵌套crossfit、8-band前端、P_s与残差covariance                                      | 每来源放行与梯度数值一致                            |
+| 新训练支持                      | OOF校准、TRF Simulation、GRL / curriculum                                                | 来源追溯、固定消融                                  |
+| adapter / evaluation            | 256维Adapter、独立P2、noise配对、四主系统统计                                            | 冻结后完整评估记录                                  |
 
 建议物理处理基准放在 `data/processed/neurospeech/{dataset}/`，只读共享；原始输入仅在 `data/staging/neurospeech/` 周转。新协议配置仍用 `configs/neurospeech_v2/`，统计、TRF / OOF / checkpoint / protocol lock放在 `artifacts/neurospeech_v2/{P1,P2}/`，teacher缓存按内容 / 权重 / crop身份共享。KaraOne后续用独立Imagined命名空间。正式读取器只使用processed及receipts，不依赖已删除的raw路径。新命令在实现后再写入运行说明，本阶段表不代表它们现在存在。
 

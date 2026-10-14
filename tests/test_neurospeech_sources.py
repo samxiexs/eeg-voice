@@ -107,3 +107,33 @@ def test_stimulus_onsets_are_found_on_the_monitor_when_the_trigger_is_missing():
         def get_data(self,picks):return monitor[None]
     found=kymata.monitor_onsets(Raw(),['MISC006'],kymata.envelope(audio))
     assert len(found)==2 and abs(found[0]-5000)<=5 and abs(found[1]-(5000+len(audio)+len(gap)))<=5
+
+
+def imagined_rows():
+    from eegspeech.neurospeech.imagined import PROMPTS
+    return [{'subject':f'MM{s:02d}','trial':t,'prompt':PROMPTS[t%11],'id':f'karaone:MM{s:02d}:{t:04d}','rest_path':None} for s in range(14) for t in range(22)]
+
+
+def test_imagined_transfer_starts_as_the_listened_model_and_has_no_class_output():
+    import torch
+    from eegspeech.neurospeech.imagined import Retimer,transfer_loss
+    hidden=torch.randn(2,100,256);retimer=Retimer()
+    assert torch.equal(retimer(hidden),hidden)
+    output={'teacher':torch.randn(2,100,768,requires_grad=True),'phi':torch.randn(2,100,2)};batch={'teacher':torch.randn(2,100,768),'phi':torch.randn(2,100,2),'frame_mask':torch.ones(2,100,dtype=torch.bool)}
+    loss=transfer_loss(output,batch);loss.backward()
+    assert loss.ndim==0 and torch.isfinite(loss) and output['teacher'].grad.abs().sum()>0
+
+
+def test_imagined_splits_hold_out_people_or_a_whole_prompt():
+    from eegspeech.neurospeech.imagined import split_rows,wrong_prompt
+    rows=imagined_rows();people=lambda part:{r['subject'] for r in part}
+    tested=set()
+    for fold in range(4):
+        s=split_rows(rows,'subject',fold)
+        assert len(people(s['validation']))==2 and len(people(s['test']))==3 and not people(s['train'])&(people(s['test'])|people(s['validation']))
+        tested|=people(s['test'])
+    assert len(tested)==12
+    s=split_rows(rows,'prompt','pat')
+    assert {r['prompt'] for r in s['test']}=={'pat'} and 'pat' not in {r['prompt'] for r in s['train']+s['validation']}
+    other=wrong_prompt(rows)
+    assert all(rows[j]['subject']==rows[i]['subject'] and rows[j]['prompt']!=rows[i]['prompt'] for i,j in other.items()) and len(other)==len(rows)

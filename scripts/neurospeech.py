@@ -25,6 +25,10 @@ def main():
     for name in ['copy-gate','oracle','trf','encoder','reliability','flow','evaluate']:
         cmd=sub.add_parser(name);cmd.add_argument('--protocol',choices=['P1','P2'],default='P1');cmd.add_argument('--fold');cmd.add_argument('--seed',type=int,default=11);cmd.add_argument('--system',choices=['S0','S1','S2','S3'],default='S2');cmd.add_argument('--device',default='auto');cmd.add_argument('--resume',action='store_true')
     cmd.add_argument('--mode',choices=['zero-shot','few-shot','noise'],default='zero-shot');cmd.add_argument('--split',choices=['test','validation'],default='test')
+    for name in ['imagined-transfer','imagined-evaluate']:
+        im=sub.add_parser(name);im.add_argument('--protocol',choices=['P1','P2'],default='P1');im.add_argument('--fold');im.add_argument('--seed',type=int,default=11)
+        im.add_argument('--system',choices=['S0','S1','S2','S3'],default='S2');im.add_argument('--device',default='auto')
+        im.add_argument('--split',choices=['subject','prompt'],default='subject');im.add_argument('--held',default='0');im.add_argument('--zero-shot',action='store_true')
     report=sub.add_parser('report');report.add_argument('--protocol',default='P1')
     a=p.parse_args()
     from eegspeech.neurospeech.config import Config
@@ -76,6 +80,13 @@ def main():
     if a.command=='report':
         from eegspeech.neurospeech.reporting import report
         print(report(cfg,a.protocol));return
+    if a.command in ('imagined-transfer','imagined-evaluate'):
+        from eegspeech.utils import device_name
+        from eegspeech.neurospeech import imagined
+        held=int(a.held) if a.split=='subject' else a.held;fold=a.fold or ('external' if a.protocol=='P2' else 'F0');device=device_name(a.device)
+        if a.command=='imagined-transfer':result=imagined.train_transfer(cfg,a.protocol,fold,a.seed,a.system,a.split,held,device)
+        else:result=imagined.evaluate_transfer(cfg,a.protocol,fold,a.seed,a.system,a.split,held,not a.zero_shot,device)
+        print(json.dumps(result,indent=2));return
     from eegspeech.utils import device_name
     from eegspeech.neurospeech import training
     device=device_name(a.device);fold=a.fold or ('external' if a.protocol=='P2' else 'F0')

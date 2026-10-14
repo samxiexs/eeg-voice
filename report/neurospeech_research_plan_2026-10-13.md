@@ -4,7 +4,7 @@
 
 Provisional working title for the research; not the final paper title. Date: 2026-10-13; version: `neurospeech_plan_v2.1`.
 
-> Translator's note: this is the English translation of the plan. The Chinese original is kept unchanged as [07_neurospeech_research_plan_2026-10-13.zh.md](07_neurospeech_research_plan_2026-10-13.zh.md). Status statements ("not downloaded", "not yet implemented") describe the moment the plan was written, not the current state of the repository.
+> Translator's note: this is the English translation of the plan. The Chinese original is kept unchanged as [neurospeech_research_plan_2026-10-13.zh.md](neurospeech_research_plan_2026-10-13.zh.md). Status statements ("not downloaded", "not yet implemented") describe the moment the plan was written, not the current state of the repository.
 
 ## Material Passport
 

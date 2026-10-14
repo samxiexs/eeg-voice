@@ -4,7 +4,7 @@
 
 | 文件 | 用途 |
 |---|---|
-| [NeuroSpeech 研究方案 v2.1](07_neurospeech_research_plan_2026-10-13.md) | 当前方案：四个英语Perceived来源（Kymata仅英文）与KaraOne迁移；REVE适配、生理对齐、CFM、Simulation和跨被试；逐批处理只留processed |
+| [NeuroSpeech 研究方案 v2.1](neurospeech_research_plan_2026-10-13.md) | 当前方案：四个英语Perceived来源（Kymata仅英文）与KaraOne迁移；REVE适配、生理对齐、CFM、Simulation和跨被试；逐批处理只留processed |
 | [数据大小与英文目录核查](dataset_storage_audit_2026-10-13.json) | Kymata英文所选文件117.767 GB、KaraOne分包24.824 GB及来源证据；processed大小为预算估算 |
 | [历史执行方案 v1](06_execution_plan_2026-10-13.md) | 现有单数据集 TCN 实现的协议；研究范围已由 v2 取代 |
 | [项目运行说明](../README.md) | 当前 v1 代码入口、运行顺序与 EEG-only 输入合同 |

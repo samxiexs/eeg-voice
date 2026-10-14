@@ -90,6 +90,7 @@ def run(root=None,subjects=None,retry_quarantined=False):
     allsubjects=sorted({q["path"].split('/')[0] for q in tree['tree'] if q['path'].startswith('sub-')})
     annotations=list(csv.DictReader(acquire("sourcedata/AliceChapterOne-EEG.csv",meta/"AliceChapterOne-EEG.csv").open()))
     audio={};contents=[]
+    registered=json.loads((out/'manifest.json').read_text()).get('contents',{}) if (out/'manifest.json').exists() else {}
     for segment in range(1,13):
         name=f"DownTheRabbitHoleFinal_SoundFile{segment}.wav"; p=acquire("stimuli/"+name,stage/"stimuli"/name); y,sr=sf.read(p)
         if sr!=44100 or y.ndim!=1:raise ValueError("Unexpected Brennan audio")
@@ -100,6 +101,9 @@ def run(root=None,subjects=None,retry_quarantined=False):
             if q['Word'].startswith('\x1a') and words:words[-1]['text']+="'"+q['Word'][1:];words[-1]['end']=float(q['offset']);continue
             words.append({"start":float(q['onset']),"end":float(q['offset']),"text":q['Word']})
         content=f"brennan_alice_{segment:02d}"
+        # An unchanged stimulus keeps its entry, so tiers added later (forced-aligned phonemes) survive reader reruns.
+        if registered.get(content,{}).get('source_sha256')==sha256(p) and registered[content]['words']==words:
+            contents.append(registered[content]);p.unlink();continue
         receipt=register_audio("brennan2019",content,p,words=words,metadata={"source_url":S3,"revision":REVISION,"segment":segment,"narrative":"Alice chapter 1"},root=root)
         contents.append(receipt);p.unlink()
     records=[];release=0

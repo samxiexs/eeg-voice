@@ -2,7 +2,7 @@
 
 项目根目录：`speech_decoding/`。唯一主线是 **ds004408 真实听觉 EEG → TCN 预测 WavLM 时序表征 → CFM → Vocos 原生 Mel → 24 kHz waveform**。
 
-[当前研究方案：NeuroSpeech v2.1](report/07_neurospeech_research_plan_2026-10-13.md) · [历史执行协议 v1](report/06_execution_plan_2026-10-13.md) · [报告索引](report/README.md)
+[当前研究方案：NeuroSpeech v2.1](report/neurospeech_research_plan_2026-10-13.md) · [历史执行协议 v1](report/06_execution_plan_2026-10-13.md) · [报告索引](report/README.md)
 
 研究方案已更新为四个英语听觉数据来源（Kymata仅英文）与KaraOne后续迁移、REVE适配和完整生理约束。v2.1规定逐批下载 / 处理、核验后删除raw，仅保留processed与来源记录，数据大小见方案2.4节。下面的命令和原始保留方式对应现有v1代码；新增数据接口、processed-only读取与自动清理尚待实现。
 
