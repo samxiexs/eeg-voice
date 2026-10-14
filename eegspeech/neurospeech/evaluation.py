@@ -151,7 +151,7 @@ def encoder_validation(cfg, encoder, dataset, device='cpu'):
     from .training import move_batch
     encoder.eval()
     mapping = wrong_time_mapping(dataset.rows)
-    by_subject = defaultdict(list)
+    by_subject = defaultdict(list); predictions = []; targets = []
     for i in range(len(dataset)):
         batch = move_batch(default_collate([dataset[i]]), device)
         wrong = move_batch(default_collate([dataset[mapping[i]]]), device)
@@ -159,6 +159,7 @@ def encoder_validation(cfg, encoder, dataset, device='cpu'):
         good = float((out['teacher']-batch['teacher']).square().mean())
         bad = float((alternate['teacher']-batch['teacher']).square().mean())
         by_subject[(row_source(dataset.rows[i]), batch['subject'][0])].append((good,bad))
+        predictions.append(out['teacher'][0].float().cpu().numpy()); targets.append(batch['teacher'][0].float().cpu().numpy())
     subjects = [{'dataset':s,'subject':p,'mse':float(np.mean(v,axis=0)[0]),'wrong_mse':float(np.mean(v,axis=0)[1])}
                 for (s,p),v in sorted(by_subject.items())]
     by_source = defaultdict(list)
@@ -167,7 +168,37 @@ def encoder_validation(cfg, encoder, dataset, device='cpu'):
     from .reporting import stratified_paired
     ci = stratified_paired({s:[r['wrong_mse']-r['mse'] for r in subjects if r['dataset']==s] for s in by_source})
     return {'mse':float(np.mean([np.mean(v) for v in by_source.values()])), 'subjects':subjects,
-            'correct_vs_wrong':ci,'passed':ci['lower']>0}
+            'correct_vs_wrong':ci,'passed':ci['lower']>0,'identification':identification(dataset.rows,predictions,targets)}
+
+
+def identification(rows, predictions, targets):
+    """Rank of each EEG window's own audio among the distinct audio crops of the same source.
+
+    Similarity is the frame-by-frame cosine between predicted and true speech features, so
+    timing matters. Candidates are restricted to one source because electrode layouts alone
+    would otherwise identify the dataset. A constant prediction scores chance (rank 0.5).
+    """
+    unit = lambda x: x/np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), 1e-8)
+    per_source = defaultdict(list)
+    for i, row in enumerate(rows): per_source[row_source(row)].append(i)
+    ranks = []; sources = {}
+    for source, indices in per_source.items():
+        keys = [(rows[i].get('canonical_audio'), round(float(rows[i].get('canonical_start', rows[i]['start'])), 3)) for i in indices]
+        crops = sorted(set(keys)); where = {k: n for n, k in enumerate(crops)}
+        audio = unit(np.stack([targets[indices[keys.index(k)]] for k in crops])); eeg = unit(np.stack([predictions[i] for i in indices]))
+        score = np.einsum('nfd,ufd->nu', eeg, audio)/eeg.shape[1]
+        own = score[np.arange(len(indices)), [where[k] for k in keys]]
+        better = (score > own[:, None]).sum(1); local = []
+        for n, i in enumerate(indices):
+            local.append({'subject': rows[i]['subject'], 'rank': int(better[n])+1, 'percentile': float(better[n]/max(len(crops)-1, 1))})
+        ranks += local
+        people = defaultdict(list)
+        for r in local: people[r['subject']].append(r)
+        sources[source] = {'candidates': len(crops), 'windows': len(indices), 'top1': float(np.mean([r['rank'] == 1 for r in local])),
+                           'top5': float(np.mean([r['rank'] <= 5 for r in local])), 'chance_top1': 1/len(crops), 'chance_top5': min(5, len(crops))/len(crops),
+                           'mean_rank_percentile': float(np.mean([r['percentile'] for r in local])),
+                           'subjects_better_than_chance': int(sum(np.mean([r['percentile'] for r in v]) < .5 for v in people.values())), 'subjects': len(people)}
+    return {'sources': sources, 'mean_rank_percentile': float(np.mean([v['mean_rank_percentile'] for v in sources.values()])), 'chance_rank_percentile': .5}
 
 
 def evaluate(cfg, protocol, fold, seed, system, split='test', device='cpu', mode='zero-shot'):

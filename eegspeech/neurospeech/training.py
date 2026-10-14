@@ -100,8 +100,8 @@ def alignment_loss(output,batch,cfg=None,system='S2',contrast=True,uncertainty=T
             variance=.5*mask_mean(errors*torch.exp(-logvar)+logvar,frame_mask)
     weights=section(cfg,'alignment') if cfg is not None else {}
     encoder_weights=section(cfg,'encoder') if cfg is not None else {}
-    weights={**{k:encoder_weights.get(k+'_weight',v) for k,v in [('contrast',.1),('rhythm',.2),('phoneme',.05)]},**weights}
-    loss=feature+float(weights.get('contrast',.1))*local+float(weights.get('rhythm',.2))*rhythm+float(weights.get('phoneme',.05))*phoneme+.05*variance
+    weights={**{k:encoder_weights.get(k+'_weight',v) for k,v in [('feature',1.),('contrast',.1),('rhythm',.2),('phoneme',.05)]},**weights}
+    loss=float(weights.get('feature',1.))*feature+float(weights.get('contrast',.1))*local+float(weights.get('rhythm',.2))*rhythm+float(weights.get('phoneme',.05))*phoneme+.05*variance
     return loss,{'feature':feature,'contrast':local,'rhythm':rhythm,'phoneme':phoneme,'variance':variance}
 
 
@@ -242,7 +242,8 @@ def _fit_encoder(cfg,train,validation,protocol,fold,seed,system,folder,device='c
             if global_step%50==0:append_jsonl(folder/'training.jsonl',{'stage':stage,'step':step+1,'global_step':global_step,'grl_strength':strength,**{k:float(v.detach()) for k,v in parts.items()}})
             if (step+1)%validate_every==0 or step+1==steps:
                 scores=encoder_validation(cfg,encoder,validation,device) if validation is not None else {'mse':None,'passed':False,'selection':'fixed-final-update-no-held-OOF-selection'}
-                value=scores['mse'] if validation is not None else float(steps-step-1)
+                # 'identification' selects on the mean rank of each window's own audio, which a constant output cannot improve.
+                value=(scores['identification']['mean_rank_percentile'] if train_cfg.get('selection')=='identification' else scores['mse']) if validation is not None else float(steps-step-1)
                 if stage=='B2' and step<10000:warmup_error=value
                 if strength and warmup_error is not None:
                     bad_validations=bad_validations+1 if value>warmup_error*1.1 else 0

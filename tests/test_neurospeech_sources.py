@@ -137,3 +137,12 @@ def test_imagined_splits_hold_out_people_or_a_whole_prompt():
     assert {r['prompt'] for r in s['test']}=={'pat'} and 'pat' not in {r['prompt'] for r in s['train']+s['validation']}
     other=wrong_prompt(rows)
     assert all(rows[j]['subject']==rows[i]['subject'] and rows[j]['prompt']!=rows[i]['prompt'] for i,j in other.items()) and len(other)==len(rows)
+
+
+def test_identification_gives_chance_for_a_constant_prediction_and_one_for_the_truth():
+    from eegspeech.neurospeech.evaluation import identification
+    rng=np.random.default_rng(0);rows=[{'dataset':'ds004408','subject':f's{i%3}','canonical_audio':'a','canonical_start':float(i),'start':float(i)} for i in range(30)]
+    targets=[rng.normal(size=(20,8)) for _ in rows]
+    perfect=identification(rows,targets,targets)['sources']['ds004408']
+    constant=identification(rows,[np.ones((20,8))]*30,targets)['sources']['ds004408']
+    assert perfect['top1']==1 and perfect['mean_rank_percentile']==0 and constant['top1']<=1/30+1e-9

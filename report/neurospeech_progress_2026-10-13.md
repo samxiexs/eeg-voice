@@ -151,3 +151,15 @@ Written after the data stage, at the request to treat imagined speech as generat
 - Measures are taken on the generated audio: similarity to the person's own spoken recording, Mel error, and the rank of the true prompt among the eleven. Prompt identity appears only there and in the split.
 - Checked on real KaraOne trials with untrained weights: shapes, the gradient path (only the re-timer receives gradients) and the writing of audio for every control. This replaces the classification-first validation of plan §14.
 - Limits: eleven short prompts cannot show free-form imagined speech; the spoken recording is a stand-in with unknown timing.
+
+## 11. Mac feasibility probe (2026-10-14)
+
+Small encoder (S0, no REVE), protocol P2 source side (ds004408, Etard, Kymata; 28,179 training windows from 49 people), 3,000 steps on the laptop CPU, scored on 8 development people. Configurations: `configs/neurospeech_v2/probe_mac.yaml` and `probe_mac_contrastive.yaml`.
+
+| Run | Objective | Correct vs wrong-time EEG | Audio identification (mean rank percentile, chance 0.5) |
+|---|---|---|---|
+| 1 | regression to speech features (plan weights) | no difference (p = 0.96); the output collapsed to the average feature | not measured |
+| 2 | contrastive first (contrast 1.0, regression 0.1) | no difference | 0.486 at the end (best 0.481): ds004408 0.498, Etard 0.499, Kymata 0.461 (7 candidates); ds004408 sits exactly at chance, the sign of an EEG-independent output |
+| check | linear envelope reconstruction, per person, unseen content (`scripts/probe_envelope.py`) | — | median r 0.08–0.12 per dataset; 75 of 88 people above their shuffled control |
+
+Reading: EEG and audio are paired correctly and the EEG carries acoustic (envelope) information, but the small encoder learned no speech content in 3,000 steps with either objective. This does not test the full REVE model or longer training.

@@ -1,0 +1,152 @@
+version: neurospeech-v2.1-probe-mac-contrastive   # laptop probe: contrastive-first small encoder, chosen by audio identification
+paths:
+  processed: data/processed/neurospeech
+  staging: data/staging/neurospeech
+  artifacts: artifacts/neurospeech_probe_contrastive
+  outputs: outputs/neurospeech_probe
+  models: models
+  logs: logs/neurospeech_probe_contrastive
+preprocessing:
+  eeg_rate: 200
+  neural_rate: 64
+  highpass: 0.5
+  lowpass: 40.0
+  auditory_low: 1.0
+  auditory_high: 8.0
+  neural_lowpass: 15.0
+  fir_seconds: 8.0
+  guard_seconds: 10.0
+  flat_uv: 0.1
+  peak_to_peak_uv: 400.0
+  max_bad_fraction: 0.1      # share of channels not annotated bad that may be flat / over range in a 4 s core
+  min_valid_fraction: 0.5    # share of the cap that must remain valid after annotated bad channels are masked
+  max_rejection_fraction: 0.2
+window:
+  seconds: 4.0
+  train_stride: 2.0
+  evaluation_stride: 4.0
+  eeg_left: 1.0
+  eeg_right: 1.5
+  teacher_left: 1.0
+  teacher_right: 1.0
+audio:
+  sample_rate: 24000
+  teacher_rate: 16000
+  mel_bins: 100
+  n_fft: 1024
+  hop_length: 256
+  teacher_layer: 6
+  teacher_dim: 768
+encoder:
+  width: 128
+  fusion_width: 256
+  fusion_layers: 2
+  dropout: 0.1
+  reve_rank: 8
+  reve_alpha: 16
+  reve_dropout: 0.05
+  reve_last_layers: 4
+  adapter_rank: 16
+  phoneme_dim: 19
+  contrast_temperature: 0.07
+  feature_weight: 0.1
+  contrast_weight: 1.0
+  rhythm_weight: 0.2
+  phoneme_weight: 0.05
+  variance_weight: 0.05
+flow:
+  width: 256
+  layers: 6
+  heads: 4
+  null_fraction: 0.1
+  sample_steps: 32
+  neural_steps: 8
+  style_dim: 128
+trf:
+  lags: 33
+  ridge: [0.01, 0.1, 1.0, 10.0, 100.0]
+  backend: mtrfpy
+  permutations: 500
+  min_shift_seconds: 2.0
+  fdr: 0.05
+  max_channels: 32
+  min_channels: 8
+  min_subject_fraction: 0.8
+  min_validation_r: 0.05
+  variance_floor: 0.1
+training:
+  seeds: [11,22,33]
+  oracle_steps: 10000
+  heads_steps: 3000
+  adaptation_steps: 30000
+  B1_steps: 3000
+  B2_steps: 30000
+  flow_steps: 4000
+  encoder_batch: 32
+  flow_batch: 16
+  microbatch: 2
+  oracle_lr: 0.0002
+  heads_lr: 0.0003
+  B1_lr: 0.0003
+  B2_lr: 0.0003
+  encoder_lr: 0.0003
+  lora_lr: 0.0001
+  flow_lr: 0.0001
+  weight_decay: 0.01
+  grad_clip: 1.0
+  warmup_steps: 1000
+  validate_every: 500
+  selection: identification
+  validation_windows_per_audio: 10
+  neural_start: 100000
+  neural_every: 4
+  neural_weight: 0.1
+  neural_ramp_end: 10000
+  simulation_fraction: 0.2
+  simulation_weight: 0.1
+  simulation_min_gain: 0.02
+  grl_start: 10000
+  grl_max_weight: 0.05
+  grl_ramp_end: 20000
+  oof_folds: 3
+  amp: true
+evaluation:
+  generation_seeds: [0,1,2]
+  retrieval_candidates: 20
+  wrong_min_seconds: 10.0
+  bootstrap: 10000
+  permutations: 100000
+  copy_max_wer_delta_pp: 5.0
+  oracle_max_wer: 0.4
+  oracle_max_wer_delta_pp: 15.0
+adapter:
+  seconds: 60
+  steps: 100
+  batch: 16
+  lr: 0.001
+  residual_penalty: 0.001
+storage:
+  reserve_bytes: 5000000000
+  teacher_cache_bytes: 4000000000
+  token_cache_bytes: 1000000000
+  residual_cache_bytes: 1000000000
+  delete_verified_raw: true
+imagined:                 # KaraOne transfer: generation from imagined EEG with the frozen listened-speech model
+  core_seconds: 2.0       # generated audio; 95 % of the spoken prompts are shorter
+  left: 1.0               # EEG context before / after the core; 4.5 s in total fits inside the 5 s imagined state
+  right: 1.5
+  steps: 3000
+  batch: 16
+  lr: 0.0003
+  validate_every: 250
+subject_policy:
+  brennan2019: authors_analyzed   # participants.tsv 'analyzed' of the release: quality control of Brennan & Hale (2019)
+protocols:
+  P1:
+    sources: [ds004408,brennan2019,etard,kymata_english]
+    development_counts: {ds004408: 3,brennan2019: 5,etard: 2,kymata_english: 3}
+    folds: [F0,F1,F2,F3,F4]
+  P2:
+    sources: [ds004408,etard,kymata_english]
+    target: brennan2019
+    folds: [external]
