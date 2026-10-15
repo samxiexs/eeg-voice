@@ -1,4 +1,4 @@
-"""Two-tower soft alignment of EEG and speech, sized for one laptop night (Apple M2 Pro).
+"""Two-tower alignment of EEG and speech, sized for one laptop night (Apple M2 Pro).
 
 EEG and audio each get their own encoder into one 128-d space at 25 Hz. Nothing is
 regressed onto a fixed audio feature: a contrastive loss decides what the two share.
@@ -6,18 +6,22 @@ regressed onto a fixed audio feature: a contrastive loss decides what the two sh
 * Electrodes are pooled into K learnable scalp regions, initialised by k-means on the
   3-D positions of every montage, so 60-, 63-, 64- and 128-channel caps share one input.
   Each region then gets its own bank of temporal filters (space x band x time).
-* An audio frame is compared with EEG from 80 ms before to 480 ms after it, with a soft
-  maximum over that lag window and a learnable lag prior per person.
+* The brain answers the sound with a delay that differs between people. One delay is
+  shared by the whole 3 s segment and marginalised over 0-480 ms after the audio, under a
+  learnable prior per person that is shrunk towards the mean of that person's dataset.
 * EEG of different people (and repeated presentations) at the same audio time are
   positives for each other, which pulls out the stimulus-driven part of the signal.
 
-A decoder turns the audio-side embedding back into a Mel spectrogram; a bridge produces
-that embedding from EEG; frozen Vocos renders the waveform.
+Retrieval of unseen speech decides whether alignment worked: ranks are tie-averaged and
+tested against a permutation baseline that keeps each person's block structure. Only when
+it passes is audio generated: a deterministic Mel decoder trained on the audio-side
+embedding (a test version, not a flow-matching generator), a bridge from EEG, and frozen Vocos.
 """
 from __future__ import annotations
 from collections import defaultdict
 import json
 import math
+import shutil
 import time
 from pathlib import Path
 import numpy as np
@@ -27,14 +31,32 @@ from torch.nn import functional as F
 from torch.utils.data import IterableDataset, get_worker_info
 from ..utils import atomic_json, append_jsonl, read_json
 
+CACHE_VERSION = 'softalign-cache-v2'
 DATASETS = ('ds004408', 'brennan2019', 'etard', 'kymata_english')
-FRAME = .04; PRE = 12; SEG = 75; WIN = 112; LAGS = tuple(range(-2, 13)); EE_LAGS = tuple(range(-2, 3))
+FRAME = .04; PRE = 12; SEG = 75; WIN = 112; LAGS = tuple(range(0, 13)); EE_LAGS = tuple(range(-2, 3))
 RAW = 200; SAMPLES = WIN*8; GUARD = 4.0; MEL_RATE = 24000/256; MEL_FRAMES = 281; LAYERS = (3, 6, 9, 12)
 PRE_S, POST_S = PRE*FRAME, (WIN-PRE)*FRAME
-# full: everything; synchronous: one fixed 200 ms lag and no EEG-EEG term; no-region-prior: electrodes pooled without the k-means geometry.
-VARIANTS = {'full': {'lags': LAGS, 'ee_weight': .5, 'geometric': True},
-            'synchronous': {'lags': (5,), 'ee_weight': 0., 'geometric': True},
-            'no-region-prior': {'lags': LAGS, 'ee_weight': .5, 'geometric': False}}
+# The main model and its single-factor variants; lags are 40 ms frames of EEG after the audio frame.
+MAIN = {'lags': LAGS, 'ee_weight': .5, 'pooling': 'kmeans', 'audio': 'wavlm'}
+NOISY = ('clean', 'lb', 'mb', 'hb')
+VARIANTS = {'main': MAIN, 'synchronous': {**MAIN, 'lags': (5,)}, 'no-cross-person': {**MAIN, 'ee_weight': 0.},
+            'fourier-pooling': {**MAIN, 'pooling': 'fourier'}, 'no-spatial': {**MAIN, 'pooling': 'shuffled'},
+            'envelope-only': {**MAIN, 'audio': 'envelope'}, 'with-envelope': {**MAIN, 'audio': 'wavlm+envelope'},
+            'word-segments': {**MAIN, 'word_anchors': .5}, 'etard-noisy': {**MAIN, 'conditions': NOISY},
+            'segments+noisy': {**MAIN, 'word_anchors': .5, 'conditions': NOISY}}
+VARIANT_NOTES = {'main': '刺激后 0–480 ms 整段共享延迟并边际化；k-means 电极区域；跨人 EEG 对比；音频侧只用 WavLM',
+                 'synchronous': '只改延迟：固定 200 ms，不做边际化',
+                 'no-cross-person': '只改目标：去掉跨人 EEG–EEG 对比项',
+                 'fourier-pooling': '只改电极汇聚：没有 k-means 几何起点，只用位置的傅里叶投影',
+                 'no-spatial': '只改电极汇聚：每个窗口随机打乱电极位置（无空间信息对照）',
+                 'envelope-only': '只改音频侧：只用宽带包络和起音（粗粒度声学节律对照）',
+                 'with-envelope': '只改音频侧：WavLM 加包络',
+                 'word-segments': '只改训练采样：一半锚点取在词开始前 0.5 秒（segment），其余仍随机',
+                 'etard-noisy': '只改训练数据：加入 Etard 三种加噪条件的训练块（另外 12 段故事，目标是干净语音）',
+                 'segments+noisy': 'segment 采样 + Etard 加噪条件'}
+POOLS = {'own': '只含测试候选', 'own+distractors': '测试 + 验证候选'}
+# EEG tower: non-causal convolutions spanning about +-0.65 s (25-tap filter bank, dilated stacks at 100, 50 and 25 Hz).
+EEG_FIELD_S = .65
 
 
 def wall(text):
@@ -51,9 +73,44 @@ def status(folder, **value):
 
 # ----------------------------------------------------------------------------- cache
 
-def build_cache(cfg, out, contents_per_dataset=None, device='cpu'):
-    """Frozen speech features of every clean canonical stimulus on the 25 Hz frame grid, plus the
-    native Mel for decoding, the broadband envelope, the electrode k-means and the record index."""
+def content_blocks(records, splits):
+    """[start, end, split] of each content block of one stimulus, merged across people (their durations
+    differ by clock-drift fractions of a millisecond). Blocks of different splits must not overlap."""
+    blocks = []
+    for start, end, split in sorted((float(r['audio_start']), float(r['audio_start'])+float(r['duration']), splits[r['content_group']]) for r in records):
+        if blocks and start < blocks[-1][1]-1e-3:
+            if split != blocks[-1][2]: raise ValueError(f"{records[0]['audio']}: {blocks[-1][2]} and {split} blocks overlap at {start:.3f} s")
+            blocks[-1][1] = max(blocks[-1][1], end)
+        else: blocks.append([start, end, split])
+    return blocks
+
+
+def condition(record):
+    """Listening condition of a manifest record or a cache record ('clean' unless noise was added)."""
+    return record.get('condition') or record.get('metadata', {}).get('condition', 'clean')
+
+
+def chunk_plan(start, end, core=20., context=2.):
+    """Pieces of one block for the speech model: (input start, input end, core start, core end).
+    The context is clipped to the block, so no feature attends to audio of another block."""
+    pieces = []; t = start
+    while t < end-1e-6:
+        stop = min(end, t+core); pieces.append((max(start, t-context), min(end, stop+context), t, stop)); t = stop
+    return pieces
+
+
+def smoke_contents(records, splits):
+    """One stimulus per split (train, validation, test) where the dataset has it, so a smoke cache reaches every code path."""
+    chosen = []
+    for split in ('train', 'validation', 'test'):
+        found = sorted({r['audio'] for r in records if splits[r['content_group']] == split})
+        if found and found[0] not in chosen: chosen.append(found[0])
+    return chosen
+
+
+def build_cache(cfg, out, smoke=False):
+    """Frozen speech-model layers, envelope and native Mel of every clean stimulus, computed block by
+    block so that no feature mixes audio of two content blocks; electrode k-means; record index."""
     import soundfile as sf
     from scipy.signal import resample_poly
     from scipy.interpolate import interp1d
@@ -61,68 +118,94 @@ def build_cache(cfg, out, contents_per_dataset=None, device='cpu'):
     from transformers import AutoFeatureExtractor, WavLMModel
     from ..perceived_audio import FrozenVocos
     out = Path(out); (out/'audio').mkdir(parents=True, exist_ok=True); registry = cfg.registry()
+    if (out/'index.json').exists() and read_json(out/'index.json').get('version') != CACHE_VERSION:
+        raise ValueError(f'{out} holds a cache of another version; use a new folder')
     processor = AutoFeatureExtractor.from_pretrained(cfg.model_dir('wavlm'), local_files_only=True)
     wavlm = WavLMModel.from_pretrained(cfg.model_dir('wavlm'), local_files_only=True).eval()
-    vocos = FrozenVocos(cfg.model_dir('vocos')); index = {}; positions = []
+    vocos = FrozenVocos(cfg.model_dir('vocos')); index, spans, positions, clean = {}, {}, [], {}
     for dataset in DATASETS:
         folder = cfg.dir('processed')/dataset; manifest = read_json(folder/'manifest.json'); splits = registry['content_splits'][dataset]
-        records = [r for r in manifest['records'].values() if r['task'] == 'perceived' and r['metadata'].get('condition', 'clean') == 'clean']
-        used = sorted({r['audio'] for r in records})[:contents_per_dataset]; (out/'audio'/dataset).mkdir(exist_ok=True)
+        records = [r for r in manifest['records'].values() if r['task'] == 'perceived']
+        # Clean records first, in manifest order, so their indices match earlier caches; Etard's noisy-condition
+        # records (other stories, clean target speech) follow and are used only where a variant asks for them.
+        records = [r for r in records if condition(r) == 'clean']+([] if smoke else [r for r in records if condition(r) != 'clean'])
+        used = smoke_contents(records, splits) if smoke else sorted({r['audio'] for r in records})
+        records = [r for r in records if r['audio'] in used]; spans[dataset] = {}; (out/'audio'/dataset).mkdir(exist_ok=True)
         for content in used:
+            blocks = spans[dataset][content] = content_blocks([r for r in records if r['audio'] == content], splits)
             stem = out/'audio'/dataset/content
-            if (stem.with_suffix('.mel.npy')).exists(): continue
-            wave, rate = sf.read(folder/manifest['contents'][content]['path'], dtype='float32'); seconds = len(wave)/rate
-            wave16 = resample_poly(wave, 2, 3).astype(np.float32); frames = int(seconds/FRAME); grid = (np.arange(frames)+.5)*FRAME
-            times, feats = [], []
-            for start in np.arange(0, seconds, 20.):
-                lo = max(0, round((start-2)*16000)); hi = min(len(wave16), round((start+22)*16000))
-                inputs = processor([wave16[lo:hi]], sampling_rate=16000, return_tensors='pt')
-                with torch.no_grad(): hidden = wavlm(**inputs, output_hidden_states=True).hidden_states
-                t = lo/16000+(199.5+320*np.arange(hidden[0].shape[1]))/16000; keep = (t >= start) & (t < start+20)
-                times.append(t[keep]); feats.append(torch.stack([hidden[k][0] for k in LAYERS], 1).numpy()[keep])
-            times = np.concatenate(times); feats = np.concatenate(feats)
-            layered = interp1d(times, feats, axis=0, bounds_error=False, fill_value=(feats[0], feats[-1]))(grid)
-            np.save(stem.with_suffix('.wavlm.npy'), layered.astype(np.float16))
-            # Broadband 25 ms RMS at 64 Hz and its positive change, as in the TRF front end (computed directly; the filter bank is not needed).
-            env = np.sqrt(np.square(np.lib.stride_tricks.sliding_window_view(np.pad(wave, 300, mode='reflect'), 600)[::375]).mean(1)+1e-12)
-            onset = np.maximum(np.diff(env, prepend=env[0]), 0); t64 = (np.arange(len(env))+.5)/64
-            features = np.stack([np.log(env+1e-4), np.log(onset+1e-4)], 1)
-            np.save(stem.with_suffix('.env.npy'), interp1d(t64, features, axis=0, bounds_error=False, fill_value=(features[0], features[-1]))(grid).astype(np.float32))
-            with torch.no_grad(): mel = vocos.features(torch.from_numpy(wave)[None])[0].numpy()
-            np.save(stem.with_suffix('.mel.npy'), mel.astype(np.float16))
-            print(json.dumps({'cache': dataset, 'content': content, 'seconds': round(seconds, 1)}), flush=True)
-        index[dataset] = []
-        for r in records:
-            if r['audio'] not in used: continue
-            index[dataset].append({'key': f"{dataset}:{r['subject']}", 'path': str(folder/r['path']), 'audio': r['audio'], 'start': float(r['audio_start']),
-                                   'duration': float(r['duration']), 'split': splits[r['content_group']], 'channels': len(r['names'])})
-            positions.append(np.asarray(r['positions'], np.float32))
-        np.save(out/f'{dataset}.positions.npy', np.stack([np.asarray(r['positions'], np.float32) for r in records if r['audio'] in used]))
-        np.save(out/f'{dataset}.good.npy', np.stack([np.asarray(r['good_channels'], bool) for r in records if r['audio'] in used]))
+            if stem.with_suffix('.mel.npy').exists(): continue
+            wave, rate = sf.read(folder/manifest['contents'][content]['path'], dtype='float32')
+            if rate != 24000: raise ValueError(f'{content}: processed audio must be 24 kHz')
+            seconds = len(wave)/rate; frames = int(seconds/FRAME); grid = (np.arange(frames)+.5)*FRAME
+            layered = np.zeros((frames, len(LAYERS), 768), np.float16); envelope = np.zeros((frames, 2), np.float32)
+            mel = np.zeros((100, int(seconds*MEL_RATE)+2), np.float16)
+            for start, end, _ in blocks:
+                inside = (grid >= start) & (grid < end); part = wave[round(start*24000):round(end*24000)]
+                piece = resample_poly(part, 2, 3).astype(np.float32); times, feats = [], []
+                for lo, hi, core_lo, core_hi in chunk_plan(start, end):
+                    inputs = processor([piece[round((lo-start)*16000):round((hi-start)*16000)]], sampling_rate=16000, return_tensors='pt')
+                    with torch.no_grad(): hidden = wavlm(**inputs, output_hidden_states=True).hidden_states
+                    t = lo+(199.5+320*np.arange(hidden[0].shape[1]))/16000; keep = (t >= core_lo) & (t < core_hi)
+                    times.append(t[keep]); feats.append(torch.stack([hidden[k][0] for k in LAYERS], 1).numpy()[keep])
+                times, feats = np.concatenate(times), np.concatenate(feats)
+                layered[inside] = interp1d(times, feats, axis=0, bounds_error=False, fill_value=(feats[0], feats[-1]))(grid[inside])
+                # Broadband 25 ms RMS at 64 Hz and its positive change, from the block's own samples.
+                env = np.sqrt(np.square(np.lib.stride_tricks.sliding_window_view(np.pad(part, 300, mode='reflect'), 600)[::375]).mean(1)+1e-12)
+                onset = np.maximum(np.diff(env, prepend=env[0]), 0); features = np.stack([np.log(env+1e-4), np.log(onset+1e-4)], 1)
+                centres = start+np.arange(len(env))*375/24000
+                envelope[inside] = interp1d(centres, features, axis=0, bounds_error=False, fill_value=(features[0], features[-1]))(grid[inside])
+                # Native Mel from the block's own samples, on the stimulus' hop grid.
+                first, last = math.ceil(start*24000/256), int(end*24000/256)
+                if last > first:
+                    with torch.no_grad(): block_mel = vocos.features(torch.from_numpy(np.ascontiguousarray(wave[first*256:last*256]))[None])[0].numpy()
+                    n = min(block_mel.shape[1], mel.shape[1]-first); mel[:, first:first+n] = block_mel[:, :n]
+            np.save(stem.with_suffix('.wavlm.npy'), layered); np.save(stem.with_suffix('.env.npy'), envelope); np.save(stem.with_suffix('.mel.npy'), mel)
+            print(json.dumps({'cache': dataset, 'content': content, 'seconds': round(seconds, 1), 'blocks': len(blocks)}), flush=True)
+        index[dataset] = [{'key': f"{dataset}:{r['subject']}", 'path': str(folder/r['path']), 'audio': r['audio'], 'start': float(r['audio_start']),
+                           'duration': float(r['duration']), 'split': splits[r['content_group']], 'channels': len(r['names']), 'condition': condition(r)} for r in records]
+        positions += [np.asarray(r['positions'], np.float32) for r in records if condition(r) == 'clean']
+        clean[dataset] = {r['audio'] for r in records if condition(r) == 'clean'}
+        np.save(out/f'{dataset}.positions.npy', np.stack([np.asarray(r['positions'], np.float32) for r in records]))
+        np.save(out/f'{dataset}.good.npy', np.stack([np.asarray(r['good_channels'], bool) for r in records]))
     unique = np.unique(np.round(np.concatenate(positions), 4), axis=0)
-    centroids = KMeans(32, n_init=10, random_state=0).fit(unique).cluster_centers_.astype(np.float32); np.save(out/'centroids.npy', centroids)
-    # Normalisation of the decoder target and the envelope input from training content only.
-    mel, env = [], []
-    for dataset in DATASETS:
-        spans = {(r['audio'], r['start'], r['duration']) for r in index[dataset] if r['split'] == 'train'}
-        for content, start, seconds in spans:
-            stem = out/'audio'/dataset/content
-            env.append(np.load(stem.with_suffix('.env.npy'))[int(start/FRAME):int((start+seconds)/FRAME):5])
-            mel.append(np.load(stem.with_suffix('.mel.npy'))[:, int(start*MEL_RATE):int((start+seconds)*MEL_RATE):20].astype(np.float32).T)
+    np.save(out/'centroids.npy', KMeans(32, n_init=10, random_state=0).fit(unique).cluster_centers_.astype(np.float32))
+    # Standardisation of the envelope input and the decoder target, from training blocks only.
+    env, mel = [], []
+    for dataset, contents in spans.items():
+        for content, blocks in contents.items():
+            if content not in clean[dataset]: continue
+            stem = out/'audio'/dataset/content; e = np.load(stem.with_suffix('.env.npy'), mmap_mode='r'); m = np.load(stem.with_suffix('.mel.npy'), mmap_mode='r')
+            for start, end, split in blocks:
+                if split != 'train': continue
+                env.append(np.asarray(e[math.ceil(start/FRAME):int(end/FRAME):5]))
+                mel.append(np.asarray(m[:, math.ceil(start*MEL_RATE)+2:int(end*MEL_RATE)-2:20], np.float32).T)
     env, mel = np.concatenate(env), np.concatenate(mel)
-    atomic_json(out/'index.json', {'records': index, 'stats': {'env_mean': env.mean(0).tolist(), 'env_std': env.std(0).tolist(),
-                'mel_mean': mel.mean(0).tolist(), 'mel_std': (mel.std(0)+1e-3).tolist()}, 'layers': LAYERS, 'frame_seconds': FRAME})
+    atomic_json(out/'index.json', {'version': CACHE_VERSION, 'smoke': smoke, 'records': index, 'spans': spans, 'layers': LAYERS, 'frame_seconds': FRAME,
+                                   'stats': {'env_mean': env.mean(0).tolist(), 'env_std': (env.std(0)+1e-6).tolist(),
+                                             'mel_mean': mel.mean(0).tolist(), 'mel_std': (mel.std(0)+1e-3).tolist()}})
     return out
 
 
 class Cache:
-    """Audio arrays memory-mapped once; records with their montages; subject vocabulary of the training set."""
+    """Audio arrays memory-mapped once; records with their montages and content blocks; the training people."""
     def __init__(self, folder, train_subjects):
-        self.folder = Path(folder); value = read_json(self.folder/'index.json'); self.records = value['records']; self.stats = value['stats']
+        self.folder = Path(folder); value = read_json(self.folder/'index.json')
+        if value.get('version') != CACHE_VERSION: raise ValueError(f'{self.folder} is not a {CACHE_VERSION} cache; build it with `scripts/softalign.py cache`')
+        self.records, self.spans, self.stats, self.smoke = value['records'], value['spans'], value['stats'], value['smoke']
         self.positions = {d: np.load(self.folder/f'{d}.positions.npy') for d in self.records}
         self.good = {d: np.load(self.folder/f'{d}.good.npy') for d in self.records}
         self.subjects = sorted(train_subjects); self.subject_index = {s: i for i, s in enumerate(self.subjects)}
         self.audio = {}
+
+    def subject_id(self, key):
+        """Row of a training person; anyone else gets their dataset's row (identity spatial map, dataset latency prior)."""
+        return self.subject_index.get(key, len(self.subjects)+DATASETS.index(key.split(':', 1)[0]))
+
+    def block(self, dataset, content, a):
+        for k, (start, end, _) in enumerate(self.spans[dataset][content]):
+            if start <= a < end: return f'{content}#{k}'
+        raise ValueError(f'{dataset}/{content} has no content block at {a:.2f} s')
 
     def arrays(self, dataset, content):
         key = (dataset, content)
@@ -131,20 +214,20 @@ class Cache:
             self.audio[key] = tuple(np.load(stem.with_suffix(f'.{kind}.npy'), mmap_mode='r') for kind in ('wavlm', 'env', 'mel'))
         return self.audio[key]
 
-    def audio_batch(self, anchors):
+    def audio_batch(self, anchors, frames=SEG):
         """[M,75,4,768] speech-model layers and [M,75,2] standardized envelope / onset of each anchor."""
         wv, en = [], []
         mean, std = np.asarray(self.stats['env_mean'], np.float32), np.asarray(self.stats['env_std'], np.float32)
         for dataset, content, a in anchors:
             w, e, _ = self.arrays(dataset, content); k = round(a/FRAME)
-            wv.append(np.asarray(w[k:k+SEG], np.float32)); en.append((np.asarray(e[k:k+SEG])-mean)/std)
+            wv.append(np.asarray(w[k:k+frames], np.float32)); en.append((np.asarray(e[k:k+frames])-mean)/std)
         return torch.from_numpy(np.stack(wv)), torch.from_numpy(np.stack(en).astype(np.float32))
 
-    def mel_batch(self, anchors):
+    def mel_batch(self, anchors, frames=MEL_FRAMES):
         mean, std = np.asarray(self.stats['mel_mean'], np.float32)[:, None], np.asarray(self.stats['mel_std'], np.float32)[:, None]
         out = []
         for dataset, content, a in anchors:
-            _, _, m = self.arrays(dataset, content); k = round(a*MEL_RATE); out.append((np.asarray(m[:, k:k+MEL_FRAMES], np.float32)-mean)/std)
+            _, _, m = self.arrays(dataset, content); k = round(a*MEL_RATE); out.append((np.asarray(m[:, k:k+frames], np.float32)-mean)/std)
         return torch.from_numpy(np.stack(out))
 
 
@@ -167,11 +250,13 @@ def eeg_window(record, a, good, train=False, rng=None):
 
 class Stream(IterableDataset):
     """Batches of M audio anchors from one dataset, each seen through up to S people / repetitions."""
-    def __init__(self, cache, subjects, split, anchors=32, views=4, seed=11, train=True):
+    def __init__(self, cache, subjects, split, anchors=32, views=4, seed=11, train=True, onsets=None, word_share=0., conditions=('clean',),
+                 separation=SEG*FRAME):
         self.cache, self.split, self.anchors, self.views, self.seed, self.train = cache, split, anchors, views, seed, train
+        self.onsets, self.word_share, self.separation = onsets or {}, word_share, separation
         self.allowed = set(subjects); self.records = {}
         for d, rows in cache.records.items():
-            keep = [i for i, r in enumerate(rows) if r['key'] in self.allowed and r['split'] == split]
+            keep = [i for i, r in enumerate(rows) if r['key'] in self.allowed and r['split'] == split and condition(r) in conditions]
             if keep: self.records[d] = keep
 
     def batch(self, dataset, rng):
@@ -184,11 +269,16 @@ class Stream(IterableDataset):
             tries += 1; r = rows[pool[rng.choice(len(pool), p=p)]]
             lo, hi = r['start']+GUARD+PRE_S, r['start']+r['duration']-GUARD-POST_S
             if hi <= lo: continue
-            a = round(rng.uniform(lo, hi)/FRAME)*FRAME
-            if any(c == r['audio'] and abs(a-b) < SEG*FRAME for _, c, b, _ in chosen): continue
-            candidates = [i for i in by_audio[r['audio']] if covers(rows[i], a)]
+            words = self.onsets.get((dataset, r['audio']))
+            if words is not None and rng.random() < self.word_share:
+                inside = words[(words >= lo-1e-6) & (words <= hi+1e-6)]
+                if not len(inside): continue
+                a = float(inside[rng.integers(len(inside))])
+            else: a = round(rng.uniform(lo, hi)/FRAME)*FRAME
+            if any(c == r['audio'] and abs(a-b) < self.separation for _, c, b, _ in chosen): continue
             people = defaultdict(list)
-            for i in candidates: people[rows[i]['key']].append(i)
+            for i in by_audio[r['audio']]:
+                if covers(rows[i], a): people[rows[i]['key']].append(i)
             order = list(people); rng.shuffle(order); picked = []
             while len(picked) < self.views and any(people.values()):
                 for key in order:
@@ -199,10 +289,9 @@ class Stream(IterableDataset):
             for i in picked:
                 w, ok = eeg_window(rows[i], a, self.cache.good[dataset][i], self.train, rng)
                 eeg.append(w); mask.append(ok); pos.append(self.cache.positions[dataset][i])
-                subject.append(self.cache.subject_index.get(rows[i]['key'], len(self.cache.subjects))); anchor.append(m)
+                subject.append(self.cache.subject_id(rows[i]['key'])); anchor.append(m)
         return {'eeg': torch.from_numpy(np.stack(eeg)), 'mask': torch.from_numpy(np.stack(mask)), 'positions': torch.from_numpy(np.stack(pos)),
-                'subject': torch.tensor(subject), 'anchor': torch.tensor(anchor), 'dataset': dataset,
-                'anchors': [(d, c, a) for d, c, a, _ in chosen]}
+                'subject': torch.tensor(subject), 'anchor': torch.tensor(anchor), 'dataset': dataset, 'anchors': [(d, c, a) for d, c, a, _ in chosen]}
 
     def __iter__(self):
         info = get_worker_info(); worker = info.id if info else 0
@@ -222,19 +311,27 @@ class Residual(nn.Module):
 
 
 class RegionPool(nn.Module):
-    """Soft clustering of electrodes into K scalp regions: Gaussian around a learnable centroid plus
-    a learnable correction from Fourier features of position; invalid electrodes never contribute."""
-    def __init__(self, centroids, fourier=32, geometric=True):
-        super().__init__(); centroids = torch.as_tensor(centroids, dtype=torch.float32); self.geometric = geometric
+    """Electrodes pooled into K scalp regions; invalid electrodes never contribute.
+
+    kmeans: Gaussian around learnable centroids (k-means start) plus a learnable correction from
+    Fourier features of position (zero at the start). fourier: the Fourier projection alone, no
+    geometric start. shuffled: as kmeans, but every window's electrode positions are randomly
+    permuted, so no consistent spatial information reaches the model (the no-spatial control).
+    """
+    def __init__(self, centroids, fourier=32, mode='kmeans'):
+        super().__init__(); centroids = torch.as_tensor(centroids, dtype=torch.float32); self.mode = mode
         self.centroids = nn.Parameter(centroids.clone()); self.log_sigma = nn.Parameter(torch.full((len(centroids),), math.log(.025)))
         self.register_buffer('freq', torch.randn(3, fourier, generator=torch.Generator().manual_seed(0))*20)
         self.correction = nn.Linear(2*fourier, len(centroids)); nn.init.zeros_(self.correction.bias)
-        if geometric: nn.init.zeros_(self.correction.weight)
+        if mode != 'fourier': nn.init.zeros_(self.correction.weight)
 
     def weights(self, positions, mask):
-        d2 = (positions[:, None]-self.centroids[None, :, None]).square().sum(-1)
-        phase = positions@self.freq; extra = self.correction(torch.cat((phase.sin(), phase.cos()), -1)).transpose(1, 2)
-        logits = (-d2/(2*self.log_sigma.exp()[None, :, None]**2) if self.geometric else 0)+extra
+        if self.mode == 'shuffled':
+            order = torch.rand(positions.shape[:2], generator=None if self.training else torch.Generator().manual_seed(0)).argsort(1).to(positions.device)
+            positions = positions.gather(1, order[..., None].expand_as(positions))
+        phase = positions@self.freq; logits = self.correction(torch.cat((phase.sin(), phase.cos()), -1)).transpose(1, 2)
+        if self.mode != 'fourier':
+            d2 = (positions[:, None]-self.centroids[None, :, None]).square().sum(-1); logits = logits-d2/(2*self.log_sigma.exp()[None, :, None]**2)
         return logits.masked_fill(~mask[:, None], -1e4).softmax(-1)
 
     def forward(self, x, positions, mask):
@@ -242,9 +339,9 @@ class RegionPool(nn.Module):
 
 
 class EEGTower(nn.Module):
-    def __init__(self, centroids, subjects, width=160, dim=128, bands=4, geometric=True):
-        super().__init__(); k = len(centroids); self.subjects = subjects
-        self.pool = RegionPool(centroids, geometric=geometric)
+    def __init__(self, centroids, subjects, width=160, dim=128, bands=4, pooling='kmeans'):
+        super().__init__(); k = len(centroids)
+        self.pool = RegionPool(centroids, mode=pooling)
         self.subject_delta = nn.Parameter(torch.zeros(subjects, k, k))
         self.bank = nn.Conv1d(k, k*bands, 25, padding=12, groups=k)
         self.mix = nn.Conv1d(k*bands, width, 1)
@@ -253,9 +350,9 @@ class EEGTower(nn.Module):
         self.at25 = nn.Sequential(*[Residual(width, d) for d in (1, 2, 4)]); self.out = nn.Conv1d(width, dim, 1)
 
     def subject_matrix(self, index):
-        eye = torch.eye(self.subject_delta.shape[1], device=index.device)
-        full = torch.cat((self.subject_delta, torch.zeros_like(self.subject_delta[:1])), 0)
-        return eye+full[index]
+        """Identity plus a learned correction for each training person; everyone else gets the identity."""
+        k = self.subject_delta.shape[1]; eye = torch.eye(k, device=index.device)
+        return eye+torch.cat((self.subject_delta, self.subject_delta.new_zeros(len(DATASETS), k, k)), 0)[index]
 
     def forward(self, x, positions, mask, subject, drop_region=None):
         r, _ = self.pool(x, positions, mask)
@@ -267,51 +364,63 @@ class EEGTower(nn.Module):
 
 
 class AudioTower(nn.Module):
-    def __init__(self, dim=128):
-        super().__init__()
+    """Frozen speech-model layers (learnable layer mix), the broadband envelope and onset, or both, followed by
+    the same temporal stack (+-0.28 s at 25 Hz) in every variant, so only the input differs."""
+    def __init__(self, dim=128, inputs='wavlm'):
+        super().__init__(); self.inputs = inputs
         self.layer_logits = nn.Parameter(torch.zeros(len(LAYERS))); self.norm = nn.LayerNorm(768)
-        self.proj = nn.Sequential(nn.Linear(768, 256), nn.GELU(), nn.Dropout(.1)); self.env = nn.Linear(2, 256)
-        self.conv = nn.Conv1d(256, 256, 3, padding=1); self.out = nn.Linear(256, dim)
+        self.proj = nn.Sequential(nn.Linear(768, 256), nn.GELU(), nn.Dropout(.1)) if 'wavlm' in inputs else None
+        self.env = nn.Linear(2, 256) if 'envelope' in inputs else None
+        self.temporal = nn.Sequential(*[Residual(256, d) for d in (1, 2, 4)]); self.out = nn.Linear(256, dim)
 
     def forward(self, layers, env):
-        h = (layers*self.layer_logits.softmax(0)[None, None, :, None]).sum(2)
-        h = self.proj(self.norm(h))+self.env(env)
-        h = h+F.gelu(self.conv(h.transpose(1, 2))).transpose(1, 2)
-        return F.normalize(self.out(h), dim=-1)
+        h = 0
+        if self.proj is not None: h = self.proj(self.norm((layers*self.layer_logits.softmax(0)[None, None, :, None]).sum(2)))
+        if self.env is not None: h = h+self.env(env)
+        return F.normalize(self.out(self.temporal(h.transpose(1, 2)).transpose(1, 2)), dim=-1)
 
 
 class Aligner(nn.Module):
-    """Both towers, the per-person lag prior and the temperatures of the soft maxima."""
-    def __init__(self, centroids, subjects, variant='full'):
-        super().__init__(); spec = VARIANTS[variant]; self.variant, self.lags, self.ee_weight = variant, tuple(spec['lags']), spec['ee_weight']
-        self.eeg = EEGTower(centroids, subjects, geometric=spec['geometric']); self.audio = AudioTower()
-        self.lag_logits = nn.Parameter(torch.zeros(subjects, len(self.lags)))
+    """Both towers, the latency priors and the temperatures."""
+    def __init__(self, centroids, subjects, variant='main'):
+        super().__init__(); spec = VARIANTS[variant]
+        self.variant, self.lags, self.ee_weight = variant, tuple(spec['lags']), spec['ee_weight']
+        self.eeg = EEGTower(centroids, len(subjects), pooling=spec['pooling']); self.audio = AudioTower(inputs=spec['audio'])
+        self.register_buffer('subject_dataset', torch.tensor([DATASETS.index(s.split(':', 1)[0]) for s in subjects], dtype=torch.long))
+        self.lag_logits = nn.Parameter(torch.zeros(len(subjects), len(self.lags)))
         self.log_beta = nn.Parameter(torch.tensor(math.log(10.))); self.log_scale = nn.Parameter(torch.tensor(math.log(1/.07)))
         self.log_scale_ee = nn.Parameter(torch.tensor(math.log(1/.07)))
 
+    def dataset_logits(self):
+        """Mean latency logits of each dataset's training people (zeros, a flat prior, for a dataset without any)."""
+        member = F.one_hot(self.subject_dataset, len(DATASETS)).float()
+        return member.T@self.lag_logits/member.sum(0).clamp(min=1)[:, None]
+
     def lag_prior(self, subject):
-        full = torch.cat((self.lag_logits, self.lag_logits.mean(0, keepdim=True)), 0)
-        return full[subject].log_softmax(-1)
+        """Log prior over latencies: a training person's own, everyone else their dataset's mean."""
+        return torch.cat((self.lag_logits, self.dataset_logits()), 0)[subject].log_softmax(-1)
 
     def beta(self): return self.log_beta.exp().clamp(1, 50)
 
     def scores(self, E, A, subject, lags=None):
-        """[B,M] mean over audio frames of a soft maximum over EEG lags; also the per-lag scores."""
-        lags = tuple(lags or self.lags)
+        """[B,M] similarity with ONE latency shared by the whole segment, marginalised over the latencies
+        (log-sum-exp under the prior), and [B,M,L] the segment similarity at each latency. The trained
+        latency set uses the learned prior; any other set is a diagnostic with a flat prior."""
+        lags = self.lags if lags is None else tuple(lags)
         shifted = torch.stack([E[:, PRE+d:PRE+d+SEG] for d in lags], 1)
-        s = torch.einsum('bltd,mtd->bmlt', shifted, A)
-        prior = self.lag_prior(subject) if lags == self.lags else torch.zeros(len(E), len(lags), device=E.device)
+        per_lag = torch.einsum('bltd,mtd->bml', shifted, A)/SEG
+        prior = self.lag_prior(subject) if lags == self.lags else E.new_full((len(E), len(lags)), -math.log(len(lags)))
         beta = self.beta()
-        soft = (torch.logsumexp(beta*s+prior[:, None, :, None], 2)-math.log(len(lags)))/beta
-        return soft.mean(-1), s
+        return torch.logsumexp(beta*per_lag+prior[:, None], -1)/beta, per_lag
 
     def ee_scores(self, E):
+        """[B,B] EEG-EEG similarity with one relative latency (within +-80 ms) per pair, marginalised uniformly."""
         core = E[:, PRE:PRE+SEG]; shifted = torch.stack([E[:, PRE+d:PRE+d+SEG] for d in EE_LAGS], 1); beta = self.beta()
-        s = torch.einsum('btd,jstd->bjst', core, shifted)
-        return ((torch.logsumexp(beta*s, 2)-math.log(len(EE_LAGS)))/beta).mean(-1)
+        per_lag = torch.einsum('btd,jltd->bjl', core, shifted)/SEG
+        return (torch.logsumexp(beta*per_lag, -1)-math.log(len(EE_LAGS)))/beta
 
     def compensated(self, E, subject):
-        """EEG embedding re-timed to audio frames with the learned lag prior; no audio needed."""
+        """EEG embedding re-timed to audio frames with the latency prior; no audio needed."""
         weight = self.lag_prior(subject).exp()
         shifted = torch.stack([E[:, PRE+d:PRE+d+SEG] for d in self.lags], 1)
         return F.normalize((weight[:, :, None, None]*shifted).sum(1), dim=-1)
@@ -327,16 +436,20 @@ def multi_positive(logits, positive):
 def alignment_losses(model, E, A, batch):
     anchor = batch['anchor'].to(E.device); subject = batch['subject'].to(E.device)
     S, _ = model.scores(E, A, subject); logits = S*model.log_scale.exp().clamp(max=100)
-    target = F.one_hot(anchor, len(A)).bool()
-    e2a = F.cross_entropy(logits, anchor); a2e = multi_positive(logits.T, target.T)
-    EE = model.ee_scores(E)*model.log_scale_ee.exp().clamp(max=100); eye = torch.eye(len(E), dtype=torch.bool, device=E.device)
-    same = (anchor[:, None] == anchor[None]) & ~eye
-    ee = multi_positive(EE.masked_fill(eye, -1e4), same) if model.ee_weight else logits.sum()*0
-    return e2a+a2e+model.ee_weight*ee, {'eeg_to_audio': e2a.item(), 'audio_to_eeg': a2e.item(), 'eeg_to_eeg': ee.item(),
-                           'batch_top1': float((logits.argmax(1) == anchor).float().mean()), 'chance': 1/len(A)}
+    e2a = F.cross_entropy(logits, anchor); a2e = multi_positive(logits.T, F.one_hot(anchor, len(A)).bool().T)
+    if model.ee_weight:
+        eye = torch.eye(len(E), dtype=torch.bool, device=E.device); EE = model.ee_scores(E)*model.log_scale_ee.exp().clamp(max=100)
+        ee = multi_positive(EE.masked_fill(eye, -1e4), (anchor[:, None] == anchor[None]) & ~eye)
+    else: ee = logits.sum()*0
+    # Each person's latency prior is pulled towards the mean of their dataset.
+    shrink = (model.lag_logits-model.dataset_logits()[model.subject_dataset]).square().mean()
+    loss = e2a+a2e+model.ee_weight*ee+1e-2*shrink
+    return loss, {'eeg_to_audio': e2a.item(), 'audio_to_eeg': a2e.item(), 'eeg_to_eeg': ee.item(),
+                  'batch_top1': float((logits.argmax(1) == anchor).float().mean()), 'chance': 1/len(A)}
 
 
 class MelDecoder(nn.Module):
+    """Deterministic Mel decoder from the audio-side embedding: a test version, not a flow-matching generator."""
     def __init__(self, dim=128, width=256):
         super().__init__()
         self.inp = nn.Linear(dim, width)
@@ -349,7 +462,7 @@ class MelDecoder(nn.Module):
 
 
 class Bridge(nn.Module):
-    """Audio-side embedding predicted from the whole EEG window, starting from the lag-compensated EEG."""
+    """Audio-side embedding predicted from the whole EEG window, starting from the latency-compensated EEG."""
     def __init__(self, dim=128, width=256, heads=4, layers=3):
         super().__init__()
         self.inp = nn.Linear(dim, width); self.pos = nn.Parameter(torch.randn(WIN, width)*.02); self.query = nn.Parameter(torch.randn(SEG, width)*.02)
@@ -361,74 +474,192 @@ class Bridge(nn.Module):
         return F.normalize(compensated+self.out(h), dim=-1)
 
 
-# ----------------------------------------------------------------------------- training
+# ----------------------------------------------------------------------------- retrieval and its statistics
 
 def to(batch, device):
     return {k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
 
 
-def fixed_set(cache, subjects, split, step=SEG*FRAME):
-    """Every person's EEG at a fixed 3 s grid of anchors on the given content; identical anchors across people."""
-    out = []
-    for dataset, rows in cache.records.items():
-        for i, r in enumerate(rows):
-            if r['key'] not in subjects or r['split'] != split: continue
-            first = math.ceil((r['start']+GUARD+PRE_S)/step)*step
-            for a in np.arange(first, r['start']+r['duration']-GUARD-POST_S+1e-6, step):
-                out.append((dataset, i, round(float(a)/FRAME)*FRAME))
-    return out
+def anchor_grid(record, step=SEG*FRAME):
+    """Fixed 3 s grid of non-overlapping anchors inside one record's usable span; the same for everyone with that block."""
+    first = math.ceil((record['start']+GUARD+PRE_S)/step)*step
+    return [round(float(a)/FRAME)*FRAME for a in np.arange(first, record['start']+record['duration']-GUARD-POST_S+1e-6, step)]
+
+
+def fixed_set(cache, subjects, split):
+    """Evaluation windows on a fixed 3 s grid; always clean listening conditions, whatever the training used."""
+    return [(dataset, i, a) for dataset, rows in cache.records.items() for i, r in enumerate(rows)
+            if r['key'] in subjects and r['split'] == split and condition(r) == 'clean' for a in anchor_grid(r)]
+
+
+def tie_rank(scores, own):
+    """0-based rank of each row's own candidate (ties share the average place) and that rank as a fraction of the other candidates."""
+    value = scores[np.arange(len(scores)), own][:, None]
+    rank = (scores > value).sum(1)+.5*((scores == value).sum(1)-1)
+    return rank, rank/max(scores.shape[1]-1, 1)
+
+
+def permutation_plan(own, people, blocks, timeline):
+    """Cells (one person, one content block) and where each window's own anchor sits on its block's time line."""
+    cells = sorted(set(zip(people, blocks))); cell_of = {c: n for n, c in enumerate(cells)}; length = np.array([len(timeline[b]) for _, b in cells])
+    return {'cell': np.array([cell_of[c] for c in zip(people, blocks)]), 'place': np.array([timeline[b].index(o) for b, o in zip(blocks, own)]),
+            'length': length, 'offset': np.concatenate(([0], np.cumsum(length)[:-1])), 'flat': np.concatenate([timeline[b] for _, b in cells])}
+
+
+def permutation_null(scores, plan, rng, count):
+    """Mean rank percentile when every cell (one person, one content block) is paired with its own block's
+    anchors circularly shifted by a random non-zero step; windows, blocks and temporal order are kept."""
+    cell, place, length, offset, flat = plan['cell'], plan['place'], plan['length'], plan['offset'], plan['flat']; null = np.empty(count)
+    for p in range(count):
+        shift = np.where(length > 1, 1+np.floor(rng.random(len(length))*(length-1)).astype(int), 0)
+        null[p] = tie_rank(scores, flat[offset[cell]+(place+shift[cell]) % length[cell]])[1].mean()
+    return null
+
+
+def two_way_bootstrap(values, people, blocks, rng, count):
+    """Replicates of the mean that resample people and content blocks together, both with replacement."""
+    pi = {p: n for n, p in enumerate(sorted(set(people)))}; bi = {b: n for n, b in enumerate(sorted(set(blocks)))}
+    where = ([pi[p] for p in people], [bi[b] for b in blocks]); sums = np.zeros((len(pi), len(bi))); counts = np.zeros_like(sums)
+    np.add.at(sums, where, values); np.add.at(counts, where, 1); out = []
+    while len(out) < count:
+        rp = rng.integers(len(pi), size=len(pi)); rb = rng.integers(len(bi), size=len(bi)); c = counts[np.ix_(rp, rb)].sum()
+        if c: out.append(sums[np.ix_(rp, rb)].sum()/c)
+    return np.asarray(out)
+
+
+def rank_statistics(scores, own, people, blocks, plan, rng, permutations, bootstrap):
+    """Tie-aware rank percentiles of one score matrix: summary, permutation null and bootstrap replicates."""
+    rank, pct = tie_rank(scores, own); by = defaultdict(list)
+    for p, v in zip(people, pct): by[p].append(v)
+    value = {'mean_rank_percentile': float(pct.mean()), 'top1': float(np.mean(rank < .5)), 'top10': float(np.mean(rank < 9.5)),
+             'chance_top1': 1/scores.shape[1], 'chance_top10': min(10, scores.shape[1])/scores.shape[1],
+             'people_better_than_chance': int(sum(np.mean(v) < .5 for v in by.values()))}
+    null = boot = None
+    if permutations:
+        null = permutation_null(scores, plan, rng, permutations)
+        value.update(permutation_mean=float(null.mean()), p_permutation=float((1+np.sum(null <= pct.mean()))/(1+permutations)))
+    if bootstrap:
+        boot = two_way_bootstrap(pct, people, blocks, rng, bootstrap); value['ci95'] = [float(np.quantile(boot, .025)), float(np.quantile(boot, .975))]
+    return value, pct, null, boot
 
 
 @torch.no_grad()
-def identification(model, cache, items, device, drop_region=None, lag_sets=None, limit=None):
-    """Rank of each EEG window's own audio among all anchors of the same dataset (chance rank percentile 0.5)."""
-    model.eval(); result = {}; lag_sets = lag_sets or {'model lags': model.lags}
+def identification(model, cache, items, device, distractors=(), lag_rules=None, drop_region=None, limit=None,
+                   permutations=0, bootstrap=0, seed=11, detail=False):
+    """Rank of each EEG window's own audio among candidate 3 s segments of its dataset (chance rank percentile
+    0.5), in two pools scored from the same similarities: 'own' holds every anchor of the windows' own content;
+    with `distractors`, 'own+distractors' adds every anchor of those splits.
+
+    With `permutations`: a null that pairs each person's windows of a content block with that block's audio
+    circularly shifted in time, so knowing only *which block* does not count. With `bootstrap`: an interval
+    that resamples people and content blocks together. Datasets are pooled with equal weight. With `detail`:
+    the per-window rank percentiles of the first lag rule, for paired comparisons between models."""
+    model.eval(); rng = np.random.default_rng(seed); lag_rules = lag_rules or {'training rule': None}
+    pools = ('own', 'own+distractors') if distractors else ('own',); first = next(iter(lag_rules))
+    result, replicas = {}, defaultdict(lambda: {'null': [], 'boot': []})
     for dataset in sorted({d for d, _, _ in items}):
         rows = cache.records[dataset]; chosen = [(i, a) for d, i, a in items if d == dataset][:limit]
-        anchors = sorted({(rows[i]['audio'], a) for i, a in chosen}); where = {k: n for n, k in enumerate(anchors)}
-        A = []
-        for n in range(0, len(anchors), 64):
-            wv, en = cache.audio_batch([(dataset, c, a) for c, a in anchors[n:n+64]]); A.append(model.audio(wv.to(device), en.to(device)))
-        A = torch.cat(A); per = {name: [] for name in lag_sets}; people = []
+        block = {(rows[i]['audio'], a): cache.block(dataset, rows[i]['audio'], a) for i, a in chosen}; mine = set(block)
+        for r in rows:
+            if r['split'] in distractors and condition(r) == 'clean':
+                for a in anchor_grid(r): block.setdefault((r['audio'], a), cache.block(dataset, r['audio'], a))
+        keys = sorted(block); where = {k: n for n, k in enumerate(keys)}; A = []
+        for n in range(0, len(keys), 64):
+            wv, en = cache.audio_batch([(dataset, c, a) for c, a in keys[n:n+64]]); A.append(model.audio(wv.to(device), en.to(device)))
+        A = torch.cat(A); own = np.array([where[(rows[i]['audio'], a)] for i, a in chosen])
+        scores = {name: [] for name in lag_rules}; posterior = []
         for n in range(0, len(chosen), 64):
             part = chosen[n:n+64]; win = [eeg_window(rows[i], a, cache.good[dataset][i]) for i, a in part]
             x = torch.from_numpy(np.stack([w for w, _ in win])).to(device); mask = torch.from_numpy(np.stack([m for _, m in win])).to(device)
             pos = torch.from_numpy(np.stack([cache.positions[dataset][i] for i, _ in part])).to(device)
-            subject = torch.tensor([cache.subject_index.get(rows[i]['key'], len(cache.subjects)) for i, _ in part], device=device)
-            E = model.eeg(x, pos, mask, subject, drop_region); own = torch.tensor([where[(rows[i]['audio'], a)] for i, a in part], device=device)
-            for name, lags in lag_sets.items():
-                S, _ = model.scores(E, A, subject, lags); per[name].append((S > S.gather(1, own[:, None])).sum(1).cpu())
-            people += [rows[i]['key'] for i, _ in part]
-        result[dataset] = {'windows': len(chosen), 'candidates': len(anchors)}
-        for name in lag_sets:
-            better = torch.cat(per[name]).numpy(); pct = better/max(len(anchors)-1, 1)
-            by = defaultdict(list)
-            for p, v in zip(people, pct): by[p].append(v)
-            result[dataset][name] = {'top1': float(np.mean(better == 0)), 'top5': float(np.mean(better < 5)), 'top10': float(np.mean(better < 10)),
-                                     'chance_top1': 1/len(anchors), 'chance_top10': min(10, len(anchors))/len(anchors), 'mean_rank_percentile': float(pct.mean()),
-                                     'people_better_than_chance': int(sum(np.mean(v) < .5 for v in by.values())), 'people': len(by)}
-    first = next(iter(lag_sets)); result['mean_rank_percentile'] = float(np.mean([v[first]['mean_rank_percentile'] for k, v in result.items() if k in DATASETS]))
+            subject = torch.tensor([cache.subject_id(rows[i]['key']) for i, _ in part], device=device)
+            E = model.eeg(x, pos, mask, subject, drop_region)
+            for name, lags in lag_rules.items():
+                S, per_lag = model.scores(E, A, subject, lags); scores[name].append(S.float().cpu().numpy())
+                if lags is None and len(model.lags) > 1:
+                    hit = per_lag[torch.arange(len(part), device=device), torch.as_tensor(own[n:n+64], device=device)]
+                    posterior.append((model.beta()*hit+model.lag_prior(subject)).softmax(-1).float().cpu().numpy())
+        scores = {name: np.concatenate(v) for name, v in scores.items()}
+        people = [rows[i]['key'] for i, _ in chosen]; blocks = [block[(rows[i]['audio'], a)] for i, a in chosen]
+        info = result[dataset] = {'windows': len(chosen), 'people': len(set(people)), 'blocks': len(set(blocks))}
+        if posterior: info['latency_posterior'] = np.concatenate(posterior).mean(0).tolist()
+        if detail: info['detail'] = {'id': [[i, a] for i, a in chosen], 'person': people, 'block': blocks}
+        # Each content block's anchors in time order, as candidate columns.
+        timeline = defaultdict(list)
+        for k, b in block.items(): timeline[b].append(where[k])
+        timeline = {b: sorted(v, key=lambda n: keys[n][1]) for b, v in timeline.items()}
+        columns = {'own': np.array(sorted(where[k] for k in mine)), 'own+distractors': np.arange(len(keys))}
+        for pool in pools:
+            index = np.full(len(keys), -1); index[columns[pool]] = np.arange(len(columns[pool])); local = index[own]
+            plan = permutation_plan(local, people, blocks, {b: [int(index[c]) for c in v if index[c] >= 0] for b, v in timeline.items()})
+            info[pool] = {'candidates': len(columns[pool])}
+            for name in lag_rules:
+                value, pct, null, boot = rank_statistics(scores[name][:, columns[pool]], local, people, blocks, plan, rng, permutations, bootstrap)
+                info[pool][name] = value
+                if null is not None: replicas[pool, name]['null'].append(null)
+                if boot is not None: replicas[pool, name]['boot'].append(boot)
+                if detail and name == first: info['detail'][pool] = pct.tolist()
+    found = [d for d in DATASETS if d in result]; result['pooled'] = {}
+    for pool in pools:
+        result['pooled'][pool] = {}
+        for name in lag_rules:
+            mean = float(np.mean([result[d][pool][name]['mean_rank_percentile'] for d in found])) if found else float('nan')
+            pooled = result['pooled'][pool][name] = {'mean_rank_percentile': mean}
+            if replicas[pool, name]['null']:
+                null = np.mean(replicas[pool, name]['null'], 0)
+                pooled.update(permutation_mean=float(null.mean()), p_permutation=float((1+np.sum(null <= mean))/(1+permutations)))
+            if replicas[pool, name]['boot']:
+                boot = np.mean(replicas[pool, name]['boot'], 0); pooled['ci95'] = [float(np.quantile(boot, .025)), float(np.quantile(boot, .975))]
+    result['mean_rank_percentile'] = result['pooled'][pools[-1]][first]['mean_rank_percentile']
     return result
 
+
+# ----------------------------------------------------------------------------- training
 
 def lr_at(fraction, step, peak=1e-3, warmup=300):
     if step < warmup: return peak*(step+1)/warmup
     return peak*(.05+.95*.5*(1+math.cos(math.pi*min(1., max(0., (fraction-.6)/.4))))) if fraction > .6 else peak
 
 
-def train_alignment(cfg, cache, folder, deadline, device='cpu', threads=8, workers=2, validate_minutes=20, seed=11, max_steps=None, variant='full'):
+def train_alignment(cfg, cache, folder, deadline, device='cpu', threads=8, workers=2, validate_minutes=20, seed=11,
+                    max_steps=None, variant='main', snapshot_minutes=None, horizon=None):
+    """Train until `deadline` (or `max_steps`). The learning-rate schedule spans `horizon` seconds (default:
+    up to the deadline), so a short run given the long run's horizon has the same history as the long
+    run's first minutes. With `snapshot_minutes`, validation also runs at that time and the best
+    checkpoint so far is kept as best_<m>min.pt, for comparison with variants trained that long."""
     from torch.utils.data import DataLoader
-    torch.manual_seed(seed); torch.set_num_threads(threads); folder = Path(folder); folder.mkdir(parents=True, exist_ok=True)
-    train_people = set(cache.subjects); dev = set(cfg.fold_subjects('P1', 'F0', 'validation'))
-    model = Aligner(np.load(cache.folder/'centroids.npy'), len(cache.subjects), variant).to(device)
+    folder = Path(folder)
+    if (folder/'latest.pt').exists(): raise ValueError(f'{folder} already holds a run; choose another --run')
+    torch.manual_seed(seed); torch.set_num_threads(threads); folder.mkdir(parents=True, exist_ok=True)
+    dev_items = fixed_set(cache, set(cfg.fold_subjects('P1', 'F0', 'validation')), 'validation')
+    model = Aligner(np.load(cache.folder/'centroids.npy'), cache.subjects, variant).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=.01)
-    loader = DataLoader(Stream(cache, train_people, 'train', seed=seed), batch_size=None, num_workers=workers, persistent_workers=workers > 0, prefetch_factor=4 if workers else None)
-    dev_items = fixed_set(cache, dev, 'validation'); began = time.time(); last_check = began; best = 1.; step = 0
-    status(folder, stage='alignment', variant=variant, device=device, began=time.strftime('%H:%M'), deadline=time.strftime('%H:%M', time.localtime(deadline)))
+    spec = VARIANTS[variant]; share = spec.get('word_anchors', 0.); onsets = word_onsets(cfg, cache) if share else None
+    loader = DataLoader(Stream(cache, set(cache.subjects), 'train', seed=seed, onsets=onsets, word_share=share, conditions=spec.get('conditions', ('clean',))),
+                        batch_size=None, num_workers=workers,
+                        persistent_workers=workers > 0, prefetch_factor=4 if workers else None)
+    began = time.time(); horizon = horizon or max(deadline-began, 1); last_check = began; best = math.inf; step = 0
+    snapshot = folder/f'best_{snapshot_minutes}min.pt' if snapshot_minutes else None; snapped = False
+    status(folder, stage='alignment', variant=variant, device=device, smoke=cache.smoke, began=time.strftime('%H:%M'),
+           deadline=time.strftime('%H:%M', time.localtime(deadline)), schedule_minutes=round(horizon/60))
+
+    def validate(final=False):
+        nonlocal best
+        score = identification(model, cache, dev_items, device); minutes = round((time.time()-began)/60, 1)
+        append_jsonl(folder/'validation.jsonl', {'step': step, 'minutes': minutes, 'final': final, **score})
+        saved = {'model': model.state_dict(), 'step': step, 'minutes': minutes, 'subjects': cache.subjects, 'validation': score, 'variant': variant}
+        torch.save(saved, folder/'latest.pt')
+        if score['mean_rank_percentile'] < best or not (folder/'best.pt').exists():
+            best = score['mean_rank_percentile']; torch.save(saved, folder/'best.pt')
+        status(folder, validated_step=step, validation=score['mean_rank_percentile'], best=best)
+        return score
+
     for batch in loader:
-        now = time.time(); fraction = (now-began)/max(deadline-began, 1)
+        now = time.time()
         if now >= deadline or (max_steps and step >= max_steps): break
-        for group in optimizer.param_groups: group['lr'] = lr_at(fraction, step)
+        if snapshot and not snapped and now-began >= snapshot_minutes*60:
+            validate(); shutil.copy(folder/'best.pt', snapshot); snapped = True; last_check = time.time()
+        for group in optimizer.param_groups: group['lr'] = lr_at((now-began)/horizon, step)
         model.train(); batch = to(batch, device)
         wv, en = cache.audio_batch(batch['anchors'])
         E = model.eeg(batch['eeg'], batch['positions'], batch['mask'], batch['subject']); A = model.audio(wv.to(device), en.to(device))
@@ -438,55 +669,61 @@ def train_alignment(cfg, cache, folder, deadline, device='cpu', threads=8, worke
             append_jsonl(folder/'alignment.jsonl', {'step': step, 'minutes': round((now-began)/60, 1), 'dataset': batch['dataset'], 'loss': float(loss), **parts,
                                                     'beta': float(model.beta()), 'lr': optimizer.param_groups[0]['lr']})
             status(folder, step=step, last={'loss': float(loss), **parts})
-        if now-last_check >= validate_minutes*60 or (max_steps and step == max_steps):
-            last_check = now; score = identification(model, cache, dev_items, device)
-            append_jsonl(folder/'validation.jsonl', {'step': step, 'minutes': round((now-began)/60, 1), **score})
-            torch.save({'model': model.state_dict(), 'step': step, 'subjects': cache.subjects, 'validation': score, 'variant': model.variant}, folder/'latest.pt')
-            if score['mean_rank_percentile'] < best:
-                best = score['mean_rank_percentile']; torch.save({'model': model.state_dict(), 'step': step, 'subjects': cache.subjects, 'validation': score, 'variant': model.variant}, folder/'best.pt')
-            status(folder, validated_step=step, validation=score['mean_rank_percentile'], best=best)
-    score = identification(model, cache, dev_items, device)
-    append_jsonl(folder/'validation.jsonl', {'step': step, 'minutes': round((time.time()-began)/60, 1), 'final': True, **score})
-    torch.save({'model': model.state_dict(), 'step': step, 'subjects': cache.subjects, 'validation': score, 'variant': model.variant}, folder/'latest.pt')
-    if score['mean_rank_percentile'] < best or not (folder/'best.pt').exists():
-        torch.save({'model': model.state_dict(), 'step': step, 'subjects': cache.subjects, 'validation': score, 'variant': model.variant}, folder/'best.pt')
+        if now-last_check >= validate_minutes*60: last_check = now; validate()
+    score = validate(final=True)
+    if snapshot and not snapped:
+        shutil.copy(folder/'best.pt', snapshot); status(folder, snapshot_note=f'run ended before {snapshot_minutes} min; {snapshot.name} is the best checkpoint at the end')
     status(folder, stage='alignment-done', step=step)
     return score
 
 
-def load_aligner(cache, folder, device):
-    saved = torch.load(Path(folder)/'best.pt', map_location=device, weights_only=False)
-    model = Aligner(np.load(cache.folder/'centroids.npy'), len(cache.subjects), saved.get('variant', 'full')).to(device); model.load_state_dict(saved['model']); model.eval().requires_grad_(False)
+def load_aligner(cache, folder, device, checkpoint='best.pt'):
+    saved = torch.load(Path(folder)/checkpoint, map_location=device, weights_only=False)
+    model = Aligner(np.load(cache.folder/'centroids.npy'), cache.subjects, saved['variant']).to(device)
+    model.load_state_dict(saved['model']); model.eval().requires_grad_(False)
     return model, saved
 
 
-def audio_anchor_sampler(cache, split, rng, count):
-    """Audio-only anchors on content of one split, for the decoder; no EEG or people involved."""
+def audio_anchor_sampler(cache, split, rng, count, margin=1., balance=False, onsets=None, seconds=SEG*FRAME, conditions=None):
+    """Audio-only anchors on content of one split, for the decoder; no EEG or people involved. With `balance`,
+    every dataset is drawn equally often (blocks by duration within it), otherwise blocks by duration overall.
+    With `onsets` ({(dataset, content): anchors}), anchors are word-aligned instead of uniform."""
     spans = {}
     for d, rows in cache.records.items():
         for r in rows:
-            if r['split'] == split: spans[(d, r['audio'], r['start'])] = r['duration']
-    keys = sorted(spans); weight = np.array([spans[k] for k in keys]); weight = weight/weight.sum(); out = []
+            if r['split'] == split and (conditions is None or condition(r) in conditions): spans[(d, r['audio'], r['start'])] = r['duration']
+    keys = sorted(spans); weight = np.array([spans[k] for k in keys], float)
+    if balance:
+        for d in {k[0] for k in keys}:
+            mine = np.array([k[0] == d for k in keys]); weight[mine] /= weight[mine].sum()
+    weight = weight/weight.sum(); out = []
     while len(out) < count:
-        d, c, start = keys[rng.choice(len(keys), p=weight)]; hi = start+spans[(d, c, start)]-SEG*FRAME-.1
-        if hi <= start: continue
-        out.append((d, c, round(rng.uniform(start, hi)/FRAME)*FRAME))
+        d, c, start = keys[rng.choice(len(keys), p=weight)]; lo, hi = start+margin, start+spans[(d, c, start)]-seconds-margin
+        if hi <= lo: continue
+        if onsets is not None:
+            words = onsets.get((d, c), np.zeros(0)); words = words[(words >= lo) & (words <= hi)]
+            if not len(words): continue
+            out.append((d, c, float(words[rng.integers(len(words))])))
+        else: out.append((d, c, round(rng.uniform(lo, hi)/FRAME)*FRAME))
     return out
 
 
-def train_decoder(cache, folder, deadline, device='cpu', threads=4, seed=11, max_steps=None):
+def train_decoder(cache, folder, deadline, device='cpu', threads=4, seed=11, max_steps=None, noise=0.):
+    """Mel decoder on the audio-side embedding. `noise` is the expected length of the perturbation added to the
+    unit-length embedding frames in half of the batches (per-dimension sd = noise / sqrt(128)); off by default."""
     torch.manual_seed(seed); torch.set_num_threads(threads); folder = Path(folder); rng = np.random.default_rng(seed)
     model, _ = load_aligner(cache, folder, device); decoder = MelDecoder().to(device)
     optimizer = torch.optim.AdamW(decoder.parameters(), lr=1e-3, weight_decay=.01); step = 0; began = time.time()
+    status(folder, stage='decoder', decoder_began=time.strftime('%H:%M'))
     while time.time() < deadline and not (max_steps and step >= max_steps):
         anchors = audio_anchor_sampler(cache, 'train', rng, 32); wv, en = cache.audio_batch(anchors); target = cache.mel_batch(anchors).to(device)
         with torch.no_grad(): z = model.audio(wv.to(device), en.to(device))
-        if rng.random() < .5: z = F.normalize(z+.15*torch.randn_like(z), dim=-1)
+        if noise and rng.random() < .5: z = F.normalize(z+noise/math.sqrt(z.shape[-1])*torch.randn_like(z), dim=-1)
         for group in optimizer.param_groups: group['lr'] = lr_at((time.time()-began)/max(deadline-began, 1), step)
         loss = F.l1_loss(decoder(z), target); optimizer.zero_grad(set_to_none=True); loss.backward(); optimizer.step(); step += 1
         if step % 50 == 0: append_jsonl(folder/'decoder.jsonl', {'step': step, 'minutes': round((time.time()-began)/60, 1), 'l1': float(loss)})
         if step % 500 == 0: torch.save({'decoder': decoder.state_dict(), 'step': step}, folder/'decoder.pt')
-    torch.save({'decoder': decoder.state_dict(), 'step': step}, folder/'decoder.pt')
+    torch.save({'decoder': decoder.state_dict(), 'step': step}, folder/'decoder.pt'); status(folder, stage='decoder-done', decoder_step=step)
     return step
 
 
@@ -496,6 +733,7 @@ def train_bridge(cfg, cache, folder, deadline, device='cpu', threads=5, workers=
     model, _ = load_aligner(cache, folder, device); bridge = Bridge().to(device)
     optimizer = torch.optim.AdamW(bridge.parameters(), lr=5e-4, weight_decay=.01); step = 0; began = time.time()
     loader = DataLoader(Stream(cache, set(cache.subjects), 'train', seed=seed+1), batch_size=None, num_workers=workers, persistent_workers=workers > 0)
+    status(folder, stage='bridge', bridge_began=time.strftime('%H:%M'))
     for batch in loader:
         if time.time() >= deadline or (max_steps and step >= max_steps): break
         batch = to(batch, device); wv, en = cache.audio_batch(batch['anchors'])
@@ -510,132 +748,341 @@ def train_bridge(cfg, cache, folder, deadline, device='cpu', threads=5, workers=
         if step % 25 == 0: append_jsonl(folder/'bridge.jsonl', {'step': step, 'minutes': round((time.time()-began)/60, 1), 'cosine_loss': float(cosine), 'loss': float(loss),
                                                                  'batch_top1': float((logits.argmax(1) == batch['anchor']).float().mean()), 'chance': 1/len(A)})
         if step % 250 == 0: torch.save({'bridge': bridge.state_dict(), 'step': step}, folder/'bridge.pt')
-    torch.save({'bridge': bridge.state_dict(), 'step': step}, folder/'bridge.pt')
+    torch.save({'bridge': bridge.state_dict(), 'step': step}, folder/'bridge.pt'); status(folder, stage='bridge-done', bridge_step=step)
     return step
 
 
 # ----------------------------------------------------------------------------- evaluation
 
-def _wave(cache_cfg, dataset, content, a, seconds=SEG*FRAME):
+def gate(summary, alpha=.05):
+    """Audio is generated only if retrieval of unseen speech beats the within-block permutation baseline
+    (p < alpha) and stays better than chance across people and blocks (upper 95% bound < 0.5), for both
+    the trained-on and the never-seen people, in every candidate pool."""
+    checks = [v['training rule'] for k in ('seen_people_unseen_speech', 'unseen_people_unseen_speech') for v in summary[k]['pooled'].values()]
+    return all(v.get('p_permutation', 1.) < alpha and v.get('ci95', [1., 1.])[1] < .5 for v in checks)
+
+
+@torch.no_grad()
+def evaluate_retrieval(cfg, cache, folder, out, run, device='cpu', checkpoint='best.pt', threads=8, permutations=1000, bootstrap=2000):
+    """Retrieval of unseen speech for trained-on and never-seen people under the model's own latency rule
+    (fixed latencies only as diagnostics), with permutation test, bootstrap intervals, the learned
+    latencies and the importance of each scalp region."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    torch.set_num_threads(threads); folder, out = Path(folder), Path(out); out.mkdir(parents=True, exist_ok=True)
+    model, saved = load_aligner(cache, folder, device, checkpoint)
+    rules = {'training rule': None, 'diagnostic: fixed 0 ms': (0,), 'diagnostic: fixed 200 ms': (5,)}
+    if model.lags != LAGS: rules['diagnostic: 0-480 ms, flat prior'] = LAGS
+    summary = {'run': run, 'variant': model.variant, 'checkpoint': checkpoint, 'smoke': cache.smoke, 'alignment_step': saved['step'],
+               'training_minutes': saved.get('minutes'), 'checkpoint_validation': saved['validation']['mean_rank_percentile'],
+               'lag_rules': list(rules), 'permutations': permutations, 'bootstrap': bootstrap}
+    seen, unseen, dev = set(cache.subjects), set(cfg.fold_subjects('P1', 'F0', 'test')), set(cfg.fold_subjects('P1', 'F0', 'validation'))
+    windows = {}
+    for name, people in (('seen_people_unseen_speech', seen), ('unseen_people_unseen_speech', unseen)):
+        status(folder, stage=f'evaluation ({checkpoint}): {name}')
+        summary[name] = identification(model, cache, fixed_set(cache, people, 'test'), device, distractors=('validation',), lag_rules=rules,
+                                       permutations=permutations, bootstrap=bootstrap, detail=True)
+        windows[name] = {d: summary[name][d].pop('detail') for d in DATASETS if d in summary[name]}
+    summary['generation_gate_passed'] = gate(summary)
+    summary['region_importance'] = None
+    if model.eeg.pool.mode != 'shuffled':
+        status(folder, stage=f'evaluation ({checkpoint}): regions')
+        dev_items = fixed_set(cache, dev, 'validation'); limit = 16 if cache.smoke else 240
+        base = identification(model, cache, dev_items, device, limit=limit)['mean_rank_percentile']
+        summary['region_importance'] = [identification(model, cache, dev_items, device, drop_region=k, limit=limit)['mean_rank_percentile']-base
+                                        for k in range(model.eeg.pool.centroids.shape[0])]
+    lags_ms = [d*FRAME*1000 for d in model.lags]; prior = model.dataset_logits().softmax(-1).cpu().numpy()
+    summary['latency'] = {'lags_ms': lags_ms, 'dataset_prior': {d: prior[k].tolist() for k, d in enumerate(DATASETS) if bool((model.subject_dataset == k).any())}}
+    for name, key in (('seen_people_unseen_speech', 'posterior_seen_people'), ('unseen_people_unseen_speech', 'posterior_unseen_people')):
+        summary['latency'][key] = {d: v['latency_posterior'] for d, v in summary[name].items() if d in DATASETS and 'latency_posterior' in v}
+    summary['audio_layer_weights'] = dict(zip([f'WavLM layer {k}' for k in LAYERS], model.audio.layer_logits.softmax(0).tolist())) if model.audio.proj is not None else None
+    if len(lags_ms) > 1:
+        figure, axes = plt.subplots(1, 2, figsize=(10, 3.4))
+        for dataset, p in summary['latency']['dataset_prior'].items(): axes[0].plot(lags_ms, p, marker='o', label=dataset)
+        for dataset, p in summary['latency']['posterior_seen_people'].items(): axes[1].plot(lags_ms, p, marker='o', label=dataset)
+        axes[0].set_title('dataset lag prior'); axes[1].set_title('lag posterior on correct pairs (unseen speech)')
+        for axis in axes: axis.set_xlabel('lag of EEG embedding after audio (ms); not a neural latency'); axis.legend(fontsize=7)
+        figure.tight_layout(); figure.savefig(out/'latency.png', dpi=150); plt.close(figure)
+    if summary['region_importance'] is not None:
+        montage = max(cache.positions, key=lambda d: cache.positions[d].shape[1]); figure, axes = plt.subplots(1, 2, figsize=(10, 4.6))
+        pos = torch.from_numpy(cache.positions[montage][:1]).to(device); good = torch.ones(1, pos.shape[1], dtype=torch.bool, device=device)
+        owner = model.eeg.pool.weights(pos, good)[0].argmax(0).cpu().numpy(); p = pos[0].cpu().numpy(); c = model.eeg.pool.centroids.detach().cpu().numpy()
+        axes[0].scatter(p[:, 0], p[:, 1], c=owner, cmap='tab20', s=40); axes[0].set_title(f'electrode regions ({model.eeg.pool.mode}, {montage} cap, top view)')
+        importance = np.asarray(summary['region_importance'])
+        axes[1].scatter(c[:, 0], c[:, 1], s=40+4000*np.clip(importance, 0, None), c=importance, cmap='viridis')
+        for k, (x, y) in enumerate(c[:, :2]): axes[1].annotate(str(k), (x, y), fontsize=7)
+        axes[1].set_title('region importance (retrieval loss when removed)')
+        for axis in axes: axis.set_aspect('equal'); axis.axis('off')
+        figure.tight_layout(); figure.savefig(out/'regions.png', dpi=150); plt.close(figure)
+    curve = [json.loads(l) for l in open(folder/'alignment.jsonl')] if (folder/'alignment.jsonl').exists() else []
+    check = [json.loads(l) for l in open(folder/'validation.jsonl')] if (folder/'validation.jsonl').exists() else []
+    figure, axes = plt.subplots(1, 2, figsize=(10, 3.4))
+    if curve: axes[0].plot([r['minutes'] for r in curve], [r['loss'] for r in curve], lw=.6)
+    if check: axes[1].plot([r['minutes'] for r in check], [r['mean_rank_percentile'] for r in check], marker='o')
+    axes[1].axhline(.5, ls='--', c='gray'); axes[0].set_xlabel('minutes'); axes[0].set_ylabel('training loss')
+    axes[1].set_xlabel('minutes'); axes[1].set_ylabel('dev mean rank percentile (0.5 = chance)'); figure.tight_layout(); figure.savefig(out/'training.png', dpi=150); plt.close(figure)
+    atomic_json(out/'retrieval.json', summary); atomic_json(out/'windows.json', windows); write_retrieval_report(summary, out)
+    status(folder, stage=f'evaluation ({checkpoint}) done', **{f'gate ({checkpoint})': summary['generation_gate_passed']})
+    return summary
+
+
+def word_onsets(cfg, cache, offset=-.5):
+    """{(dataset, content): anchors `offset` s from every word onset, on the frame grid} (the segments of Défossez et al. 2023)."""
+    out = {}
+    for dataset, rows in cache.records.items():
+        contents = read_json(cfg.dir('processed')/dataset/'manifest.json')['contents']
+        for c in {r['audio'] for r in rows}:
+            out[dataset, c] = np.array(sorted({round((float(w['start'])+offset)/FRAME)*FRAME for w in contents[c].get('words', [])}))
+    return out
+
+
+def word_items(cfg, cache, subjects, split, offset=-.5):
+    """Candidates as in Défossez et al. 2023: one 3 s window starting `offset` s from every word onset of the
+    split's content (neighbouring windows overlap), for every record of `subjects` that covers it."""
+    onsets = word_onsets(cfg, cache, offset)
+    return [(dataset, i, float(a)) for dataset, rows in cache.records.items() for i, r in enumerate(rows)
+            if r['key'] in subjects and r['split'] == split and condition(r) == 'clean' for a in onsets[dataset, r['audio']] if covers(r, a)]
+
+
+@torch.no_grad()
+def evaluate_word_anchored(cfg, cache, folder, out, run, device='cpu', checkpoint='best.pt', threads=8, bootstrap=2000):
+    """Top-1 / top-10 among word-anchored, overlapping 3 s candidates of the test content (the candidate rule
+    of Défossez et al. 2023), with our content-block split; intervals resample people and content blocks."""
+    torch.set_num_threads(threads); folder, out = Path(folder), Path(out); out.mkdir(parents=True, exist_ok=True)
+    model, saved = load_aligner(cache, folder, device, checkpoint); rng = np.random.default_rng(11)
+    summary = {'run': run, 'variant': model.variant, 'checkpoint': checkpoint, 'smoke': cache.smoke, 'alignment_step': saved['step'],
+               'training_minutes': saved.get('minutes'), 'bootstrap': bootstrap}
+    groups = (('seen_people_unseen_speech', set(cache.subjects)), ('unseen_people_unseen_speech', set(cfg.fold_subjects('P1', 'F0', 'test')))); windows = {}
+    for name, people in groups:
+        status(folder, stage=f'word-anchored evaluation ({checkpoint}): {name}')
+        result = identification(model, cache, word_items(cfg, cache, people, 'test'), device, detail=True); summary[name] = {}; windows[name] = {}
+        for d in DATASETS:
+            if d not in result: continue
+            v = result[d]; n = v['own']['candidates']; detail = v.pop('detail'); rank = np.asarray(detail['own'])*(n-1)
+            row = {'candidates': n, 'windows': v['windows'], 'people': v['people'], 'blocks': v['blocks'],
+                   'mean_rank_percentile': v['own']['training rule']['mean_rank_percentile']}
+            windows[name][d] = {'id': detail['id'], 'person': detail['person'], 'block': detail['block']}
+            for k in (1, 10):
+                hit = (rank < k-.5).astype(float); boot = two_way_bootstrap(hit, detail['person'], detail['block'], rng, bootstrap); windows[name][d][f'top{k}'] = hit.tolist()
+                row[f'top{k}'] = float(hit.mean()); row[f'top{k}_ci95'] = [float(np.quantile(boot, .025)), float(np.quantile(boot, .975))]
+                row[f'chance_top{k}'] = min(k, n)/n
+            summary[name][d] = row
+    atomic_json(out/'word_anchored.json', summary); atomic_json(out/'word_windows.json', windows)
+    nan = float('nan'); title = '冒烟测试：只检查代码能否运行，不是实验结果' if cache.smoke else '完整数据'
+    lines = [f"# 按词取候选的检索：{run}（变体 {model.variant}，检查点 {checkpoint}）", '', f"{title}。对齐训练 {saved['step']} 步、{saved.get('minutes')} 分钟。", '',
+             '候选的取法与 Défossez 等 2023 相同：测试内容里每个词开始前 0.5 秒起取一段 3 秒窗口，相邻候选大量重叠，只有完全对上才算命中。'
+             '切分仍是我们的整块内容切分（他们按句子切分），所以和论文数字只能粗略比较。区间按人和内容块两维 bootstrap。', '']
+    for name, title in (('seen_people_unseen_speech', '训练过的人，没听过的语音'), ('unseen_people_unseen_speech', '没见过的人，没听过的语音')):
+        lines += [f'## {title}', '', '| 数据集 | 候选 | 窗口 | 人 | top-1（偶然） | top-1 区间 | top-10（偶然） | top-10 区间 | top-10 / 偶然 | 平均排名百分位 |', '|---|---|---|---|---|---|---|---|---|---|']
+        for d, r in summary[name].items():
+            lines.append(f"| {d} | {r['candidates']} | {r['windows']} | {r['people']} | {r['top1']:.3f}（{r['chance_top1']:.4f}） | {r['top1_ci95'][0]:.3f}–{r['top1_ci95'][1]:.3f} | "
+                         f"{r['top10']:.3f}（{r['chance_top10']:.4f}） | {r['top10_ci95'][0]:.3f}–{r['top10_ci95'][1]:.3f} | {r['top10']/r['chance_top10']:.1f} | {r.get('mean_rank_percentile', nan):.3f} |")
+        lines.append('')
+    lines += ['论文中的 EEG 结果（top-10，按句子切分，测试被试也在训练集里）：Broderick2019（与 ds004408 是同一份数据）1842 个候选中 17.7%；Brennan2019 190 个候选中 25.7%。', '']
+    (out/'word_anchored.md').write_text('\n'.join(lines))
+    status(folder, stage=f'word-anchored evaluation ({checkpoint}) done')
+    return summary
+
+
+def _wave(cfg, dataset, content, a, seconds=SEG*FRAME):
     import soundfile as sf
-    folder = cache_cfg.dir('processed')/dataset; manifest = read_json(folder/'manifest.json')
+    folder = cfg.dir('processed')/dataset; manifest = read_json(folder/'manifest.json')
     with sf.SoundFile(folder/manifest['contents'][content]['path']) as f:
         f.seek(round(a*24000)); return f.read(round(seconds*24000), dtype='float32'), manifest['contents'][content].get('words', [])
 
 
 def _envelope_r(x, y):
-    from .neural import AcousticFrontend
-    front = AcousticFrontend(); a = front.numpy(x)[0][:, 0]; b = front.numpy(y)[0][:, 0]; n = min(len(a), len(b))
+    """Correlation of the broadband 25 ms RMS envelopes at 64 Hz (channel 0 of the acoustic front end)."""
+    def rms(w): return np.sqrt(np.square(np.lib.stride_tricks.sliding_window_view(np.pad(w, 300, mode='reflect'), 600)[::375]).mean(1)+1e-8)[:len(w)//375]
+    a, b = rms(x), rms(y); n = min(len(a), len(b))
     return float(np.corrcoef(a[:n], b[:n])[0, 1])
 
 
 @torch.no_grad()
-def evaluate(cfg, cache, folder, out, device='cpu', demos_per_dataset=3, threads=8, audio=True):
-    """Identification on unseen speech (seen and unseen people), learned lags and regions, and test audio."""
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
+def evaluate_audio(cfg, cache, folder, out, run, device='cpu', demos_per_dataset=3, threads=8, forced=False):
+    """Test audio for unseen speech of trained-on people: decoded from the audio-side embedding (what the
+    shared space keeps), from EEG through the bridge, and from wrong-time EEG; envelope r, ASR and WER."""
     import soundfile as sf
     from ..perceived_audio import ASR, FrozenVocos
     from ..metrics import word_errors
     from .data import reference
     torch.set_num_threads(threads); folder, out = Path(folder), Path(out); (out/'audio').mkdir(parents=True, exist_ok=True)
-    model, saved = load_aligner(cache, folder, device); summary = {'variant': model.variant, 'alignment_step': saved['step'], 'checkpoint_validation': saved['validation']['mean_rank_percentile']}
-    seen, unseen, dev = set(cache.subjects), set(cfg.fold_subjects('P1', 'F0', 'test')), set(cfg.fold_subjects('P1', 'F0', 'validation'))
-    lag_sets = {'soft lag window': LAGS, 'fixed 0 ms': (0,), 'fixed 200 ms': (5,)}
-    status(folder, stage='evaluation: identification')
-    summary['seen_people_unseen_speech'] = identification(model, cache, fixed_set(cache, seen, 'test'), device, lag_sets=lag_sets)
-    summary['unseen_people_unseen_speech'] = identification(model, cache, fixed_set(cache, unseen, 'test'), device, lag_sets=lag_sets)
-    dev_items = fixed_set(cache, dev, 'validation'); base = identification(model, cache, dev_items, device, limit=240)
-    status(folder, stage='evaluation: regions')
-    importance = []
-    for k in range(model.eeg.pool.centroids.shape[0]):
-        importance.append(identification(model, cache, dev_items, device, drop_region=k, limit=240)['mean_rank_percentile']-base['mean_rank_percentile'])
-    summary['region_importance'] = importance
-    lags_ms = [d*FRAME*1000 for d in model.lags]; prior = model.lag_logits.softmax(-1).cpu().numpy(); profiles = {}
+    model, saved = load_aligner(cache, folder, device)
+    decoder = MelDecoder().to(device); decoder.load_state_dict(torch.load(folder/'decoder.pt', map_location=device)['decoder']); decoder.eval()
+    bridge = Bridge().to(device); bridge.load_state_dict(torch.load(folder/'bridge.pt', map_location=device)['bridge']); bridge.eval()
+    vocos = FrozenVocos(cfg.model_dir('vocos')).to(device); asr = ASR(cfg, 'cpu')
+    mean = torch.tensor(cache.stats['mel_mean'], device=device)[:, None]; std = torch.tensor(cache.stats['mel_std'], device=device)[:, None]
+    render = lambda z: vocos(decoder(z)*std+mean)[0].cpu().numpy()
+    items = fixed_set(cache, set(cache.subjects), 'test'); rows_out = []; status(folder, stage='evaluation: audio')
     for dataset in DATASETS:
-        rows = [cache.subject_index[s] for s in cache.subjects if s.startswith(dataset+':')]
-        if rows: profiles[dataset] = prior[rows].mean(0).tolist()
-    summary['lag_prior'] = {'lags_ms': lags_ms, 'by_dataset': profiles}
-    summary['audio_layer_weights'] = dict(zip([f'WavLM layer {k}' for k in LAYERS], model.audio.layer_logits.softmax(0).tolist()))
-    # Figures: learned lag prior, region map, training curves.
-    figure, axis = plt.subplots(figsize=(6, 3.2))
-    for dataset, p in profiles.items(): axis.plot(lags_ms, p, marker='o', label=dataset)
-    axis.set_xlabel('EEG lag after audio (ms)'); axis.set_ylabel('learned lag prior'); axis.legend(fontsize=8); figure.tight_layout(); figure.savefig(out/'lag_prior.png', dpi=150); plt.close(figure)
-    figure, axes = plt.subplots(1, 2, figsize=(10, 4.6))
-    pos = torch.from_numpy(cache.positions['ds004408'][:1]).to(device); good = torch.ones(1, pos.shape[1], dtype=torch.bool, device=device)
-    owner = model.eeg.pool.weights(pos, good)[0].argmax(0).cpu().numpy(); p = pos[0].cpu().numpy(); c = model.eeg.pool.centroids.detach().cpu().numpy()
-    axes[0].scatter(p[:, 0], p[:, 1], c=owner, cmap='tab20', s=40); axes[0].scatter(c[:, 0], c[:, 1], marker='x', c='k', s=20)
-    axes[0].set_title('electrode clusters (128-channel cap, top view)'); axes[0].set_aspect('equal'); axes[0].axis('off')
-    scale = np.clip(np.asarray(importance), 0, None); axes[1].scatter(c[:, 0], c[:, 1], s=40+4000*scale, c=importance, cmap='viridis')
-    for k, (x, y) in enumerate(c[:, :2]): axes[1].annotate(str(k), (x, y), fontsize=7)
-    axes[1].set_title('region importance (loss of identification when removed)'); axes[1].set_aspect('equal'); axes[1].axis('off')
-    figure.tight_layout(); figure.savefig(out/'regions.png', dpi=150); plt.close(figure)
-    curve = [json.loads(l) for l in open(folder/'alignment.jsonl')] if (folder/'alignment.jsonl').exists() else []
-    check = [json.loads(l) for l in open(folder/'validation.jsonl')] if (folder/'validation.jsonl').exists() else []
-    figure, axes = plt.subplots(1, 2, figsize=(10, 3.4))
-    if curve: axes[0].plot([r['minutes'] for r in curve], [r['loss'] for r in curve], lw=.6); axes[0].set_xlabel('minutes'); axes[0].set_ylabel('training loss')
-    if check: axes[1].plot([r['minutes'] for r in check], [r['mean_rank_percentile'] for r in check], marker='o'); axes[1].axhline(.5, ls='--', c='gray')
-    axes[1].set_xlabel('minutes'); axes[1].set_ylabel('dev mean rank percentile (chance 0.5)'); figure.tight_layout(); figure.savefig(out/'training.png', dpi=150); plt.close(figure)
-    # Test audio: the decoder from the audio side (upper bound) and from EEG through the bridge, with a wrong-time control.
-    if audio and (folder/'decoder.pt').exists() and (folder/'bridge.pt').exists():
-        status(folder, stage='evaluation: audio')
-        decoder = MelDecoder().to(device); decoder.load_state_dict(torch.load(folder/'decoder.pt', map_location=device)['decoder']); decoder.eval()
-        bridge = Bridge().to(device); bridge.load_state_dict(torch.load(folder/'bridge.pt', map_location=device)['bridge']); bridge.eval()
-        vocos = FrozenVocos(cfg.model_dir('vocos')).to(device); asr = ASR(cfg, 'cpu')
-        mean = torch.tensor(cache.stats['mel_mean'], device=device)[:, None]; std = torch.tensor(cache.stats['mel_std'], device=device)[:, None]
-        render = lambda z: vocos(decoder(z)*std+mean)[0].cpu().numpy()
-        items = fixed_set(cache, seen, 'test'); rows_out = []
-        for dataset in DATASETS:
-            rows = cache.records[dataset]; mine = [(i, a) for d, i, a in items if d == dataset]
-            if not mine: continue
-            anchors = sorted({(rows[i]['audio'], a) for i, a in mine}); picks = [anchors[int(n)] for n in np.linspace(0, len(anchors)-1, demos_per_dataset).round()]
-            for content, a in picks:
-                people = sorted({rows[i]['key'] for i, b in mine if b == a and rows[i]['audio'] == content})[:2]
-                original, words = _wave(cfg, dataset, content, a); text = reference(words, a, SEG*FRAME)
-                stem = f'{dataset}_{content}_{a:07.2f}'; sf.write(out/'audio'/f'{stem}_original.wav', original, 24000)
-                wv, en = cache.audio_batch([(dataset, content, a)]); z = model.audio(wv.to(device), en.to(device)); oracle = render(z)
-                sf.write(out/'audio'/f'{stem}_from_audio_embedding.wav', oracle, 24000)
-                for key in people:
-                    i = next(i for i, b in mine if b == a and rows[i]['key'] == key and rows[i]['audio'] == content)
-                    other = [(j, b) for j, b in mine if rows[j]['key'] == key and (rows[j]['audio'] != content or abs(b-a) >= 10)]
-                    result = {'dataset': dataset, 'content': content, 'start': a, 'person': key, 'reference': text}
-                    for label, (j, b) in (('eeg', (i, a)), ('wrong_time_eeg', other[0] if other else (i, a))):
-                        w, m = eeg_window(rows[j], b, cache.good[dataset][j])
-                        subject = torch.tensor([cache.subject_index.get(key, len(cache.subjects))], device=device)
-                        E = model.eeg(torch.from_numpy(w)[None].to(device), torch.from_numpy(cache.positions[dataset][j])[None].to(device), torch.from_numpy(m)[None].to(device), subject)
-                        audio = render(bridge(E, model.compensated(E, subject)))
-                        result[f'{label}_envelope_r'] = _envelope_r(audio, original)
-                        if label == 'eeg':
-                            sf.write(out/'audio'/f'{stem}_{key.split(":")[1]}_from_eeg.wav', audio, 24000); result['eeg_transcript'] = asr(audio)
-                        else:
-                            sf.write(out/'audio'/f'{stem}_{key.split(":")[1]}_wrong_time.wav', audio, 24000)
-                    result['oracle_envelope_r'] = _envelope_r(oracle, original); result['oracle_transcript'] = asr(oracle); result['original_transcript'] = asr(original)
-                    ref = asr.normalize(text).strip()
-                    if ref:
-                        for label in ('original', 'oracle', 'eeg'): result[f'{label}_wer'] = word_errors(ref, result[f'{label}_transcript'])['wer']
-                    rows_out.append(result); append_jsonl(out/'audio_results.jsonl', result)
-        summary['audio'] = rows_out
-    atomic_json(out/'summary.json', summary); write_report(summary, out); status(folder, stage='done')
-    return summary
+        rows = cache.records.get(dataset, []); mine = [(i, a) for d, i, a in items if d == dataset]
+        if not mine: continue
+        anchors = sorted({(rows[i]['audio'], a) for i, a in mine}); picks = [anchors[int(n)] for n in np.linspace(0, len(anchors)-1, min(demos_per_dataset, len(anchors))).round()]
+        for content, a in picks:
+            original, words = _wave(cfg, dataset, content, a); text = reference(words, a, SEG*FRAME); stem = f'{dataset}_{content}_{a:07.2f}'
+            sf.write(out/'audio'/f'{stem}_original.wav', original, 24000)
+            wv, en = cache.audio_batch([(dataset, content, a)]); oracle = render(model.audio(wv.to(device), en.to(device)))
+            sf.write(out/'audio'/f'{stem}_from_audio_embedding.wav', oracle, 24000)
+            for key in sorted({rows[i]['key'] for i, b in mine if b == a and rows[i]['audio'] == content})[:2]:
+                i = next(i for i, b in mine if b == a and rows[i]['key'] == key and rows[i]['audio'] == content)
+                other = [(j, b) for j, b in mine if rows[j]['key'] == key and (rows[j]['audio'] != content or abs(b-a) >= 10)]
+                result = {'dataset': dataset, 'content': content, 'start': a, 'person': key, 'reference': text}
+                for label, (j, b) in (('eeg', (i, a)), ('wrong_time_eeg', other[0] if other else (i, a))):
+                    w, m = eeg_window(rows[j], b, cache.good[dataset][j]); subject = torch.tensor([cache.subject_id(key)], device=device)
+                    E = model.eeg(torch.from_numpy(w)[None].to(device), torch.from_numpy(cache.positions[dataset][j])[None].to(device), torch.from_numpy(m)[None].to(device), subject)
+                    audio = render(bridge(E, model.compensated(E, subject))); result[f'{label}_envelope_r'] = _envelope_r(audio, original)
+                    sf.write(out/'audio'/f"{stem}_{key.split(':')[1]}_{'from_eeg' if label == 'eeg' else 'wrong_time'}.wav", audio, 24000)
+                    if label == 'eeg': result['eeg_transcript'] = asr(audio)
+                result.update(oracle_envelope_r=_envelope_r(oracle, original), oracle_transcript=asr(oracle), original_transcript=asr(original))
+                ref = asr.normalize(text).strip()
+                for label in ('original', 'oracle', 'eeg'): result[f'{label}_wer'] = word_errors(ref, result[f'{label}_transcript'])['wer'] if ref else None
+                rows_out.append(result); append_jsonl(out/'audio_results.jsonl', result)
+    info = {'run': run, 'variant': model.variant, 'checkpoint': 'best.pt', 'smoke': cache.smoke, 'alignment_step': saved['step'],
+            'training_minutes': saved.get('minutes'), 'forced': forced}
+    atomic_json(out/'audio.json', {**info, 'rows': rows_out}); write_audio_report(rows_out, out, info); status(folder, stage='evaluation: audio done')
+    return rows_out
 
 
-def write_report(summary, out):
-    lines = [f"# 两塔软对齐：一夜测试结果（{summary['variant']}）", '', f"对齐模型训练到第 {summary['alignment_step']} 步。指标是平均排名百分位（0 = 总排第一，0.5 = 偶然）和 top-1 / top-10。", '']
+# ----------------------------------------------------------------------------- reports
+
+def _title(info, what):
+    kind = '冒烟测试：只检查代码能否运行，不是实验结果' if info.get('smoke') else '完整数据'
+    return [f"# {what}：{info['run']}（变体 {info['variant']}，检查点 {info['checkpoint']}）", '',
+            f"{kind}。对齐训练 {info['alignment_step']} 步、{info.get('training_minutes')} 分钟。", '']
+
+
+def write_retrieval_report(summary, out):
+    nan = float('nan'); diagnostics = summary['lag_rules'][1:]; fmt = lambda v: f"{v['mean_rank_percentile']:.3f}"
+    lines = _title(summary, '跨内容检索')
+    lines += ['指标：平均排名百分位（并列取平均名次；0 = 每次都排第一，0.5 = 偶然）。两种候选池用同一组相似度打分：“只含测试候选”是该数据集测试内容的全部 3 秒片段；'
+              '“测试 + 验证候选”再加上验证内容的全部 3 秒片段作干扰项（验证内容没有参与训练，但在开发被试身上用于挑选检查点）。',
+              f"95% 区间：按人和内容块两维 bootstrap（{summary['bootstrap']} 次）。p 值：在每个人、每个内容块内部，把 EEG 和该块的音频循环错位后重新配对"
+              f"（{summary['permutations']} 次），检验模型认出的是块内的具体时刻，而不只是哪一块内容。四个数据集等权合并。",
+              '“训练规则”是模型训练时用的延迟规则，是主结果；以“diagnostic”开头的列只用来看检索依赖哪段延迟。', '']
     for name, title in (('seen_people_unseen_speech', '训练过的人，没听过的语音'), ('unseen_people_unseen_speech', '没见过的人，没听过的语音')):
-        lines += [f'## {title}', '', '| 数据集 | 候选 | 窗口 | 软时延窗口 | 固定 0 ms | 固定 200 ms | top-1（偶然） | top-10（偶然） | 好于偶然的人 |', '|---|---|---|---|---|---|---|---|---|']
+        block = summary[name]; lines += [f'## {title}', '']
+        for pool, label in POOLS.items():
+            v = block['pooled'][pool]['training rule']; ci = v.get('ci95', [nan, nan])
+            lines.append(f"- {label}，合并：{v['mean_rank_percentile']:.3f}（95% 区间 {ci[0]:.3f}–{ci[1]:.3f}），置换基线 {v.get('permutation_mean', nan):.3f}，"
+                         f"p = {v.get('p_permutation', nan):.4f}")
+        lines += ['', '| 数据集 | 窗口 | 人 | 内容块 | 候选数 | 只含测试候选 | 95% 区间 | p | 测试 + 验证候选 | 95% 区间 | p | top-10（偶然）* | 好于偶然的人* | '
+                  +''.join(f'{r}* | ' for r in diagnostics), '|'+'---|'*(13+len(diagnostics))]
         for d in DATASETS:
-            v = summary[name].get(d)
-            if not v: continue
-            s = v['soft lag window']
-            lines.append(f"| {d} | {v['candidates']} | {v['windows']} | {s['mean_rank_percentile']:.3f} | {v['fixed 0 ms']['mean_rank_percentile']:.3f} | {v['fixed 200 ms']['mean_rank_percentile']:.3f} | "
-                         f"{s['top1']:.3f}（{s['chance_top1']:.3f}） | {s['top10']:.3f}（{s['chance_top10']:.3f}） | {s['people_better_than_chance']} / {s['people']} |")
+            if d not in block: continue
+            v = block[d]; cells = [f"{v['own']['candidates']} / {v['own+distractors']['candidates']}"]
+            for pool in POOLS:
+                t = v[pool]['training rule']; ci = t.get('ci95', [nan, nan]); cells += [fmt(t), f'{ci[0]:.3f}–{ci[1]:.3f}', f"{t.get('p_permutation', nan):.4f}"]
+            t = v['own+distractors']['training rule']
+            cells += [f"{t['top10']:.3f}（{t['chance_top10']:.3f}）", f"{t['people_better_than_chance']} / {v['people']}"]+[fmt(v['own+distractors'][r]) for r in diagnostics]
+            lines.append(f"| {d} | {v['windows']} | {v['people']} | {v['blocks']} | "+' | '.join(cells)+' |')
+        lines += ['', '带 * 的列来自“测试 + 验证候选”。', '']
+    lines += [f"生成门槛（两种人群、两种候选池都要满足：置换检验 p < 0.05，且 95% 区间上界 < 0.5）：{'通过' if summary['generation_gate_passed'] else '未通过，不生成音频'}。", '',
+              '## 学到的结构', '']
+    if summary.get('audio_layer_weights'): lines.append(f"- 音频侧各层权重：{', '.join(f'{k} {v:.2f}' for k, v in summary['audio_layer_weights'].items())}")
+    peaks = {d: summary['latency']['lags_ms'][int(np.argmax(p))] for d, p in summary['latency']['posterior_seen_people'].items()}
+    if peaks:
+        lines.append(f"- 正确配对上延迟后验的峰值（训练过的人）：{', '.join(f'{d} {v:.0f} ms' for d, v in peaks.items())}。这只说明检索依赖刺激后的这段延迟窗口；"
+                     f"EEG 塔是非因果卷积，感受野约 ±{EEG_FIELD_S:.2f} 秒，音频侧也带上下文，所以峰值不是对生理延迟的测量。曲线见 `latency.png`。")
+    lines.append('- 电极区域与区域重要性见 `regions.png`。' if summary['region_importance'] is not None else '- 无空间信息对照：电极位置被打乱，不计算区域重要性。')
+    lines += ['- 训练曲线见 `training.png`。', '']
+    (Path(out)/'retrieval.md').write_text('\n'.join(lines))
+
+
+def write_audio_report(rows, out, info):
+    lines = _title(info, '测试音频（确定性 Mel 解码器 + Vocos，测试版，不是流匹配生成器）')
+    if info['forced']: lines += ['**检索没有通过生成门槛，以下音频是强制生成的，只作诊断。**', '']
+    lines += ['从音频侧嵌入还原的结果只说明共享空间保留了多少可还原的信息。包络相关高不等于内容可懂，请同时看转写和词错误率。', '',
+              '| 数据集 | 起点 | 被试 | 包络 r：音频嵌入 | 包络 r：EEG | 包络 r：错位 EEG | 原音转写 | 音频嵌入还原的转写 | EEG 生成的转写 | WER：原音 / 还原 / EEG |', '|---|---|---|---|---|---|---|---|---|---|']
+    for r in rows:
+        wer = ' / '.join('–' if r.get(f'{k}_wer') is None else f"{r[f'{k}_wer']:.2f}" for k in ('original', 'oracle', 'eeg'))
+        lines.append(f"| {r['dataset']} | {r['start']:.2f} | {r['person'].split(':')[1]} | {r['oracle_envelope_r']:.2f} | {r['eeg_envelope_r']:.2f} | {r['wrong_time_eeg_envelope_r']:.2f} | "
+                     f"{r['original_transcript']} | {r['oracle_transcript']} | {r['eeg_transcript']} | {wer} |")
+    lines += ['', '文件在 `audio/`：`_original` 原音，`_from_audio_embedding` 从音频侧嵌入还原，`_from_eeg` 从 EEG 生成，`_wrong_time` 用另一时间的 EEG 生成（对照）。']
+    (Path(out)/'audio.md').write_text('\n'.join(lines)+'\n')
+
+
+def paired_difference(reference, other, rng, count=2000, pools=tuple(POOLS)):
+    """Mean difference of per-window values (other minus reference) on the same windows. Either side may be a
+    list of runs, whose values are averaged per window first (several seeds, or one level of a factor). Per
+    dataset and pooled with equal weight, with a two-way bootstrap over people and content blocks."""
+    reference = reference if isinstance(reference, list) else [reference]; other = other if isinstance(other, list) else [other]; out = {}
+    for pool in pools:
+        means, boots = [], []
+        for d in DATASETS:
+            if any(d not in w or pool not in w[d] for w in reference+other): continue
+            base = reference[0][d]; index = {tuple(k): n for n, k in enumerate(base['id'])}
+
+            def values(w):
+                v = np.full(len(index), np.nan)
+                for k, x in zip(w[d]['id'], w[d][pool]):
+                    if tuple(k) in index: v[index[tuple(k)]] = x
+                return v
+            diff = np.mean([values(w) for w in other], 0)-np.mean([values(w) for w in reference], 0); keep = ~np.isnan(diff)
+            if not keep.any(): continue
+            means.append(diff[keep].mean())
+            boots.append(two_way_bootstrap(diff[keep], [p for p, k in zip(base['person'], keep) if k], [b for b, k in zip(base['block'], keep) if k], rng, count))
+        if means:
+            boot = np.mean(boots, 0); out[pool] = {'difference': float(np.mean(means)), 'ci95': [float(np.quantile(boot, .025)), float(np.quantile(boot, .975))]}
+    return out
+
+
+FACTOR_NAMES = {'lags': '时延规则', 'ee_weight': '跨人对比项', 'pooling': '电极汇聚', 'audio': '音频侧输入',
+                'word_anchors': '按词对齐的 segment 采样', 'conditions': 'Etard 加噪条件'}
+
+
+def compare(paths, out, minutes=None, main_path=None):
+    """Variants against the first run (the reference) on the same windows: scores in both candidate pools,
+    paired differences, word-anchored top-k, and the effect of every two-level factor that varies across runs
+    (each level averaged over the runs that have it, as in a factorial design)."""
+    nan = float('nan'); rng = np.random.default_rng(11); runs = [read_json(p) for p in paths]
+    load = lambda p, name: read_json(Path(p).parent/name) if (Path(p).parent/name).exists() else None
+    windows = [load(p, 'windows.json') for p in paths]; words = [load(p, 'word_windows.json') for p in paths]
+    groups = (('seen_people_unseen_speech', '训练过的人'), ('unseen_people_unseen_speech', '没见过的人'))
+    fmt = lambda d, p: f"{d[p]['difference']:+.3f}（{d[p]['ci95'][0]:+.3f} – {d[p]['ci95'][1]:+.3f}）" if p in d else '–'
+
+    def score(s, key, pool):
+        v = s[key]['pooled'][pool]['training rule']; ci = v.get('ci95', [nan, nan])
+        return f"{v['mean_rank_percentile']:.3f}（{ci[0]:.3f}–{ci[1]:.3f}，p = {v.get('p_permutation', nan):.3f}）"
+
+    lines = [f"# 对照{f'：每个模型训练 {minutes} 分钟' if minutes else ''}", '']
+    if any(s.get('smoke') for s in runs): lines += ['冒烟测试：只检查代码能否运行，不是实验结果。', '']
+    lines += [f"参照是 {runs[0]['run']}（{runs[0]['variant']}）。训练时长和学习率进度相同，检查点都按开发被试的验证结果挑选，每个模型按它自己训练时的延迟规则评估，"
+              '评估一律只用干净听音条件。排名百分位：四个数据集等权合并（0.5 = 偶然），括号里是人和内容块两维 bootstrap 的 95% 区间和块内循环错位置换检验的 p 值。', '',
+              '“差”都是同一批窗口上的配对差值，区间不含 0 才算有差别。排名百分位的差：负数表示更好；top-k 的差：正数表示更好。'
+              '每次训练只有一个随机种子，训练本身的随机波动只在“因素效应”里通过多次训练部分平均掉。', '']
+    for key, label in groups:
+        lines += [f'## {label}，没听过的语音', '', '| 变体 | 改动 | 分钟 | 步数 | 只含测试候选 | 测试 + 验证候选 | 与参照之差：只含测试候选 | 与参照之差：测试 + 验证候选 |', '|---|---|---|---|---|---|---|---|']
+        for n, (s, w) in enumerate(zip(runs, windows)):
+            diff = paired_difference(windows[0][key], w[key], rng) if n and windows[0] and w else {}
+            lines.append(f"| {s['variant']} | {VARIANT_NOTES.get(s['variant'], '')} | {s.get('training_minutes')} | {s['alignment_step']} | "
+                         f"{score(s, key, 'own')} | {score(s, key, 'own+distractors')} | {fmt(diff, 'own')} | {fmt(diff, 'own+distractors')} |")
+        if all(words):
+            lines += ['', '按词取候选（Défossez 的取法）的 top-10：', '', '| 变体 | 合并 | '+' | '.join(DATASETS)+' | 与参照之差（top-10） | 与参照之差（top-1） |', '|'+'---|'*(4+len(DATASETS))]
+            for n, (s, w) in enumerate(zip(runs, words)):
+                per = [np.mean(w[key][d]['top10']) if d in w[key] else nan for d in DATASETS]
+                diff = paired_difference(words[0][key], w[key], rng, pools=('top10', 'top1')) if n else {}
+                lines.append(f"| {s['variant']} | {np.nanmean(per):.3f} | "+' | '.join(f'{x:.3f}' for x in per)+f" | {fmt(diff, 'top10')} | {fmt(diff, 'top1')} |")
         lines.append('')
-    lines += ['## 学到的结构', '', f"- 音频侧各层权重：{', '.join(f'{k} {v:.2f}' for k, v in summary['audio_layer_weights'].items())}",
-              '- 时延先验见 `lag_prior.png`，电极聚类与区域重要性见 `regions.png`，训练曲线见 `training.png`。', '']
-    if summary.get('audio'):
-        lines += ['## 测试音频', '', '| 数据集 | 起点 | 被试 | 从音频嵌入还原的包络 r | 从 EEG 生成的包络 r | 错位 EEG 的包络 r | 原音转写 | 从 EEG 生成的转写 |', '|---|---|---|---|---|---|---|---|']
-        for r in summary['audio']:
-            lines.append(f"| {r['dataset']} | {r['start']:.2f} | {r['person'].split(':')[1]} | {r['oracle_envelope_r']:.2f} | {r['eeg_envelope_r']:.2f} | {r['wrong_time_eeg_envelope_r']:.2f} | {r['original_transcript']} | {r['eeg_transcript']} |")
-        lines += ['', '音频文件在 `audio/`：`_original` 原音，`_from_audio_embedding` 从音频侧嵌入还原（上限），`_from_eeg` 从 EEG 生成，`_wrong_time` 用另一时间的 EEG 生成（对照）。', '']
-    (Path(out)/'report.md').write_text('\n'.join(lines))
+    # Factors with two levels across the runs: each level averaged over its runs.
+    specs = [VARIANTS[s['variant']] for s in runs]; effects = []
+    for factor, name in FACTOR_NAMES.items():
+        levels = [repr(spec.get(factor, MAIN.get(factor))) for spec in specs]
+        if len(set(levels)) != 2: continue
+        base = repr(MAIN.get(factor)); on = [n for n, v in enumerate(levels) if v != base]; off = [n for n, v in enumerate(levels) if v == base]
+        if on and off: effects.append((name, on, off))
+    if effects and all(windows):
+        lines += ['## 因素效应', '', '每个因素：有它的所有训练平均，减去没有它的所有训练平均（同一批窗口上配对）。', '',
+                  '| 因素 | 有 / 没有（次数） | 人群 | 排名百分位之差：只含测试 | 排名百分位之差：测试 + 验证 | 按词 top-10 之差 | 按词 top-1 之差 |', '|---|---|---|---|---|---|---|']
+        for name, on, off in effects:
+            for key, label in groups:
+                d = paired_difference([windows[n][key] for n in off], [windows[n][key] for n in on], rng)
+                t = paired_difference([words[n][key] for n in off], [words[n][key] for n in on], rng, pools=('top10', 'top1')) if all(words) else {}
+                lines.append(f"| {name} | {len(on)} / {len(off)} | {label} | {fmt(d, 'own')} | {fmt(d, 'own+distractors')} | {fmt(t, 'top10')} | {fmt(t, 'top1')} |")
+        lines.append('')
+    if main_path and Path(main_path).exists():
+        full = read_json(main_path)
+        lines += ['主模型完整训练（时长不同，不属于上面的对照）：', '']
+        for key, label in groups:
+            lines.append(f"- {label}：只含测试候选 {score(full, key, 'own')}；测试 + 验证候选 {score(full, key, 'own+distractors')}（{full.get('training_minutes')} 分钟）")
+    Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_text('\n'.join(lines)+'\n')

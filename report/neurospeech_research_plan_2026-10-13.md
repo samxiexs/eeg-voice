@@ -1,3 +1,5 @@
+cd 
+
 # EEG-to-Speech Research Plan, Improved Version: NeuroSpeech
 
 **NeuroSpeech: Physiology-Guided EEG-to-Speech Generation with Foundation Models**
@@ -18,11 +20,12 @@ Provisional working title for the research; not the final paper title. Date: 202
 
 Core research goal: adapt a general-purpose EEG Foundation Model into a temporal encoder with auditory-task priors, recover continuous English speech while holding out both speech content and subjects, and test cross-dataset transfer.
 
-| Technical contribution | Question to answer | Evidence that must be provided |
-|---|---|---|
-| Speech-specific EEG Foundation Model Adaptation | Is combining REVE's pretrained representation with an auditory-physiology branch more useful than using REVE directly or a small encoder? | Encoder comparison under a fixed generator; LoRA / physiology-branch ablations; results on genuinely unseen subjects |
-| Physiology-guided Cross-modal Alignment | Can timing, rhythm and phoneme-related supervision produce a more usable, calibratable EEG condition? | Local feature alignment, phoneme-boundary diagnostics, reliability calibration, differences between correct and mismatched conditions |
-| Neural-consistent Conditional Flow Matching | Can an independently validated auditory forward model constrain the generation trajectory and improve speech content? | Forward-model gate clearance, a fully differentiable trajectory, paired WER improvement from adding the neural term, and condition controls |
+
+| Technical contribution                          | Question to answer                                                                                                                        | Evidence that must be provided                                                                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Speech-specific EEG Foundation Model Adaptation | Is combining REVE's pretrained representation with an auditory-physiology branch more useful than using REVE directly or a small encoder? | Encoder comparison under a fixed generator; LoRA / physiology-branch ablations; results on genuinely unseen subjects                        |
+| Physiology-guided Cross-modal Alignment         | Can timing, rhythm and phoneme-related supervision produce a more usable, calibratable EEG condition?                                     | Local feature alignment, phoneme-boundary diagnostics, reliability calibration, differences between correct and mismatched conditions       |
+| Neural-consistent Conditional Flow Matching     | Can an independently validated auditory forward model constrain the generation trajectory and improve speech content?                     | Forward-model gate clearance, a fully differentiable trajectory, paired WER improvement from adding the neural term, and condition controls |
 
 Cross-subject adversarial learning and TRF Simulation both enter the training pipeline of the encoder above; each has its own fixed ablation, and neither builds a separate generative architecture. The main generator uses a single CFM, and REVE-Base is the only foundation model.
 
@@ -34,13 +37,14 @@ Stage one is fixed as **Perceived Speech**. Only after real-EEG conditioning sho
 
 ### 2.1 Sources, roles and exact definitions
 
-| Dataset | Fixed source | Published size and material | Use in this project |
-|---|---|---|---|
-| ds004408 | OpenNeuro; keeps the project snapshot `b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be` | 19 subjects, 128-channel BioSemi, 512 Hz; 20 stimulus segments of *The Old Man and the Sea*; word and phoneme TextGrids | Main training, alignment and physiological supervision, cross-subject reconstruction |
-| Brennan2019 | NeMAR `nm000180`; the mapping to the original Deep Blue source is retained | Public release has 45 subjects; about 12.4 minutes of *Alice in Wonderland* speech, split into 12 stimulus segments; 60 scalp EEG channels plus VEOG and AUD; 500 Hz | Joint training across the four datasets; held out in its entirety in a separate protocol to test cross-dataset transfer |
-| Etard EEG | Zenodo aligned HDF5 version, record `7778289`; original version `7086209` | English session: 18 subjects, 64 channels; English clean, lb / mb / hb, fM / fW conditions; the authors' conversion script records EEG at 1000 Hz | Only English clean is used for paired training; English lb / mb / hb are used for an additional noise-robustness evaluation |
+
+| Dataset                                       | Fixed source                                                                                              | Published size and material                                                                                                                                                             | Use in this project                                                                                                                                                    |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ds004408                                      | OpenNeuro; keeps the project snapshot `b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be`                          | 19 subjects, 128-channel BioSemi, 512 Hz; 20 stimulus segments of *The Old Man and the Sea*; word and phoneme TextGrids                                                                 | Main training, alignment and physiological supervision, cross-subject reconstruction                                                                                   |
+| Brennan2019                                   | NeMAR `nm000180`; the mapping to the original Deep Blue source is retained                                | Public release has 45 subjects; about 12.4 minutes of *Alice in Wonderland* speech, split into 12 stimulus segments; 60 scalp EEG channels plus VEOG and AUD; 500 Hz                    | Joint training across the four datasets; held out in its entirety in a separate protocol to test cross-dataset transfer                                                |
+| Etard EEG                                     | Zenodo aligned HDF5 version, record `7778289`; original version `7086209`                                 | English session: 18 subjects, 64 channels; English clean, lb / mb / hb, fM / fW conditions; the authors' conversion script records EEG at 1000 Hz                                       | Only English clean is used for paired training; English lb / mb / hb are used for an additional noise-robustness evaluation                                            |
 | Kymata Soto Language Dataset, English portion | The Scientific Data paper specified by the user; `english-native-english-conversation/` under OSF `qdzgh` | 20 English subjects; 70-channel EEG recorded simultaneously with MEG, 1000 Hz; the same 400-second English conversation presented repeatedly; word / phoneme time annotations available | Fourth Perceived source, adding natural conversation and another electrode layout; EEG only; overlapping-speech segments are masked according to the locked annotation |
-| KaraOne / KARA ONE | The 14 official per-subject archives from the University of Toronto | 14 subjects; 64-channel EEG cap, 1000 Hz; 7 syllable / phoneme prompts and 4 English words; includes prompt, imagined and articulation phases | Later Imagined / Articulated transfer and phonological validation; segmented by true state; must not be mixed into P1 as continuous English auditory material |
+| KaraOne / KARA ONE                            | The 14 official per-subject archives from the University of Toronto                                       | 14 subjects; 64-channel EEG cap, 1000 Hz; 7 syllable / phoneme prompts and 4 English words; includes prompt, imagined and articulation phases                                           | Later Imagined / Articulated transfer and phonological validation; segmented by true state; must not be mixed into P1 as continuous English auditory material          |
 
 The sizes above are as published; the final number of valid subjects is determined by fixed QC. [ds004408 official README](https://raw.githubusercontent.com/OpenNeuroDatasets/ds004408/b2d91784a90c18e1d76bd77dcb2b29b0ce27a0be/README), [Brennan2019 data repository](https://github.com/nemarDatasets/nm000180), [Etard aligned version](https://zenodo.org/records/7778289), [Etard original version](https://zenodo.org/records/7086209), [Etard English session list](https://zenodo.org/records/7778289/files/session_info.json?download=1), [authors' conversion script](https://zenodo.org/records/7778289/files/align_data.py?download=1).
 
@@ -86,13 +90,14 @@ If training material is found to duplicate test material, the split must be revi
 
 Decimal **GB = 10^9 bytes** is used throughout. Total download size, peak usage during processing, and the final retained size are different measures; sizes that have not actually been preprocessed are explicitly marked as estimates.
 
-| Source | Raw download size and evidence | Scope used this round | Final processed-data budget | Temporary working footprint (plus 5 GB headroom) |
-|---|---|---|---|---|
-| ds004408 | **20.083 GB**; sum over the local 1946-file acquisition manifest, of which EEG is 19.436 GB | 19 subjects, 20 English stimuli | **10–11 GB, estimated** | About 1–2 GB extra per recording; a complete raw copy and a complete processed copy are not held at the same time |
-| Brennan2019 | **About 3.8 GB**; NeMAR/EEGDash catalog size, not measured file by file | 45 subjects, EEG / AUD sync and 12 audio segments | **2–3 GB, estimated** | About 1–2 GB extra per subject; after the raw AUD check only the sync record is kept |
-| Etard | **About 21.1 GB** release package: eeg.zip about 19.2 GB, audiobooks.zip about 1.9 GB | Keep only processed EEG / audio for English clean and lb / mb / hb | **3–8 GB, estimated** | If the whole package must be downloaded, reserve an extra 25–30 GB; process HDF5 members one at a time without fully unpacking all languages / conditions |
-| Kymata English | **117.767 GB**: English-task FIFs and the selected audio / sidecars counted file by file; of this, 81 mixed FIFs are 117.609 GB, largest single file **1.616 GB** | Strictly limited to the English directory and task-en; keep EEG only | **5–6 GB, estimated** | Download → process → delete one run at a time, working footprint about 3–4 GB; the 117.767 GB is never on disk at once |
-| KaraOne | **24.824 GB**: sum of HEAD Content-Length over the 14 official tar.bz2 files; largest single archive **2.406 GB**; the website overview says about 24 GB | Only EEG, the required WAVs, and prompt / trial / state / electrode metadata | **2–3 GB, estimated** | One subject archive at a time, about 4–8 GB recommended; selectively extract CNT / labels / WAV, skip the large Kinect files |
+
+| Source         | Raw download size and evidence                                                                                                                                    | Scope used this round                                                        | Final processed-data budget | Temporary working footprint (plus 5 GB headroom)                                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ds004408       | **20.083 GB**; sum over the local 1946-file acquisition manifest, of which EEG is 19.436 GB                                                                       | 19 subjects, 20 English stimuli                                              | **10–11 GB, estimated**    | About 1–2 GB extra per recording; a complete raw copy and a complete processed copy are not held at the same time                                         |
+| Brennan2019    | **About 3.8 GB**; NeMAR/EEGDash catalog size, not measured file by file                                                                                           | 45 subjects, EEG / AUD sync and 12 audio segments                            | **2–3 GB, estimated**      | About 1–2 GB extra per subject; after the raw AUD check only the sync record is kept                                                                      |
+| Etard          | **About 21.1 GB** release package: eeg.zip about 19.2 GB, audiobooks.zip about 1.9 GB                                                                             | Keep only processed EEG / audio for English clean and lb / mb / hb           | **3–8 GB, estimated**      | If the whole package must be downloaded, reserve an extra 25–30 GB; process HDF5 members one at a time without fully unpacking all languages / conditions |
+| Kymata English | **117.767 GB**: English-task FIFs and the selected audio / sidecars counted file by file; of this, 81 mixed FIFs are 117.609 GB, largest single file **1.616 GB** | Strictly limited to the English directory and task-en; keep EEG only         | **5–6 GB, estimated**      | Download → process → delete one run at a time, working footprint about 3–4 GB; the 117.767 GB is never on disk at once                                  |
+| KaraOne        | **24.824 GB**: sum of HEAD Content-Length over the 14 official tar.bz2 files; largest single archive **2.406 GB**; the website overview says about 24 GB          | Only EEG, the required WAVs, and prompt / trial / state / electrode metadata | **2–3 GB, estimated**      | One subject archive at a time, about 4–8 GB recommended; selectively extract CNT / labels / WAV, skip the large Kinect files                              |
 
 Evidence: [this round's storage audit](dataset_storage_audit_2026-10-13.json), [Brennan catalog size](https://eegdash.org/api/dataset/eegdash.dataset.NM000180.html), [Etard official file sizes](https://zenodo.org/records/7778289), [KaraOne official archives](https://www.cs.toronto.edu/~complingweb/data/karaOne/karaOne.html). The Kymata size comes from the public file metadata of the OSF English directory and excludes Russian, MRI, visual frames, empty-room and MEG-only calibration files; it is not the size of the whole OSF project.
 
@@ -139,12 +144,13 @@ If a source has too few canonical stimuli, use predefined contiguous content blo
 
 **Subject split:** sub-001–003 of ds004408, 5 subjects from Brennan, 2 from the Etard English session and 3 from Kymata English are fixed as development-validation subjects; the latter three groups are generated from the real rosters with the fixed seed. Kymata merges E3b into E3 before splitting; all sessions / runs / repetitions of the same person cannot cross folds. The remaining subjects are divided into five groups balanced by source; the current fold excludes the development subjects and the test subjects.
 
-| Use | Subjects | Content |
-|---|---|---|
-| Formal fitting | Training subjects of the current fold | train content |
-| Checkpoint / hyperparameter selection | Fixed development subjects | validation content |
-| TRF physiological gate | Training subjects of the current fold | validation content; scoring only |
-| Final main test | Test subjects of the current fold | test content |
+
+| Use                                   | Subjects                              | Content                          |
+| --------------------------------------- | --------------------------------------- | ---------------------------------- |
+| Formal fitting                        | Training subjects of the current fold | train content                    |
+| Checkpoint / hyperparameter selection | Fixed development subjects            | validation content               |
+| TRF physiological gate                | Training subjects of the current fold | validation content; scoring only |
+| Final main test                       | Test subjects of the current fold     | test content                     |
 
 Each non-development subject contributes their own held-out result exactly once. All normalization, reliability calibration, TRFs, residual models, center-subject selection and simulation noise statistics come only from the training portion of the current fold.
 
@@ -173,18 +179,19 @@ Scoring also lists free ASR on both the clean target and the noisy waveform actu
 
 ## 4. Common time interface and preprocessing
 
-| Object | Fixed starting setting |
-|---|---|
-| EEG main input | Source unit audit; scalp EEG; CAR over valid leads; 0.5–40 Hz; resampled to 200 Hz |
-| Auditory branch | 1–8 Hz extracted from the same physical EEG, keeping the true time origin; resampled to 200 Hz |
-| TRF / neural target | The main signal additionally low-passed at 15 Hz and resampled to 64 Hz |
-| EEG layout | Real coordinates or a sourced standard montage; Perceived sources keep C=128 / 60 / 64 / 70, with the specific valid leads checked per file |
-| Normalization | Shared scaling statistics fitted on source-balanced training EEG; a shared scalar scale across layouts; must not require test-channel statistics for a new layout |
-| Core audio window | 4 s; training stride = 2 s; validation / test stride = 4 s |
-| EEG context | Audio core [a,a+4] corresponds to EEG [a−1,a+5.5], 1300 points at 200 Hz |
-| Audio teacher | 16 kHz, audio crop [a−1,a+5]; keep the WavLM frames inside the core |
-| Generated audio | 24 kHz, Vocos native 100-bin log-Mel; fixed 4 s |
-| Boundary | Default guard ≥ 10 s; enlarged and re-recorded when the actual FIR / resampling support is longer |
+
+| Object              | Fixed starting setting                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EEG main input      | Source unit audit; scalp EEG; CAR over valid leads; 0.5–40 Hz; resampled to 200 Hz                                                                               |
+| Auditory branch     | 1–8 Hz extracted from the same physical EEG, keeping the true time origin; resampled to 200 Hz                                                                   |
+| TRF / neural target | The main signal additionally low-passed at 15 Hz and resampled to 64 Hz                                                                                           |
+| EEG layout          | Real coordinates or a sourced standard montage; Perceived sources keep C=128 / 60 / 64 / 70, with the specific valid leads checked per file                       |
+| Normalization       | Shared scaling statistics fitted on source-balanced training EEG; a shared scalar scale across layouts; must not require test-channel statistics for a new layout |
+| Core audio window   | 4 s; training stride = 2 s; validation / test stride = 4 s                                                                                                        |
+| EEG context         | Audio core [a,a+4] corresponds to EEG [a−1,a+5.5], 1300 points at 200 Hz                                                                                         |
+| Audio teacher       | 16 kHz, audio crop [a−1,a+5]; keep the WavLM frames inside the core                                                                                              |
+| Generated audio     | 24 kHz, Vocos native 100-bin log-Mel; fixed 4 s                                                                                                                   |
+| Boundary            | Default guard ≥ 10 s; enlarged and re-recorded when the actual FIR / resampling support is longer                                                                |
 
 Use offline zero-phase FIR; every kernel, resampler support length and boundary-extension method is written to the preprocessing manifest. Process each content block independently; boundary reflection cannot borrow real EEG from another split. REVE can see the full 6.5 s crop, so even with a positive response-lag window this is still offline reconstruction and cannot be called real-time.
 
@@ -406,17 +413,18 @@ The calibration budget is 60 seconds of real continuous EEG, with filtering and 
 
 Training seeds are fixed to {11,22,33}; first complete P2 source-side development with seed 11 and lock the common architecture and training rules, then complete P1/F0/11 development and freeze the variants of each protocol; expand to the matrix after passing. The P2 configuration is not chosen from the Brennan external results or from the effect on Brennan in P1.
 
-| Stage | What is done | Freeze / update boundary | Starting budget and deliverables |
-|---|---|---|---|
-| A0 | Metadata / content registration and splits for the four Perceived sources, then run-by-run processing; KaraOne registered as a later source | No model training; the corresponding raw is cleaned up after processed is published | Size / sync / unit receipts, content registry, valid duration, split v2.1, processed-only read contract |
-| A1 | native Mel→Vocos copy; real WavLM + rhythm→CFM oracle | audio teachers / Vocos frozen; only the CFM / style token is trained | Cap of 20k updates per protocol / seed, batch=32, lr=2e−4; copy and oracle audio / WER |
-| A2 | Nested TRF cross-fitting and validation on unseen content | Fitted on train subjects and train content | P_s, Σ_s, coverage, gate |
-| B1 | Freeze REVE; train Auditory Branch / fusion / temporal heads | REVE frozen | 10k updates, batch=32, lr=3e−4; temporal alignment foundation |
-| B2 | speech LoRA adaptation, followed by GRL / curriculum / Simulation | Only LoRA + new modules are updated | 30k updates, LoRA lr=1e−4, new modules lr=3e−4; auxiliary mechanisms are added after 10k updates of stabilization |
-| B3 | Three-fold training-side OOF and reliability calibration | Each replica excludes its designated training group; formal validation / test are not touched | OOF residuals, calibrator, error-prediction diagnostics; training cost counted separately |
-| C1 | Predicted-condition CFM, initialized from this protocol's same-seed oracle | encoder / heads / calibrator frozen throughout | 30k updates, CFM lr=1e−4, effective batch=32 |
-| C2 | Within the same 30k updates, the full system triggers NC from update 5k | Both the ordinary FM and NC update only the CFM | S2 is `L_FM`; S3 additionally adds the triggered `λ_NC L_NC` |
-| D | Whole matrix frozen; main test / external / noise / 60 s | No updates in the main test; few-shot updates only the Adapter | Metrics for all samples, audio, statistics tables, negative results |
+
+| Stage | What is done                                                                                                                                | Freeze / update boundary                                                                      | Starting budget and deliverables                                                                                    |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| A0    | Metadata / content registration and splits for the four Perceived sources, then run-by-run processing; KaraOne registered as a later source | No model training; the corresponding raw is cleaned up after processed is published           | Size / sync / unit receipts, content registry, valid duration, split v2.1, processed-only read contract             |
+| A1    | native Mel→Vocos copy; real WavLM + rhythm→CFM oracle                                                                                     | audio teachers / Vocos frozen; only the CFM / style token is trained                          | Cap of 20k updates per protocol / seed, batch=32, lr=2e−4; copy and oracle audio / WER                             |
+| A2    | Nested TRF cross-fitting and validation on unseen content                                                                                   | Fitted on train subjects and train content                                                    | P_s, Σ_s, coverage, gate                                                                                           |
+| B1    | Freeze REVE; train Auditory Branch / fusion / temporal heads                                                                                | REVE frozen                                                                                   | 10k updates, batch=32, lr=3e−4; temporal alignment foundation                                                      |
+| B2    | speech LoRA adaptation, followed by GRL / curriculum / Simulation                                                                           | Only LoRA + new modules are updated                                                           | 30k updates, LoRA lr=1e−4, new modules lr=3e−4; auxiliary mechanisms are added after 10k updates of stabilization |
+| B3    | Three-fold training-side OOF and reliability calibration                                                                                    | Each replica excludes its designated training group; formal validation / test are not touched | OOF residuals, calibrator, error-prediction diagnostics; training cost counted separately                           |
+| C1    | Predicted-condition CFM, initialized from this protocol's same-seed oracle                                                                  | encoder / heads / calibrator frozen throughout                                                | 30k updates, CFM lr=1e−4, effective batch=32                                                                       |
+| C2    | Within the same 30k updates, the full system triggers NC from update 5k                                                                     | Both the ordinary FM and NC update only the CFM                                               | S2 is `L_FM`; S3 additionally adds the triggered `λ_NC L_NC`                                                       |
+| D     | Whole matrix frozen; main test / external / noise / 60 s                                                                                    | No updates in the main test; few-shot updates only the Adapter                                | Metrics for all samples, audio, statistics tables, negative results                                                 |
 
 C1 / C2 are the same 30k updates, not added up to 60k. Everything uses AdamW weight_decay=0.01, gradient clip=1, cosine decay after 1k warmup; ordinary networks BF16, TRF / φ / covariance / neural loss FP32. Starting microbatch=2, with gradient accumulation keeping the effective batch; actual GPU usage is measured in the development runs.
 
@@ -440,12 +448,13 @@ The development rules for disabling Neural / Simulation / GRL are written into t
 
 ### 12.1 Only four main systems are kept
 
-| System | EEG condition | Training support | Generation |
-|---|---|---|---|
-| S0: Small Temporal | Small TCN predicting WavLM content | feature + local contrast, real data | Same CFM, rhythm nulled / neutral gating |
-| S1: Direct REVE | Frozen REVE + temporal readout of the same width | feature + local contrast, real data | Same CFM, rhythm nulled / neutral gating |
-| S2: NeuroSpeech Alignment | REVE LoRA + Auditory Branch + multilevel alignment + calibrated reliability | Fixed GRL / curriculum; Simulation kept according to the development rule | Same CFM, no NC |
-| S3: NeuroSpeech Full | Same encoder initialization and conditions as S2 | Same as S2 | Same CFM + validated NC |
+
+| System                    | EEG condition                                                               | Training support                                                          | Generation                               |
+| --------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------ |
+| S0: Small Temporal        | Small TCN predicting WavLM content                                          | feature + local contrast, real data                                       | Same CFM, rhythm nulled / neutral gating |
+| S1: Direct REVE           | Frozen REVE + temporal readout of the same width                            | feature + local contrast, real data                                       | Same CFM, rhythm nulled / neutral gating |
+| S2: NeuroSpeech Alignment | REVE LoRA + Auditory Branch + multilevel alignment + calibrated reliability | Fixed GRL / curriculum; Simulation kept according to the development rule | Same CFM, no NC                          |
+| S3: NeuroSpeech Full      | Same encoder initialization and conditions as S2                            | Same as S2                                                                | Same CFM + validated NC                  |
 
 The primary mechanism comparison is **S2 versus S3**, whose data, encoder initialization, oracle, generator, seeds and number of ordinary updates are exactly the same. S3 relative to S1 / S0 tests the practical value of the whole adaptation scheme; this combined difference alone cannot attribute the contribution to any one component.
 
@@ -453,14 +462,15 @@ P1: 4 systems × 5 folds × 3 seeds = 60 CFM training runs; P2: 4 systems × 3 s
 
 ### 12.2 Six point ablations, no combinatorial grid
 
-| Ablation | Comparison | Question answered |
-|---|---|---|
-| A1: no LoRA | S2 encoder with REVE frozen only, new modules with the same budget | Whether speech-specific backbone adaptation is useful |
-| A2: no Auditory Branch | REVE LoRA kept, temporal fusion uses a readout of the same width; other supervision kept | Whether the explicit auditory temporal / spatial prior carries extra information |
-| A3: no phoneme supervision | Only the phoneme weight is set to 0 | Whether phoneme-related auxiliary targets improve content cues |
-| A4: neutral reliability gating | Same full condition, reliability modulation removed | Whether calibratable uncertainty helps generation |
-| A5: real vs. real + Simulation | Other training mechanisms identical | Whether simulation improves robustness on unseen real EEG |
-| A6: curriculum ablation | uniform + no GRL, uniform + GRL, progressive + GRL | Separates the contributions of the adversarial shared representation and of center-progressive sampling |
+
+| Ablation                       | Comparison                                                                               | Question answered                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| A1: no LoRA                    | S2 encoder with REVE frozen only, new modules with the same budget                       | Whether speech-specific backbone adaptation is useful                                                   |
+| A2: no Auditory Branch         | REVE LoRA kept, temporal fusion uses a readout of the same width; other supervision kept | Whether the explicit auditory temporal / spatial prior carries extra information                        |
+| A3: no phoneme supervision     | Only the phoneme weight is set to 0                                                      | Whether phoneme-related auxiliary targets improve content cues                                          |
+| A4: neutral reliability gating | Same full condition, reliability modulation removed                                      | Whether calibratable uncertainty helps generation                                                       |
+| A5: real vs. real + Simulation | Other training mechanisms identical                                                      | Whether simulation improves robustness on unseen real EEG                                               |
+| A6: curriculum ablation        | uniform + no GRL, uniform + GRL, progressive + GRL                                       | Separates the contributions of the adversarial shared representation and of center-progressive sampling |
 
 A1 / A2 / A3 / A5 / A6 are first evaluated only at the encoder level (alignment), using P1/F0 and P2 source-side development with three seeds. The generation validation of A4, and the generation validation of A6's uniform+GRL against the full system, each add 2 protocols × 3 seeds = 6 runs, i.e. 12 additional CFM runs initially; existing results for the same encoder are reused directly. Only when a pre-declared encoder ablation reveals a clear mechanistic contradiction is an extension of the corresponding generation validation requested.
 
@@ -506,17 +516,18 @@ The acoustic input, auditory TRF and 0–500 ms stimulus response of the perceiv
 
 ## 15. Implementation checklist from the current project to v2.1
 
-| Existing component | Change needed for v2.1 | Completion marker |
-|---|---|---|
-| ds004408 acquisition / unit audit | Add Brennan / Etard / Kymata-English readers and register the KaraOne transfer reader; keep the original checksum evidence | Manifests for the four Perceived sources; KaraOne stage / size fixed |
-| Full raw retention | Change to download whitelist, batch-by-batch processing, verification of the processed contract and cleanup of raw packages; save dedicated 60-second calibration shards | Raw temporary directory empty, reader does not depend on raw, released space auditable |
-| 128-channel / 128 Hz data interface | 200 Hz, real variable montage, AUD excluded, two-protocol splits, shared training scaling | Time / layout / split contracts pass |
-| TCN encoder | Keep as S0; add REVE LoRA, Auditory Branch, temporal fusion, phoneme heads | Explicit real token timeline and valid mask |
-| Teacher cache | Add multiband / phoneme; strict separation of P1/P2 | Independent training statistics and annotation quality |
-| CFM content condition | Content / rhythm / reliability injected independently; fixed style condition | EEG-only full trajectory |
-| TRF | mTRFpy nested cross-fit, 8-band front-end, P_s and residual covariance | Per-source gate and numerically consistent gradients |
-| New training support | OOF calibration, TRF Simulation, GRL / curriculum | Source traceability, fixed ablations |
-| adapter / evaluation | 256-dimensional Adapter, independent P2, noise pairing, statistics for the four main systems | Complete evaluation record after the freeze |
+
+| Existing component                  | Change needed for v2.1                                                                                                                                                   | Completion marker                                                                      |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| ds004408 acquisition / unit audit   | Add Brennan / Etard / Kymata-English readers and register the KaraOne transfer reader; keep the original checksum evidence                                               | Manifests for the four Perceived sources; KaraOne stage / size fixed                   |
+| Full raw retention                  | Change to download whitelist, batch-by-batch processing, verification of the processed contract and cleanup of raw packages; save dedicated 60-second calibration shards | Raw temporary directory empty, reader does not depend on raw, released space auditable |
+| 128-channel / 128 Hz data interface | 200 Hz, real variable montage, AUD excluded, two-protocol splits, shared training scaling                                                                                | Time / layout / split contracts pass                                                   |
+| TCN encoder                         | Keep as S0; add REVE LoRA, Auditory Branch, temporal fusion, phoneme heads                                                                                               | Explicit real token timeline and valid mask                                            |
+| Teacher cache                       | Add multiband / phoneme; strict separation of P1/P2                                                                                                                      | Independent training statistics and annotation quality                                 |
+| CFM content condition               | Content / rhythm / reliability injected independently; fixed style condition                                                                                             | EEG-only full trajectory                                                               |
+| TRF                                 | mTRFpy nested cross-fit, 8-band front-end, P_s and residual covariance                                                                                                   | Per-source gate and numerically consistent gradients                                   |
+| New training support                | OOF calibration, TRF Simulation, GRL / curriculum                                                                                                                        | Source traceability, fixed ablations                                                   |
+| adapter / evaluation                | 256-dimensional Adapter, independent P2, noise pairing, statistics for the four main systems                                                                             | Complete evaluation record after the freeze                                            |
 
 It is suggested that the physically processed base be placed in `data/processed/neurospeech/{dataset}/`, read-only and shared; raw input only passes through `data/staging/neurospeech/`. The new protocol configs stay in `configs/neurospeech_v2/`; statistics, TRF / OOF / checkpoints / protocol lock go in `artifacts/neurospeech_v2/{P1,P2}/`, and teacher caches are shared by content / weights / crop identity. KaraOne later uses a separate Imagined namespace. The official reader uses only processed data and receipts and does not depend on deleted raw paths. New commands are written into the run instructions once implemented; the table at this stage does not mean they exist now.
 
