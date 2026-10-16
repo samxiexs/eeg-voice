@@ -1,0 +1,31 @@
+{
+  "bundle_name": "eeg-recon-0809",
+  "purpose": "Unified EEG-to-audio reconstruction bundle for DS006104 (2021 subset) and DS004940.",
+  "datasets": {
+    "ds004940": {
+      "language": "English",
+      "scope": "Active first; optional Passive control",
+      "pilot_subjects": ["001", "002", "003", "004"],
+      "full_scope": "All 22 subjects, N400Active",
+      "raw_modalities": ["EEG BDF", "events", "stimulus WAV"]
+    },
+    "ds006104": {
+      "language": "English phonemes, CV/VC combinations, real words and pseudowords",
+      "scope": "2021 / ses-02 only",
+      "subjects": "S01-S16",
+      "raw_modalities": ["raw EEG", "events", "internal trial audio"],
+      "internal_audio_location": "data/ds006104/audio_internal/"
+    }
+  },
+  "entrypoints": {
+    "ds004940_download": "scripts/download_ds004940.sh",
+    "ds004940_verify": "scripts/verify_ds004940.sh",
+    "ds006104_download": "scripts/download_ds006104_2021.sh",
+    "ds006104_verify": "scripts/verify_ds006104_2021.sh"
+  },
+  "data_policy": {
+    "raw_data_tracked_by_git": false,
+    "generated_outputs_tracked_by_git": false,
+    "scripts_docs_configs_tracked_by_git": true
+  }
+}

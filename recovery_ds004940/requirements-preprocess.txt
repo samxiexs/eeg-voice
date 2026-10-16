@@ -1,0 +1,13 @@
+# Tested with the project's Conda ``eegvoice`` environment (Python 3.12).
+mne>=1.8,<2
+numpy>=1.26,<3
+pandas>=2.2,<3
+PyYAML>=6,<7
+h5py>=3.11,<4
+soundfile>=0.12,<1
+scipy>=1.13,<2
+torch>=2.5,<3
+torchaudio>=2.5,<3
+pyarrow>=16,<20
+tqdm>=4.66,<5
+transformers>=4.45,<6

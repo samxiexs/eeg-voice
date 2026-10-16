@@ -1,0 +1,18 @@
+# v4 is intentionally isolated from harmonized_v3.  Its fixed model window
+# removes sentence-duration information from the EEG encoder contract.
+extends: training_data_v3.yaml
+
+schema_version: training-data-v4-ds004940-fixed
+preprocessing_profile: harmonized_v4_ds004940_fixed_window
+output_root: artifacts/training_data/v4_ds004940_fixed
+split_seed: eeg-recon-0809-v4-ds004940-fixed-window
+
+harmonized:
+  epoch:
+    ds004940:
+      fixed_window: true
+      variable_valid_length: false
+      # [-0.25, +4.3515625] seconds at 256 Hz = exactly 1,178 samples.
+      # inherited v2 values: pre_samples_source=128,
+      # total_samples_source=2356 and total_samples_target=1178.
+      exclude_boundary_overlap: true

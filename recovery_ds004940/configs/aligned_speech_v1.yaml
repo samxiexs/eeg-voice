@@ -1,0 +1,16 @@
+schema_version: aligned_speech_v1
+data_config: configs/training_data_aligned_v1.yaml
+artifact_root: artifacts/aligned_speech_v1
+legacy_m0_manifest: artifacts/training_data/v4_ds004940_fixed/manifests/manifest_explore_m0_ds004940_trial_diverse_v3.csv
+split_seed: 31
+encoder:
+  dimension: 192
+  heads: 6
+  layers: 4
+  local_layers: 2
+  token_steps: 236
+decoder:
+  hidden: 256
+  layers: 6
+minimum_epochs: 20
+patience: 10

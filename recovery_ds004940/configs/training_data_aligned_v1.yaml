@@ -1,0 +1,4 @@
+extends: training_data_v4_ds004940_fixed.yaml
+schema_version: training-data-aligned-v1
+output_root: artifacts/training_data/aligned_v1
+split_seed: eeg-recon-0809-aligned-v1

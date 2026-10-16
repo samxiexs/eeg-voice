@@ -7,7 +7,8 @@ Data are small, so the EEG side is kept small and is supervised by two losses on
    WavLM layers ('wavlm', before it), so the loss of the projection is measured at an equal budget. Datasets are
    drawn equally often, no noise is added by default, and the checkpoint is chosen on validation content.
 2. EEG side. The aligned EEG tower stays frozen; a small bridge maps the 4.5 s EEG window to the 3 s code sequence,
-   which the frozen decoder renders. Losses: the code frame by frame, and a word-level contrast (the code averaged
+   which the frozen decoder renders. Two losses of one kind at two time scales: a 0.2 s chunk contrast and a
+   word-level contrast (the code averaged
    over each word's time span must be closer to that word's true code than to the other words of the batch).
    Words are cut on the audio time line only, never on the EEG: every output frame can attend to the whole EEG
    window, so overlapping responses and latencies are left to the bridge.
@@ -134,7 +135,10 @@ class Generator(nn.Module):
         self.bridge = CodeBridge(audio.dim, residual=audio.route == 'embedding')
 
     def code(self, x, positions, mask, subject):
-        E = self.aligner.eeg(x, positions, mask, subject); return self.bridge(E, self.aligner.compensated(E, subject))
+        E = self.aligner.eeg(x, positions, mask, subject); z = self.bridge(E, self.aligner.compensated(E, subject))
+        if self.audio_decoder.route == 'wavlm':  # the frozen decoder's own LayerNorm: same scale and offset as true codes
+            z = F.layer_norm(z, (z.shape[-1],), self.audio_decoder.norm.weight, self.audio_decoder.norm.bias)
+        return z
 
     def forward(self, x, positions, mask, subject):
         z = self.code(x, positions, mask, subject); return self.audio_decoder(z), z
@@ -153,9 +157,13 @@ def build_generator(cache, align_folder, audio_folder, device, init=None):
     return gen
 
 
-def frame_loss(z, target, route):
-    """The code frame by frame: cosine for the unit-length shared embedding, mean squared error for WavLM features."""
-    return 1-F.cosine_similarity(z, target, dim=-1).mean() if route == 'embedding' else F.mse_loss(z, target)
+def chunk_contrast(z, code, anchor, size=5, temperature=.1):
+    """Each 0.2 s chunk of the predicted code must be closer to the same chunk of its own true code than to every other
+    chunk of the batch, neighbouring chunks of the same segment included. Unlike a regression, the average code is
+    not a minimum, so the output cannot settle on average speech."""
+    n = z.shape[1]//size; chunks = lambda x: F.normalize(x[:, :n*size].reshape(len(x), n, size, x.shape[-1]).mean(2), dim=-1).reshape(-1, x.shape[-1])
+    logits = chunks(z)@chunks(code).T/temperature; target = (anchor[:, None]*n+torch.arange(n, device=z.device)[None]).reshape(-1)
+    return F.cross_entropy(logits, target), float((logits.argmax(1) == target).float().mean())
 
 
 # ----------------------------------------------------------------------------- stage 1: audio side
@@ -221,7 +229,7 @@ def train_audio_decoder(cache, align_folder, folder, route, deadline, device='cp
 
 def train_generator(cfg, cache, align_folder, audio_folder, folder, deadline, device='cpu', threads=6, workers=2, seed=11, word_weight=1.,
                     validate_minutes=10, max_steps=None, peak=5e-4, limit=300, init=None):
-    """Only the bridge learns. Loss = code frame by frame + word_weight x word contrast. Every `validate_minutes` the
+    """Only the bridge learns. Loss = 0.2 s chunk contrast + word_weight x word contrast. Every `validate_minutes` the
     development reconstruction is measured; the checkpoint whose words are identified best is kept, unless collapsed."""
     from torch.utils.data import DataLoader
     folder = Path(folder)
@@ -257,7 +265,7 @@ def train_generator(cfg, cache, align_folder, audio_folder, folder, deadline, de
         batch = to(batch, device); anchor = batch['anchor']; wv, en = cache.audio_batch(batch['anchors'])
         with torch.no_grad(): code = gen.audio_decoder.code(gen.aligner, wv.to(device), en.to(device))
         z = gen.code(batch['eeg'], batch['positions'], batch['mask'], batch['subject'])
-        loss_frames = frame_loss(z, code[anchor], route)
+        loss_frames, chunk_hit = chunk_contrast(z, code, anchor)
         # Words: pooled on the audio time line; positives are the same word instance, negatives every other word of the batch.
         W, valid, _ = pooling(spans, batch['anchors']); flat = np.flatnonzero(valid.reshape(-1))
         loss_words = z.sum()*0; hit = float('nan')
@@ -270,7 +278,7 @@ def train_generator(cfg, cache, align_folder, audio_folder, folder, deadline, de
         loss = loss_frames+word_weight*loss_words
         optimizer.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(gen.bridge.parameters(), 1.); optimizer.step(); step += 1
         if step % 25 == 0:
-            parts = {'frames': loss_frames.item(), 'words': loss_words.item(), 'batch_word_top1': hit, 'words_in_batch': int(len(flat))}
+            parts = {'chunks': loss_frames.item(), 'words': loss_words.item(), 'batch_chunk_top1': chunk_hit, 'batch_word_top1': hit, 'words_in_batch': int(len(flat))}
             append_jsonl(folder/'training.jsonl', {'step': step, 'minutes': round((now-began)/60, 1), 'dataset': batch['dataset'], 'loss': loss.item(), **parts})
             status(folder, step=step, last=parts)
         if now-last_check >= validate_minutes*60: last_check = now; validate()
@@ -533,7 +541,7 @@ def evaluate_reconstruction(cfg, cache, folder, out, run, device='cpu', checkpoi
 def write_report(summary, out, folder):
     nan = float('nan'); kind = '冒烟测试：只检查代码能否运行，不是实验结果' if summary.get('smoke') else '完整数据'
     lines = [f"# EEG → 语音重建：{summary['run']}（{'WavLM 代码' if summary['route'] == 'wavlm' else '128 维共享嵌入'}，{summary['checkpoint']}）", '',
-             f"{kind}。只训练桥接（EEG 塔和解码器冻结），{summary['step']} 步、{summary['minutes']} 分钟；损失 = 逐帧代码 + {summary['word_weight']} × 词级对比。", '',
+             f"{kind}。只训练桥接（EEG 塔和解码器冻结），{summary['step']} 步、{summary['minutes']} 分钟；损失 = 0.2 秒片段对比 + {summary['word_weight']} × 词级对比。", '',
              '全部是没参与训练的测试内容。对照：错时（同一个人另一时刻）与无 EEG（EEG 输入置零）。三个尺度：帧（3 秒窗口的 Mel）、词（按词时间段平均的代码在全部测试词里认词，0.5 = 偶然）、'
              '句子（1 秒步长滑动窗口拼成整句，Whisper 转写）。', '']
     for name, title in (('seen_people_unseen_speech', '训练过的人，没听过的语音'), ('unseen_people_unseen_speech', '没见过的人，没听过的语音')):
